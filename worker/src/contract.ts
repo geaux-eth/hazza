@@ -1,5 +1,5 @@
-import { createPublicClient, http, type Address, type PublicClient } from "viem";
-import { baseSepolia, base } from "viem/chains";
+import { createPublicClient, http, encodeFunctionData, type Address, type PublicClient } from "viem";
+import { baseSepolia, base, mainnet } from "viem/chains";
 
 // Minimal ABI — only the read functions the Worker needs
 export const REGISTRY_ABI = [
@@ -180,13 +180,147 @@ export const REGISTRY_ABI = [
     inputs: [{ name: "wallet", type: "address" }],
     outputs: [{ type: "bytes32" }],
   },
+  // --- ERC-721 Enumeration ---
+  {
+    name: "balanceOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "tokenOfOwnerByIndex",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "index", type: "uint256" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  // --- API Keys ---
+  {
+    name: "verifyApiKey",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "rawKey", type: "bytes32" }],
+    outputs: [{ type: "bytes32" }],
+  },
+  {
+    name: "generateApiKey",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "salt", type: "bytes32" },
+    ],
+    outputs: [{ type: "bytes32" }],
+  },
+  // --- Write Functions ---
+  {
+    name: "setText",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "key", type: "string" },
+      { name: "value", type: "string" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "setOperator",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "operator", type: "address" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "setCustomDomain",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "domain", type: "string" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "renew",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "numYears", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  // --- x402 Relayer ---
+  {
+    name: "registerDirect",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "nameOwner", type: "address" },
+      { name: "numYears", type: "uint256" },
+      { name: "charCount", type: "uint8" },
+      { name: "wantAgent", type: "bool" },
+      { name: "agentWallet", type: "address" },
+      { name: "agentURI", type: "string" },
+      { name: "ensImport", type: "bool" },
+      { name: "verifiedPass", type: "bool" },
+    ],
+    outputs: [],
+  },
 ] as const;
 
 export type Env = {
   REGISTRY_ADDRESS: string;
+  USDC_ADDRESS: string;
   RPC_URL: string;
   CHAIN_ID: string;
+  DOMAIN_PROXY_URL: string;
+  DOMAIN_PROXY_SECRET: string;
+  BASE_MAINNET_RPC: string;
+  ETH_MAINNET_RPC: string;
+  RELAYER_PRIVATE_KEY: string;
+  RELAYER_ADDRESS: string;
+  PAYMASTER_BUNDLER_RPC: string;
 };
+
+// Minimal ABI for Exoskeleton NFT (Base mainnet)
+export const EXOSKELETON_ABI = [
+  {
+    name: "balanceOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "tokenOfOwnerByIndex",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "index", type: "uint256" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "tokenURI",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ type: "string" }],
+  },
+] as const;
+
+export const EXOSKELETON_ADDRESS = "0x8241BDD5009ed3F6C99737D2415994B58296Da0d" as Address;
 
 export function getClient(env: Env): PublicClient {
   const chainId = Number(env.CHAIN_ID);
@@ -195,6 +329,28 @@ export function getClient(env: Env): PublicClient {
     chain,
     transport: http(env.RPC_URL),
   });
+}
+
+export function getMainnetClient(env: Env): PublicClient {
+  return createPublicClient({
+    chain: base,
+    transport: http(env.BASE_MAINNET_RPC),
+  });
+}
+
+export function getEthMainnetClient(env: Env): PublicClient {
+  return createPublicClient({
+    chain: mainnet,
+    transport: http(env.ETH_MAINNET_RPC),
+  });
+}
+
+export function buildTx(env: Env, functionName: string, args: any[]): { to: string; data: string; chainId: number } {
+  return {
+    to: env.REGISTRY_ADDRESS,
+    data: encodeFunctionData({ abi: REGISTRY_ABI, functionName, args }),
+    chainId: Number(env.CHAIN_ID),
+  };
 }
 
 export function registryAddress(env: Env): Address {
