@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+worker/node_modules/
+
+# Foundry
+contracts/cache/
+contracts/out/
+contracts/lib/
+
+# Environment / secrets
+.env
+.env.*
+*.key
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+.wrangler/
+
+# Python helper scripts (contain hardcoded droplet paths)
+fix_tests.py
+write_tests.py

@@ -1,0 +1,13 @@
+name = "hazza-name"
+main = "src/index.ts"
+compatibility_date = "2025-02-20"
+
+routes = [
+  { pattern = "hazza.name/*", zone_id = "b8ce09cf557f0f90e5b9d1a4e8578449" },
+  { pattern = "*.hazza.name/*", zone_id = "b8ce09cf557f0f90e5b9d1a4e8578449" }
+]
+
+[vars]
+REGISTRY_ADDRESS = "0xbDDa076DCc3Ac8C4Fc6CFe8bcE458D5536e695e3"
+RPC_URL = "https://sepolia.base.org"
+CHAIN_ID = "84532"
