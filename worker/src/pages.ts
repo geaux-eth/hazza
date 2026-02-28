@@ -96,26 +96,6 @@ const STYLES = `
     font-family: 'Rubik', sans-serif;
   }
   .price-card .unit { color: #4a6a4a; font-size: 0.8rem; }
-  .features {
-    margin: 2rem 0;
-  }
-  .features h2 {
-    font-size: 1.3rem;
-    font-weight: 900;
-    margin-bottom: 1rem;
-    color: #fff;
-  }
-  .features ul { list-style: none; }
-  .features li {
-    padding: 0.5rem 0;
-    color: #aaa;
-    border-bottom: 1px solid #151f15;
-  }
-  .features li::before {
-    content: "\\2713 ";
-    color: #00e676;
-    margin-right: 0.5rem;
-  }
   .footer {
     text-align: center;
     padding: 2rem 0;
@@ -245,6 +225,22 @@ const STYLES = `
     border-radius: 8px;
     font-weight: 700;
   }
+  @media (max-width: 600px) {
+    .container { padding: 1.5rem 1rem; }
+    .header { padding: 2rem 0 1.5rem; }
+    .header h1 { font-size: 2rem; }
+    .pricing { gap: 0.5rem; }
+    .price-card { padding: 0.85rem 0.5rem; }
+    .price-card .amount { font-size: 1.2rem; }
+    .price-card .chars { font-size: 0.75rem; }
+    .profile-header h1 { font-size: 1.4rem; word-break: break-word; }
+    .unclaimed h1 { font-size: 1.4rem !important; word-break: break-word; }
+    .search-box input { font-size: 0.9rem; padding: 0.65rem 0.75rem; }
+    .search-box button { padding: 0.65rem 1rem; font-size: 0.9rem; }
+    .info-row { flex-wrap: wrap; gap: 0.25rem; }
+    .info-row .value { font-size: 0.8rem; }
+    .social-link { font-size: 0.8rem; padding: 0.35rem 0.7rem; }
+  }
 `;
 
 const SEARCH_SCRIPT = `
@@ -322,32 +318,10 @@ export function landingPage(): string {
       </div>
     </div>
 
-    <div class="features">
-      <h2>what you get</h2>
-      <ul>
-        <li>Your name as an NFT on Base (ERC-721)</li>
-        <li>Your own subdomain: yourname.hazza.name</li>
-        <li>Onchain content hosting via Net Protocol</li>
-        <li>Optional ERC-8004 AI agent registration</li>
-        <li>Custom DNS linking</li>
-        <li>API key for programmatic access</li>
-        <li>Namespace delegation (subnames for your team/agents)</li>
-        <li>ENSIP-15 Unicode & emoji support</li>
-        <li>ENS import with 50% discount</li>
-      </ul>
-    </div>
-
-    <div class="features">
-      <h2>discounts</h2>
-      <ul>
-        <li>ENS holders: 50% off registration + challenge immunity</li>
-        <li>Net Library Unlimited Pass: 20% off registration</li>
-        <li>Both discounts stack</li>
-      </ul>
-    </div>
+    <p style="text-align:center;color:#6b8f6b;margin:0.5rem 0 1rem;font-size:0.9rem">your name, your identity, your agent &mdash; all onchain</p>
 
     <div class="footer">
-      <p>Powered by <a href="https://netprotocol.app">Net Protocol</a> on <a href="https://base.org">Base</a></p>
+      <p>Powered by <a href="https://x402.org">x402</a> and <a href="https://netprotocol.app">Net Protocol</a> on <a href="https://base.org">Base</a></p>
       <p style="margin-top:0.5rem">Built by Cheryl from <a href="https://netlibrary.app">Net Library</a></p>
     </div>
   </div>
@@ -545,7 +519,7 @@ export function profilePage(name: string, data: ProfileData | null): string {
   <div class="container">
     ${content}
     <div class="footer">
-      <p>Powered by <a href="https://netprotocol.app">Net Protocol</a> on <a href="https://base.org">Base</a></p>
+      <p>Powered by <a href="https://x402.org">x402</a> and <a href="https://netprotocol.app">Net Protocol</a> on <a href="https://base.org">Base</a></p>
       <p style="margin-top:0.5rem">Built by Cheryl from <a href="https://netlibrary.app">Net Library</a></p>
     </div>
   </div>
