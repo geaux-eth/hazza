@@ -142,7 +142,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     uint256 public constant PRICE_5_PLUS = 5e6;     // $5
     uint256 public constant RENEWAL_FEE = 2e6;      // $2/year
     uint256 public constant REDEMPTION_FEE = 10e6;   // $10 penalty
-    uint256 public constant NAMESPACE_PRICE = 50e6;  // $50
+    uint256 public constant NAMESPACE_PRICE = 20e6;  // $20
     uint256 public constant SUBNAME_PRICE = 1e6;     // $1 per agent subname
 
     // Time
@@ -357,11 +357,10 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         // Rate limiting (applied to name recipient, not relayer)
         _enforceRateLimit(c.nameOwner, c.verifiedPass);
 
-        // Calculate price using ENSIP-15 charCount (or byte length for ASCII)
+        // Calculate price — registration fee only, renewal is paid separately later
         uint256 charLen = c.charCount > 0 ? uint256(c.charCount) : bytes(name).length;
         uint256 basePrice = _basePriceByLength(charLen);
-        uint256 totalCost = _adjustedPrice(basePrice, c.nameOwner, c.ensImport, c.verifiedPass)
-            + (RENEWAL_FEE * c.numYears);
+        uint256 totalCost = _adjustedPrice(basePrice, c.nameOwner, c.ensImport, c.verifiedPass);
 
         // Collect payment (from msg.sender — the payer)
         _collectPayment(totalCost, c.relayer);
@@ -601,7 +600,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         uint256 base = _basePriceByLength(charLen);
         registrationFee = _adjustedPrice(base, wallet, ensImport, verifiedPass);
         renewalFee = RENEWAL_FEE * numYears;
-        totalCost = registrationFee + renewalFee;
+        totalCost = registrationFee; // renewal is paid separately, not bundled
     }
 
     // =========================================================================

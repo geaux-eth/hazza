@@ -56,9 +56,33 @@ const STYLES = `
     font-size: 1rem;
     line-height: 1;
   }
-  nav .links { display: flex; gap: 1.25rem; }
+  nav .links { display: flex; gap: 1.25rem; align-items: center; }
   nav .links a { color: #6b8f6b; font-size: 0.85rem; font-weight: 500; }
   nav .links a:hover { color: #00e676; text-decoration: none; }
+  .nav-wallet-btn {
+    padding: 0.3rem 0.75rem;
+    background: transparent;
+    color: #00e676;
+    border: 1px solid #00e676;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    font-family: 'Rubik', sans-serif;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .nav-wallet-btn:hover { background: #00e676; color: #000; }
+  .nav-wallet-btn.connected { background: #00e676; color: #000; }
+  .hamburger {
+    display: none;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem;
+    line-height: 1;
+  }
   .container { max-width: 720px; margin: 0 auto; padding: 2rem 1.5rem; }
   .header {
     text-align: center;
@@ -321,10 +345,47 @@ const STYLES = `
   .checkout-step.active .step-icon { background: #fff; }
   .checkout-step.done .step-icon { background: #00e676; }
   .checkout-step.error .step-icon { background: #ff5252; }
+  details.collapsible { margin: 1.5rem 0; }
+  details.collapsible summary {
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6b8f6b;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    user-select: none;
+  }
+  details.collapsible summary::-webkit-details-marker { display: none; }
+  details.collapsible summary::before {
+    content: '\\25B6';
+    font-size: 0.6rem;
+    transition: transform 0.15s;
+    display: inline-block;
+  }
+  details.collapsible[open] summary::before { transform: rotate(90deg); }
+  details.collapsible .section-content { padding-top: 0.5rem; }
   @media (max-width: 600px) {
-    nav { padding: 0.75rem 1rem 0; }
-    nav .links { gap: 0.75rem; }
-    nav .links a { font-size: 0.8rem; }
+    nav { padding: 0.75rem 1rem 0; flex-wrap: wrap; }
+    .hamburger { display: block; }
+    nav .links {
+      display: none;
+      flex-direction: column;
+      width: 100%;
+      background: #111;
+      border: 1px solid #1a2e1a;
+      border-radius: 8px;
+      padding: 0.75rem;
+      margin-top: 0.5rem;
+      gap: 0.5rem;
+    }
+    nav .links.open { display: flex; }
+    nav .links a { font-size: 0.9rem; padding: 0.4rem 0; }
+    .nav-wallet-btn { width: 100%; text-align: center; padding: 0.5rem; }
     .container { padding: 1.5rem 1rem; }
     .header { padding: 2rem 0 1.5rem; }
     .header h1 { font-size: 2rem; }
@@ -360,13 +421,10 @@ const SEARCH_SCRIPT = `
     result.className = 'result show';
     result.textContent = 'Checking...';
     try {
-      const [avail, priceRes] = await Promise.all([
-        fetch('/api/available/' + encodeURIComponent(name)).then(r => r.json()),
-        fetch('/api/price/' + encodeURIComponent(name)).then(r => r.json()),
-      ]);
+      const avail = await fetch('/api/available/' + encodeURIComponent(name)).then(r => r.json());
       if (avail.available) {
         result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span class="available">.hazza.name</span> is available! '
-          + '<strong>$' + escHtml(priceRes.basePrice) + '</strong> + $2/yr renewal '
+          + '<strong>$5</strong> '
           + '<a href="/register?name=' + encodeURIComponent(name) + '" style="display:inline-block;padding:0.3rem 1rem;background:#00e676;color:#000;border-radius:6px;font-weight:700;font-size:0.85rem;vertical-align:middle;margin-left:0.5rem;text-decoration:none">Register</a>';
       } else {
         const res = await fetch('/api/resolve/' + encodeURIComponent(name)).then(r => r.json());
@@ -386,16 +444,83 @@ const SEARCH_SCRIPT = `
 const NAV = `
   <nav>
     <a class="logo" href="/"><span class="logo-icon">h</span></a>
-    <div class="links">
-      <a href="/domains">Domains</a>
-      <a href="/pricing">Pricing</a>
-      <a href="/about">About</a>
-      <a href="/docs">Docs</a>
+    <button class="hamburger" id="hamburger-btn" aria-label="Menu">&#9776;</button>
+    <div class="links" id="nav-links">
+      <a href="/register">register</a>
+      <a href="/dashboard">dashboard</a>
+      <a href="/pricing">pricing</a>
+      <a href="/about">about</a>
+      <a href="/docs">docs</a>
+      <button id="nav-connect-btn" class="nav-wallet-btn">connect</button>
     </div>
   </nav>`;
 
-function shell(title: string, description: string, body: string, script?: string, opts?: { externalScripts?: string[] }): string {
+const NAV_SCRIPT = `
+  (function() {
+    // Hamburger toggle
+    var hamburger = document.getElementById('hamburger-btn');
+    var navLinks = document.getElementById('nav-links');
+    if (hamburger && navLinks) {
+      hamburger.addEventListener('click', function() {
+        navLinks.classList.toggle('open');
+      });
+    }
+
+    // Wallet connect
+    var connectBtn = document.getElementById('nav-connect-btn');
+    if (!connectBtn) return;
+
+    function truncAddr(a) { return a.slice(0, 6) + '...' + a.slice(-4); }
+
+    function setConnected(addr) {
+      connectBtn.textContent = truncAddr(addr);
+      connectBtn.classList.add('connected');
+      try { sessionStorage.setItem('hazza_wallet', addr); } catch(e) {}
+    }
+
+    // Check for existing connection
+    if (typeof window.ethereum !== 'undefined') {
+      var saved = null;
+      try { saved = sessionStorage.getItem('hazza_wallet'); } catch(e) {}
+      if (saved) {
+        setConnected(saved);
+      } else if (window.ethereum.selectedAddress) {
+        setConnected(window.ethereum.selectedAddress);
+      }
+
+      connectBtn.addEventListener('click', function() {
+        if (connectBtn.classList.contains('connected')) return;
+        window.ethereum.request({ method: 'eth_requestAccounts' })
+          .then(function(accounts) {
+            if (accounts && accounts[0]) setConnected(accounts[0]);
+          })
+          .catch(function() {});
+      });
+
+      // Listen for account changes
+      window.ethereum.on && window.ethereum.on('accountsChanged', function(accounts) {
+        if (accounts && accounts[0]) {
+          setConnected(accounts[0]);
+        } else {
+          connectBtn.textContent = 'connect';
+          connectBtn.classList.remove('connected');
+          try { sessionStorage.removeItem('hazza_wallet'); } catch(e) {}
+        }
+      });
+    } else {
+      connectBtn.textContent = 'no wallet';
+      connectBtn.style.opacity = '0.5';
+      connectBtn.style.cursor = 'default';
+    }
+  })();
+`;
+
+/** Shell for subdomain profile pages — separate nav, absolute URLs, profile-specific icon */
+function profileShell(name: string, title: string, description: string, body: string, script?: string, opts?: { externalScripts?: string[]; ogImage?: string }): string {
   const externals = (opts?.externalScripts || []).map(src => `<script src="${src}"></script>`).join("\n  ");
+  const ogImg = opts?.ogImage || `https://hazza.name/api/og/${encodeURIComponent(name)}`;
+  // First char of name for the profile icon
+  const iconChar = name.charAt(0).toUpperCase();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -403,6 +528,57 @@ function shell(title: string, description: string, body: string, script?: string
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>${esc(title)}</title>
   <meta name="description" content="${esc(description)}">
+  <meta property="og:title" content="${esc(title)}">
+  <meta property="og:description" content="${esc(description)}">
+  <meta property="og:image" content="${ogImg}">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="${esc(title)}">
+  <meta name="twitter:description" content="${esc(description)}">
+  <meta name="twitter:image" content="${ogImg}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>${encodeURIComponent(iconChar)}</text></svg>">
+  <style>${STYLES}</style>
+</head>
+<body>
+  <nav>
+    <a class="logo" href="https://${encodeURIComponent(name)}.hazza.name"><span class="logo-icon">${esc(iconChar)}</span></a>
+    <div class="links">
+      <a href="https://hazza.name/manage?name=${encodeURIComponent(name)}">edit</a>
+      <a href="https://hazza.name/register">register</a>
+      <a href="https://hazza.name">hazza.name</a>
+    </div>
+  </nav>
+  <div class="container">
+    ${body}
+    <div class="footer">
+      <p>Powered by <a href="https://x402.org">x402</a> and <a href="https://netprotocol.app">Net Protocol</a> on <a href="https://base.org">Base</a></p>
+    </div>
+  </div>
+  ${externals}
+  ${script ? `<script>${script}</script>` : ""}
+</body>
+</html>`;
+}
+
+function shell(title: string, description: string, body: string, script?: string, opts?: { externalScripts?: string[]; ogImage?: string }): string {
+  const externals = (opts?.externalScripts || []).map(src => `<script src="${src}"></script>`).join("\n  ");
+  const ogImg = opts?.ogImage || "https://hazza.name/api/og/hazza";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>${esc(title)}</title>
+  <meta name="description" content="${esc(description)}">
+  <meta property="og:title" content="${esc(title)}">
+  <meta property="og:description" content="${esc(description)}">
+  <meta property="og:image" content="${ogImg}">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="${esc(title)}">
+  <meta name="twitter:description" content="${esc(description)}">
+  <meta name="twitter:image" content="${ogImg}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>h</text></svg>">
   <style>${STYLES}</style>
 </head>
 <body>
@@ -414,6 +590,7 @@ function shell(title: string, description: string, body: string, script?: string
     </div>
   </div>
   ${externals}
+  <script>${NAV_SCRIPT}</script>
   ${script ? `<script>${script}</script>` : ""}
 </body>
 </html>`;
@@ -435,23 +612,19 @@ export function landingPage(): string {
     </div>
     <div class="result" id="result"></div>
 
-    <p style="text-align:center;color:#fff;font-size:1.1rem;font-weight:700;margin:1rem auto">
-      One <a href="https://x402.org" style="color:#00e676">x402</a> payment handles everything.
-    </p>
-
-    <div class="feature-block" style="margin-top:0">
+    <div class="feature-block" style="margin-top:1.5rem">
       <div style="display:grid;gap:1rem">
         <div>
-          <div class="feature-title">Your Website</div>
-          <p><strong style="color:#fff">yourname.hazza.name</strong> instantly hosted via <a href="https://netprotocol.app">Net Protocol</a>.</p>
+          <div class="feature-title">Profile</div>
+          <p>Live at <strong style="color:#fff">yourname.hazza.name</strong>. Bio, socials, avatar, links &mdash; all onchain.</p>
         </div>
         <div>
-          <div class="feature-title">Your Agent</div>
-          <p>Register an AI agent endpoint. <strong style="color:#fff">ERC-8004</strong> compatible.</p>
+          <div class="feature-title">Agent</div>
+          <p>Register an AI agent endpoint. <strong style="color:#fff">ERC-8004</strong> compatible. Discoverable by other agents.</p>
         </div>
         <div>
-          <div class="feature-title">Your DNS</div>
-          <p>Link a custom <strong style="color:#fff">domain</strong>. Subdomain routing, content hosting, and API access built in.</p>
+          <div class="feature-title">API</div>
+          <p>Register from any HTTP client via <a href="https://x402.org" style="font-weight:700">x402</a>. Pay USDC, get a name. No wallet extension needed.</p>
         </div>
       </div>
     </div>`,
@@ -467,27 +640,20 @@ const ETHERS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.
 
 const REGISTER_SCRIPT = `
   const cfg = document.getElementById('hazza-config');
-  const REGISTRY = cfg.dataset.registry;
   const USDC_ADDRESS = cfg.dataset.usdc;
   const CHAIN_ID = parseInt(cfg.dataset.chainid);
   const rawNameParam = new URLSearchParams(window.location.search).get('name') || '';
   const nameParam = rawNameParam.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
 
   function escHtml(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+  function sanitizeName(n) { return n.replace(/[^a-z0-9-]/g, '').slice(0, 64); }
 
-  const REGISTRY_ABI = [
-    "function commit(bytes32 commitHash) external",
-    "function register(string name, address nameOwner, bytes32 salt, uint256 numYears, bool wantAgent, address agentWallet, string agentURI) external",
-    "function available(string name) view returns (bool)",
-    "function quoteName(string name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee)"
-  ];
   const ERC20_ABI = [
-    "function approve(address spender, uint256 amount) external returns (bool)",
-    "function allowance(address owner, address spender) view returns (uint256)",
+    "function transfer(address to, uint256 amount) external returns (bool)",
     "function balanceOf(address account) view returns (uint256)"
   ];
 
-  let provider, signer, userAddress;
+  let provider, signer, userAddress, relayerAddress, totalCostRaw;
 
   // --- UI helpers ---
   const $ = id => document.getElementById(id);
@@ -503,24 +669,49 @@ const REGISTER_SCRIPT = `
     el.style.display = 'block';
   }
 
+  // --- Search on the register page ---
+  async function regSearch() {
+    const raw = $('reg-search-input').value.trim().toLowerCase();
+    const name = sanitizeName(raw);
+    if (!name) return;
+    const result = $('reg-search-result');
+    result.className = 'result show';
+    result.textContent = 'Checking...';
+    try {
+      const avail = await fetch('/api/available/' + encodeURIComponent(name)).then(r => r.json());
+      if (avail.available) {
+        result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span style="color:#00e676">.hazza.name</span> is available! <strong>$5 USDC</strong> '
+          + '<a href="/register?name=' + encodeURIComponent(name) + '" style="display:inline-block;padding:0.3rem 1rem;background:#00e676;color:#000;border-radius:6px;font-weight:700;font-size:0.85rem;vertical-align:middle;margin-left:0.5rem;text-decoration:none">Register</a>';
+      } else {
+        const res = await fetch('/api/resolve/' + encodeURIComponent(name)).then(r => r.json());
+        result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span style="color:#ff5252">.hazza.name</span> is taken. '
+          + 'Owner: <a href="https://basescan.org/address/' + escHtml(res.owner) + '">'
+          + escHtml(res.owner.slice(0, 6) + '...' + res.owner.slice(-4)) + '</a>';
+      }
+    } catch (e) {
+      result.textContent = 'Error checking name. Try again.';
+    }
+  }
+
   // --- Load name info ---
   async function loadName() {
     if (!nameParam) {
-      $('register-body').innerHTML = '<p style="color:#ff5252;text-align:center">No name specified. <a href="/">Search for a name</a></p>';
+      // No name param — show search UI
+      $('reg-search-section').style.display = 'block';
+      $('reg-checkout-section').style.display = 'none';
       return;
     }
+    $('reg-search-section').style.display = 'none';
+    $('reg-checkout-section').style.display = 'block';
     $('reg-name').textContent = nameParam + '.hazza.name';
     try {
-      const [avail, priceRes] = await Promise.all([
-        fetch('/api/available/' + encodeURIComponent(nameParam)).then(r => r.json()),
-        fetch('/api/price/' + encodeURIComponent(nameParam)).then(r => r.json()),
-      ]);
+      const avail = await fetch('/api/available/' + encodeURIComponent(nameParam)).then(r => r.json());
       if (!avail.available) {
-        $('register-body').innerHTML = '<p style="color:#ff5252;text-align:center">' + escHtml(nameParam) + '.hazza.name is already taken. <a href="/">Try another name</a></p>';
+        $('reg-checkout-section').innerHTML = '<p style="color:#ff5252;text-align:center">' + escHtml(nameParam) + '.hazza.name is already taken. <a href="/register">Try another name</a></p>';
         return;
       }
-      $('reg-price').textContent = '$' + priceRes.basePrice;
-      $('reg-renewal').textContent = '+ $2/yr renewal';
+      $('reg-price').textContent = '$5';
+      $('reg-renewal').textContent = '1 year included';
       $('connect-section').style.display = 'block';
     } catch (e) {
       showStatus('Error loading name info. Try again.', true);
@@ -550,8 +741,28 @@ const REGISTER_SCRIPT = `
           provider = new ethers.BrowserProvider(window.ethereum);
           signer = await provider.getSigner();
         } catch (switchErr) {
-          showStatus('Please switch to Base Sepolia (chain ' + CHAIN_ID + ') in your wallet.', true);
-          return;
+          if (switchErr.code === 4902) {
+            try {
+              await window.ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [{
+                  chainId: '0x' + CHAIN_ID.toString(16),
+                  chainName: CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base',
+                  nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                  rpcUrls: [CHAIN_ID === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
+                  blockExplorerUrls: [CHAIN_ID === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
+                }],
+              });
+              provider = new ethers.BrowserProvider(window.ethereum);
+              signer = await provider.getSigner();
+            } catch (addErr) {
+              showStatus('Could not add the chain. Please add Base Sepolia manually.', true);
+              return;
+            }
+          } else {
+            showStatus('Please switch to ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' in your wallet.', true);
+            return;
+          }
         }
       }
 
@@ -560,6 +771,25 @@ const REGISTER_SCRIPT = `
       $('connect-btn').textContent = 'Connected';
       $('connect-btn').disabled = true;
       $('connect-btn').style.opacity = '0.6';
+
+      // Check ENS name suggestions (non-blocking)
+      fetch('/api/ens-names/' + userAddress).then(r => r.json()).then(function(data) {
+        if (data.suggestions && data.suggestions.length > 0) {
+          var s = data.suggestions[0];
+          var box = $('ens-suggestion');
+          if (s.available) {
+            box.innerHTML = '<span style="color:#6b8f6b;font-size:0.85rem">Your ENS: <strong style="color:#fff">' + escHtml(s.ensSource) + '</strong></span><br>'
+              + '<span style="color:#00e676;font-weight:700">' + escHtml(s.name) + '.hazza.name</span> is available! '
+              + '<a href="/register?name=' + encodeURIComponent(s.name) + '" style="display:inline-block;padding:0.2rem 0.75rem;background:#00e676;color:#000;border-radius:6px;font-weight:700;font-size:0.8rem;text-decoration:none;margin-left:0.5rem">Claim it</a>';
+            box.style.display = 'block';
+            box.style.borderColor = '#00e676';
+          } else {
+            box.innerHTML = '<span style="color:#6b8f6b;font-size:0.85rem">Your ENS: <strong style="color:#fff">' + escHtml(s.ensSource) + '</strong></span><br>'
+              + '<span style="color:#aaa;font-size:0.85rem">' + escHtml(s.name) + '.hazza.name is already registered</span>';
+            box.style.display = 'block';
+          }
+        }
+      }).catch(function() {});
 
       // Load quote with wallet
       await loadQuote();
@@ -570,102 +800,89 @@ const REGISTER_SCRIPT = `
     }
   }
 
-  // --- Load quote ---
+  // --- Load quote via x402 ---
   async function loadQuote() {
     try {
-      const res = await fetch('/api/quote/' + nameParam + '?wallet=' + userAddress + '&years=1').then(r => r.json());
-      $('quote-total').textContent = '$' + res.total;
-      if (res.lineItems) {
-        let html = '';
-        for (const item of res.lineItems) {
-          html += '<div style="display:flex;justify-content:space-between;color:#aaa;font-size:0.85rem;padding:0.25rem 0">';
-          html += '<span>' + item.label + '</span><span>' + item.amount + '</span></div>';
-        }
-        $('quote-details').innerHTML = html;
+      // Hit x402 endpoint to get price + relayer address
+      const res = await fetch('/x402/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nameParam, owner: userAddress, years: 1 }),
+      });
+      const data = await res.json();
+      if (res.status === 402) {
+        relayerAddress = data.accepts[0].payTo;
+        totalCostRaw = BigInt(data.accepts[0].maxAmountRequired);
+        $('quote-total').textContent = '$' + data.price + ' USDC';
+      } else {
+        $('quote-total').textContent = data.error || 'Error loading price';
       }
     } catch (e) {
       $('quote-total').textContent = 'Error loading price';
     }
   }
 
-  // --- Checkout flow ---
+  // --- Checkout flow (x402: transfer USDC to relayer → server registers) ---
   async function checkout() {
+    if (!relayerAddress || !totalCostRaw) {
+      showStatus('Price not loaded. Refresh and try again.', true);
+      return;
+    }
     $('checkout-btn').disabled = true;
     $('checkout-steps').style.display = 'block';
     $('status').style.display = 'none';
 
-    const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
     const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
 
     try {
-      // Get exact cost from contract
-      const [totalCost] = await registry.quoteName(nameParam, userAddress, 1, 0, false, false);
-
       // Step 1: Check USDC balance
       setStep(1, 'active');
+      showStatus('Checking balance...', false);
       const balance = await usdc.balanceOf(userAddress);
-      if (balance < totalCost) {
-        showStatus('Insufficient USDC balance. Need ' + ethers.formatUnits(totalCost, 6) + ' USDC.', true);
+      if (balance < totalCostRaw) {
+        showStatus('Insufficient USDC balance. Need ' + ethers.formatUnits(totalCostRaw, 6) + ' USDC.', true);
         setStep(1, 'error');
         $('checkout-btn').disabled = false;
         return;
       }
 
-      // Step 1: Approve USDC
-      const allowance = await usdc.allowance(userAddress, REGISTRY);
-      if (allowance < totalCost) {
-        showStatus('Approving USDC...', false);
-        const approveTx = await usdc.approve(REGISTRY, totalCost);
-        await approveTx.wait();
-      }
+      // Step 1: Transfer USDC to relayer
+      showStatus('Confirm USDC transfer in your wallet...', false);
+      const transferTx = await usdc.transfer(relayerAddress, totalCostRaw);
+      const receipt = await transferTx.wait();
       setStep(1, 'done');
 
-      // Step 2: Commit
+      // Step 2: Submit payment proof to x402 endpoint
       setStep(2, 'active');
-      showStatus('Submitting commitment...', false);
-      const salt = ethers.randomBytes(32);
-      const saltHex = ethers.hexlify(salt);
-      const commitHash = ethers.keccak256(ethers.solidityPacked(
-        ['string', 'address', 'bytes32'],
-        [nameParam, userAddress, saltHex]
-      ));
-      const commitTx = await registry.commit(commitHash);
-      await commitTx.wait();
+      showStatus('Registering your name...', false);
+      const payment = btoa(JSON.stringify({
+        scheme: 'exact',
+        txHash: receipt.hash,
+        from: userAddress,
+      }));
+      const regRes = await fetch('/x402/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-PAYMENT': payment,
+        },
+        body: JSON.stringify({ name: nameParam, owner: userAddress, years: 1 }),
+      });
+      const regData = await regRes.json();
+      if (!regRes.ok) {
+        throw new Error(regData.error || regData.detail || 'Registration failed');
+      }
       setStep(2, 'done');
 
-      // Step 3: Wait 60 seconds
-      setStep(3, 'active');
-      let countdown = 65;
-      const timer = setInterval(() => {
-        countdown--;
-        $('countdown').textContent = countdown + 's';
-        if (countdown <= 0) clearInterval(timer);
-      }, 1000);
-      await new Promise(resolve => setTimeout(resolve, 65000));
-      clearInterval(timer);
+      // Step 3: Done
       setStep(3, 'done');
-
-      // Step 4: Register
-      setStep(4, 'active');
-      showStatus('Registering name...', false);
-      const registerTx = await registry.register(
-        nameParam,
-        userAddress,
-        saltHex,
-        1,     // numYears
-        false, // wantAgent
-        ethers.ZeroAddress, // agentWallet
-        ""     // agentURI
-      );
-      await registerTx.wait();
-      setStep(4, 'done');
-
-      // Step 5: Done
-      setStep(5, 'done');
       showStatus('', false);
+      $('checkout-steps').style.display = 'none';
       $('success-section').style.display = 'block';
+      $('success-name').textContent = nameParam + '.hazza.name';
       $('success-link').href = 'https://' + nameParam + '.hazza.name';
-      $('success-link').textContent = nameParam + '.hazza.name';
+      $('success-link').textContent = 'view ' + nameParam + '.hazza.name';
+      $('success-manage').href = '/manage?name=' + encodeURIComponent(nameParam);
       $('checkout-btn').style.display = 'none';
 
     } catch (e) {
@@ -676,8 +893,12 @@ const REGISTER_SCRIPT = `
   }
 
   // --- Init ---
-  $('connect-btn').addEventListener('click', connectWallet);
-  $('checkout-btn').addEventListener('click', checkout);
+  $('connect-btn')?.addEventListener('click', connectWallet);
+  $('checkout-btn')?.addEventListener('click', checkout);
+  const regSearchBtn = $('reg-search-btn');
+  const regSearchInput = $('reg-search-input');
+  if (regSearchBtn) regSearchBtn.addEventListener('click', regSearch);
+  if (regSearchInput) regSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') regSearch(); });
   loadName();
 `;
 
@@ -686,9 +907,33 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
     "HAZZA \u2014 Register",
     "Register a HAZZA name. Connect your wallet, pay with USDC, and get your onchain name instantly.",
     `<div id="hazza-config" data-registry="${registryAddress}" data-usdc="${usdcAddress}" data-chainid="${chainId}" style="display:none"></div>
-    <div id="register-body">
+
     <div class="header">
-      <h1 id="reg-name" style="word-break:break-word"></h1>
+      <h1>register</h1>
+      <p>claim your onchain name</p>
+    </div>
+
+    <!-- ENS suggestion (shown after wallet connect if user has ENS) -->
+    <div id="ens-suggestion" style="display:none;margin-bottom:1rem;padding:0.75rem 1rem;background:#0d1a0d;border:1px solid #1a2e1a;border-radius:8px;text-align:center">
+    </div>
+
+    <!-- Search section (shown when no ?name= param) -->
+    <div id="reg-search-section" style="display:none">
+      <div class="search-box">
+        <input type="text" id="reg-search-input" placeholder="search for a name..." autocomplete="off" spellcheck="false">
+        <button id="reg-search-btn">Search</button>
+      </div>
+      <div class="result" id="reg-search-result"></div>
+      <div style="margin-top:1.5rem;color:#6b8f6b;font-size:0.9rem;line-height:1.7;text-align:center">
+        <p><strong style="color:#fff">$5</strong> for any name. 1 year included.</p>
+        <p style="margin-top:0.5rem">renew for $2/yr after that. pay with USDC on Base.</p>
+      </div>
+    </div>
+
+    <!-- Checkout section (shown when ?name= param is provided) -->
+    <div id="reg-checkout-section" style="display:none">
+    <div style="text-align:center;margin-bottom:0.5rem">
+      <h2 id="reg-name" style="font-weight:900;color:#fff;font-size:1.5rem;word-break:break-word"></h2>
     </div>
 
     <div style="text-align:center;margin-bottom:1.5rem">
@@ -717,31 +962,28 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
       <div id="checkout-steps" style="display:none">
         <div id="step-1" class="checkout-step pending">
           <span class="step-icon"></span>
-          <span>Approve USDC</span>
+          <span>transfer USDC</span>
         </div>
         <div id="step-2" class="checkout-step pending">
           <span class="step-icon"></span>
-          <span>Submit commitment</span>
+          <span>register name</span>
         </div>
         <div id="step-3" class="checkout-step pending">
           <span class="step-icon"></span>
-          <span>Waiting for confirmation <span id="countdown"></span></span>
-        </div>
-        <div id="step-4" class="checkout-step pending">
-          <span class="step-icon"></span>
-          <span>Register name</span>
-        </div>
-        <div id="step-5" class="checkout-step pending">
-          <span class="step-icon"></span>
-          <span>Done</span>
+          <span>done</span>
         </div>
       </div>
 
       <div id="status" style="display:none;text-align:center;padding:0.75rem;font-size:0.9rem;margin-top:1rem"></div>
 
-      <div id="success-section" style="display:none;text-align:center;margin-top:1.5rem">
-        <p style="color:#00e676;font-weight:700;font-size:1.2rem;margin-bottom:0.75rem">Name registered!</p>
-        <a id="success-link" href="#" style="display:inline-block;padding:0.75rem 2rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;text-decoration:none">Visit your profile</a>
+      <div id="success-section" style="display:none;text-align:center;margin-top:2rem;padding:1.5rem;background:#0d1a0d;border:1px solid #00e676;border-radius:12px">
+        <p style="color:#00e676;font-weight:900;font-size:1.4rem;margin-bottom:0.5rem">registered!</p>
+        <p id="success-name" style="color:#fff;font-weight:700;font-size:1.1rem;margin-bottom:1rem"></p>
+        <a id="success-link" href="#" style="display:inline-block;padding:0.75rem 2rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;text-decoration:none;margin-bottom:0.5rem">view your page</a>
+        <div style="display:flex;justify-content:center;gap:1.5rem;margin-top:0.75rem">
+          <a id="success-manage" href="#" style="color:#6b8f6b;font-size:0.85rem">manage &rarr;</a>
+          <a href="/dashboard" style="color:#6b8f6b;font-size:0.85rem">dashboard &rarr;</a>
+        </div>
       </div>
     </div>
     </div>`,
@@ -858,8 +1100,28 @@ const MANAGE_SCRIPT = `
           provider = new ethers.BrowserProvider(window.ethereum);
           signer = await provider.getSigner();
         } catch (e) {
-          showMsg('Please switch to the correct chain in your wallet.', true);
-          return;
+          if (e.code === 4902) {
+            try {
+              await window.ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [{
+                  chainId: '0x' + CHAIN_ID.toString(16),
+                  chainName: CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base',
+                  nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                  rpcUrls: [CHAIN_ID === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
+                  blockExplorerUrls: [CHAIN_ID === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
+                }],
+              });
+              provider = new ethers.BrowserProvider(window.ethereum);
+              signer = await provider.getSigner();
+            } catch (addErr) {
+              showMsg('Could not add the chain. Please add it manually.', true);
+              return;
+            }
+          } else {
+            showMsg('Please switch to ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' in your wallet.', true);
+            return;
+          }
         }
       }
 
@@ -1095,6 +1357,9 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
     </div>
 
     <div id="edit-section" style="display:none">
+      <p style="color:#6b8f6b;font-size:0.8rem;margin-bottom:1rem">
+        Setting text records costs Base gas (~$0.01 per transaction). Changes are onchain and permanent.
+      </p>
       <div class="section">
         <div class="section-title">Profile</div>
         ${fieldRow("Bio", "description", "field-description", "A short bio...")}
@@ -1142,6 +1407,18 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
           <input id="field-domain" type="text" placeholder="example.com" style="flex:1;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif;outline:none">
           <button onclick="saveDomain()" style="padding:0.5rem 1rem;background:#1a2e1a;color:#00e676;border:1px solid #00e676;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.85rem;font-family:'Rubik',sans-serif">Set</button>
         </div>
+      </div>
+
+      <hr class="divider">
+
+      <div class="section">
+        <div class="section-title">Website</div>
+        <p style="color:#aaa;font-size:0.85rem;margin-bottom:0.75rem">Host a custom website on your subdomain via <a href="https://netprotocol.app">Net Protocol</a>. Upload HTML to Net Protocol, then paste the storage key here.</p>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input id="field-sitekey" type="text" placeholder="my-site-key" style="flex:1;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif;outline:none">
+          <button onclick="saveField('site.key','field-sitekey')" style="padding:0.5rem 1rem;background:#1a2e1a;color:#00e676;border:1px solid #00e676;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.85rem;font-family:'Rubik',sans-serif">Set</button>
+        </div>
+        <p style="color:#6b8f6b;font-size:0.75rem;margin-top:0.5rem">Your subdomain will serve the HTML directly instead of the profile page.</p>
       </div>
 
       <hr class="divider">
@@ -1225,7 +1502,7 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
       </div>
 
       <div style="text-align:center;margin:1.5rem 0">
-        <a id="profile-link" href="#" style="color:#6b8f6b;font-size:0.85rem">View profile &rarr;</a>
+        <a id="profile-link" href="#" style="color:#6b8f6b;font-size:0.85rem">view page &rarr;</a>
       </div>
     </div>
     </div>`,
@@ -1233,6 +1510,166 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
     { externalScripts: [ETHERS_CDN] }
   );
 }
+
+// =========================================================================
+//                        DASHBOARD PAGE
+// =========================================================================
+
+const DASHBOARD_SCRIPT = `
+  const cfg = document.getElementById('hazza-config');
+  const REGISTRY = cfg.dataset.registry;
+  const CHAIN_ID = parseInt(cfg.dataset.chainid);
+
+  function escHtml(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+  const REGISTRY_ABI = [
+    "function primaryName(address wallet) view returns (bytes32)"
+  ];
+
+  let provider, signer, userAddress;
+  const $ = id => document.getElementById(id);
+
+  function showStatus(msg, isError) {
+    const el = $('dash-status');
+    el.textContent = msg;
+    el.style.color = isError ? '#ff5252' : '#00e676';
+    el.style.display = msg ? 'block' : 'none';
+  }
+
+  async function connectWallet() {
+    if (!window.ethereum) {
+      showStatus('No wallet detected. Please install MetaMask or another browser wallet.', true);
+      return;
+    }
+    try {
+      provider = new ethers.BrowserProvider(window.ethereum);
+      const accounts = await provider.send('eth_requestAccounts', []);
+      userAddress = accounts[0];
+      signer = await provider.getSigner();
+
+      const network = await provider.getNetwork();
+      if (Number(network.chainId) !== CHAIN_ID) {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: '0x' + CHAIN_ID.toString(16) }],
+          });
+          provider = new ethers.BrowserProvider(window.ethereum);
+          signer = await provider.getSigner();
+        } catch (switchErr) {
+          if (switchErr.code === 4902) {
+            try {
+              await window.ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [{
+                  chainId: '0x' + CHAIN_ID.toString(16),
+                  chainName: CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base',
+                  nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                  rpcUrls: [CHAIN_ID === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
+                  blockExplorerUrls: [CHAIN_ID === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
+                }],
+              });
+              provider = new ethers.BrowserProvider(window.ethereum);
+              signer = await provider.getSigner();
+            } catch (addErr) {
+              showStatus('Could not add the chain. Please add it manually.', true);
+              return;
+            }
+          } else {
+            showStatus('Please switch to ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' in your wallet.', true);
+            return;
+          }
+        }
+      }
+
+      $('connect-section').style.display = 'none';
+      $('dash-wallet').textContent = userAddress.slice(0, 6) + '...' + userAddress.slice(-4);
+      $('dash-wallet').style.display = 'inline';
+      $('dash-content').style.display = 'block';
+      loadNames();
+    } catch (e) {
+      showStatus('Wallet connection failed: ' + (e.message || e), true);
+    }
+  }
+
+  async function loadNames() {
+    const list = $('names-list');
+    list.innerHTML = '<span style="color:#888;font-size:0.85rem">loading...</span>';
+    try {
+      const res = await fetch('/api/names/' + encodeURIComponent(userAddress));
+      const data = await res.json();
+      if (!data.names || data.names.length === 0) {
+        list.innerHTML = '<div style="text-align:center;padding:2rem 0">'
+          + '<p style="color:#6b8f6b;margin-bottom:1rem">no names yet</p>'
+          + '<a href="/register" style="display:inline-block;padding:0.6rem 1.5rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;text-decoration:none">register your first name</a>'
+          + '</div>';
+        return;
+      }
+      $('names-count').textContent = data.total + ' name' + (data.total === 1 ? '' : 's');
+
+      let html = '';
+      for (const n of data.names) {
+        const expires = new Date(n.expiresAt * 1000);
+        const daysLeft = Math.max(0, Math.ceil((expires.getTime() - Date.now()) / 86400000));
+        const statusColor = n.status === 'active' ? '#00e676' : n.status === 'grace' ? '#ffab00' : n.status === 'redemption' ? '#ff5252' : '#444';
+        const statusLabel = n.status === 'active' ? 'active' : n.status === 'grace' ? 'grace period' : n.status === 'redemption' ? 'redemption' : 'expired';
+        const daysText = n.status === 'active' ? daysLeft + ' days left' : n.status === 'grace' ? 'grace: ' + daysLeft + 'd left' : n.status === 'redemption' ? 'redemption: ' + daysLeft + 'd left' : 'released';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem 1rem;background:#111;border:1px solid #1a2e1a;border-radius:8px;margin-bottom:0.5rem">';
+        html += '<div>';
+        html += '<a href="https://' + escHtml(n.name) + '.hazza.name" style="color:#fff;font-weight:700;font-size:0.95rem">' + escHtml(n.name) + '<span style="color:#00e676">.hazza.name</span></a>';
+        html += '<div style="display:flex;gap:0.75rem;margin-top:0.25rem;font-size:0.75rem;color:#6b8f6b">';
+        html += '<span style="color:' + statusColor + '">' + escHtml(statusLabel) + '</span>';
+        html += '<span>' + escHtml(daysText) + '</span>';
+        html += '</div></div>';
+        html += '<div style="display:flex;gap:0.5rem">';
+        html += '<a href="/manage?name=' + encodeURIComponent(n.name) + '" style="color:#00e676;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">manage</a>';
+        if (n.status !== 'expired') html += '<a href="/manage?name=' + encodeURIComponent(n.name) + '&action=renew" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">renew</a>';
+        html += '</div></div>';
+      }
+      if (data.total > 50) html += '<p style="color:#888;font-size:0.8rem;margin-top:0.5rem">showing 50 of ' + data.total + '</p>';
+      html += '<p style="color:#333;font-size:0.75rem;margin-top:2rem;text-align:center">Inline renewal, namespace management, and transfer &mdash; coming soon</p>';
+      list.innerHTML = html;
+    } catch (e) {
+      list.innerHTML = '<span style="color:#ff5252;font-size:0.85rem">error loading names</span>';
+    }
+  }
+
+  $('connect-btn').addEventListener('click', connectWallet);
+`;
+
+export function dashboardPage(registryAddress: string, usdcAddress: string, chainId: string): string {
+  return shell(
+    "HAZZA \u2014 Dashboard",
+    "View and manage all your HAZZA names from one place.",
+    `<div id="hazza-config" data-registry="${registryAddress}" data-usdc="${usdcAddress}" data-chainid="${chainId}" style="display:none"></div>
+
+    <div class="header">
+      <h1>dashboard</h1>
+      <p>your names <span id="dash-wallet" style="display:none;color:#6b8f6b;font-size:0.85rem"></span></p>
+    </div>
+
+    <div id="connect-section" style="text-align:center;margin:2rem 0">
+      <p style="color:#6b8f6b;margin-bottom:1rem">connect your wallet to see your names</p>
+      <button id="connect-btn" style="padding:0.75rem 2rem;background:#00e676;color:#000;border:none;border-radius:8px;font-weight:700;font-size:1rem;cursor:pointer;font-family:'Rubik',sans-serif">connect wallet</button>
+    </div>
+
+    <div id="dash-status" style="display:none;text-align:center;padding:0.75rem;font-size:0.9rem;margin-bottom:1rem"></div>
+
+    <div id="dash-content" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+        <span id="names-count" style="color:#6b8f6b;font-size:0.85rem"></span>
+        <a href="/register" style="color:#00e676;font-size:0.85rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">+ register new</a>
+      </div>
+      <div id="names-list"></div>
+    </div>`,
+    DASHBOARD_SCRIPT,
+    { externalScripts: [ETHERS_CDN] }
+  );
+}
+
+// =========================================================================
+//                        PROFILE PAGE (name.hazza.name)
+// =========================================================================
 
 type ProfileData = {
   owner: string;
@@ -1422,25 +1859,37 @@ export function profilePage(name: string, data: ProfileData | null): string {
       onchainBlocks.push(`<div style="margin-bottom:1rem"><div style="color:#6b8f6b;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem">Exoskeleton</div><div class="info-grid">${exoRows.join("")}</div><div style="text-align:right;margin-top:0.35rem;font-size:0.65rem;color:#444">100% onchain &middot; <a href="https://exoagent.xyz" style="color:#666">exoagent.xyz</a></div></div>`);
     }
 
-    // Build the unified Onchain Profile section
+    // Build the unified Onchain Profile section (collapsible)
     const onchainProfileHtml = onchainBlocks.length
-      ? `<div class="section">
-          <div class="section-title">Onchain Profile</div>
+      ? `<details class="collapsible">
+          <summary>Onchain Profile</summary>
+          <div class="section-content">
           ${onchainBlocks.join('<hr style="border:none;border-top:1px solid #1a2e1a;margin:0.75rem 0">')}
-        </div>`
+          </div>
+        </details>`
       : "";
 
-    // Contenthash section
+    // Contenthash section (collapsible)
     const contenthashHtml = data.contenthash
-      ? `<div class="section">
-          <div class="section-title">Contenthash</div>
+      ? `<details class="collapsible">
+          <summary>Contenthash</summary>
+          <div class="section-content">
           <div class="info-grid">
             <div class="info-row">
               <span class="label">Hash</span>
               <span class="value" style="font-size:0.75rem">${esc(data.contenthash.slice(0, 18) + "..." + data.contenthash.slice(-8))}</span>
             </div>
           </div>
-        </div>`
+          </div>
+        </details>`
+      : "";
+
+    // Setup prompt for sparse profiles
+    const hasBio = !!texts["description"];
+    const hasAvatar = !!texts["avatar"];
+    const hasSocials = !!(texts["com.twitter"] || texts["xyz.farcaster"] || texts["com.github"] || texts["org.telegram"] || texts["com.discord"] || texts["com.linkedin"]);
+    const setupHtml = (!hasBio && !hasAvatar && !hasSocials)
+      ? `<div style="margin-top:1rem;padding:0.75rem 1rem;background:#0d1f0d;border:1px solid #1a2e1a;border-radius:8px;text-align:center"><span style="color:#6b8f6b;font-size:0.85rem">This profile is empty. <a href="https://hazza.name/manage?name=${encodeURIComponent(name)}" style="color:#00e676;font-weight:700">Set it up</a></span></div>`
       : "";
 
     content = `
@@ -1451,10 +1900,12 @@ export function profilePage(name: string, data: ProfileData | null): string {
       ${statusBadge(data.status)}
       ${badgesHtml}
       ${socialsHtml}
+      ${setupHtml}
     </div>
 
-    <div class="section">
-      <div class="section-title">Name Info</div>
+    <details class="collapsible">
+      <summary>Name Info</summary>
+      <div class="section-content">
       <div class="info-grid">
         <div class="info-row">
           <span class="label">Owner</span>
@@ -1481,13 +1932,14 @@ export function profilePage(name: string, data: ProfileData | null): string {
           <span class="value"><a href="https://${encodeURIComponent(name)}.hazza.name">${esc(name)}.hazza.name</a></span>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
     ${onchainProfileHtml}
     ${contenthashHtml}
 
     <div style="display:flex;justify-content:center;gap:1rem;margin-top:2rem;flex-wrap:wrap">
-      <a href="https://hazza.name/manage?name=${encodeURIComponent(name)}" style="display:inline-block;padding:0.6rem 1.5rem;border:1px solid #00e676;color:#00e676;border-radius:8px;font-weight:700;font-size:0.9rem;text-decoration:none">Edit Profile</a>
+      <a href="https://hazza.name/manage?name=${encodeURIComponent(name)}" style="display:inline-block;padding:0.6rem 1.5rem;border:1px solid #00e676;color:#00e676;border-radius:8px;font-weight:700;font-size:0.9rem;text-decoration:none">manage</a>
       ${data.status === "grace" || data.status === "redemption" ? `<a href="https://hazza.name/manage?name=${encodeURIComponent(name)}" style="display:inline-block;padding:0.6rem 1.5rem;background:#ffab00;color:#000;border:none;border-radius:8px;font-weight:700;font-size:0.9rem;text-decoration:none">Renew Now</a>` : ""}
     </div>`;
   } else {
@@ -1499,7 +1951,8 @@ export function profilePage(name: string, data: ProfileData | null): string {
     </div>`;
   }
 
-  return shell(
+  return profileShell(
+    name,
     title,
     data ? `${name}.hazza.name \u2014 owned by ${data.owner}` : `${name}.hazza.name is available on HAZZA`,
     content
@@ -1533,11 +1986,11 @@ export function aboutPage(): string {
         <div class="info-row"><span class="label">NFT</span><span class="value">Your name as an ERC-721 on Base</span></div>
         <div class="info-row"><span class="label">Website</span><span class="value">Live page at yourname.hazza.name</span></div>
         <div class="info-row"><span class="label">Profile</span><span class="value">Bio, socials, avatar &mdash; all onchain</span></div>
-        <div class="info-row"><span class="label">Content</span><span class="value">Host via Net Protocol &amp; IPFS (ENSIP-7)</span></div>
+        <div class="info-row"><span class="label">Content</span><span class="value">Host via <a href="https://netprotocol.app">Net Protocol</a> (ENSIP-7)</span></div>
         <div class="info-row"><span class="label">Agent</span><span class="value">ERC-8004 AI agent registration</span></div>
         <div class="info-row"><span class="label">DNS</span><span class="value">Custom domain linking</span></div>
-        <div class="info-row"><span class="label">Addresses</span><span class="value">Multi-chain (ENSIP-9/11)</span></div>
-        <div class="info-row"><span class="label">Subnames</span><span class="value">Namespace delegation for teams</span></div>
+        <div class="info-row"><span class="label">Addresses</span><span class="value">Multi-chain via API (ENSIP-9/11)</span></div>
+        <div class="info-row"><span class="label">Subnames</span><span class="value">$20 add-on &mdash; namespace delegation for teams</span></div>
         <div class="info-row"><span class="label">Unicode</span><span class="value">ENSIP-15 emoji &amp; unicode support</span></div>
         <div class="info-row"><span class="label">API</span><span class="value">Programmatic access to everything</span></div>
       </div>
@@ -1546,13 +1999,13 @@ export function aboutPage(): string {
     <div class="section">
       <div class="section-title">How it works</div>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        One <a href="https://x402.org" style="font-weight:700">x402</a> payment in USDC on Base &mdash; that's it.
-        Your name is minted as an NFT, your website goes live, your agent endpoint is ready, and DNS resolves immediately.
-        x402 handles the payment so you don't have to think about gas or token approvals.
+        <strong style="color:#fff">For humans:</strong> Connect your wallet on the <a href="/register">register page</a>, pay USDC, and your name is minted as an NFT. Your profile page goes live immediately.
       </p>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        Under the hood, registration uses a commit-reveal scheme to prevent front-running.
-        Content hosting is powered by <a href="https://netprotocol.app" style="font-weight:700">Net Protocol</a> and IPFS.
+        <strong style="color:#fff">For agents &amp; CLIs:</strong> Use the <a href="/docs#x402" style="font-weight:700">x402 API</a> &mdash; send an HTTP request, get a price quote, pay USDC onchain, retry with proof. No wallet extension needed.
+      </p>
+      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
+        Content hosting is powered by <a href="https://netprotocol.app" style="font-weight:700">Net Protocol</a>.
         Set text records, link socials, point to content, or register an AI agent &mdash; all through onchain transactions.
       </p>
     </div>
@@ -1563,7 +2016,7 @@ export function aboutPage(): string {
         <div class="info-row"><span class="label"><a href="https://base.org">Base</a></span><span class="value">Low-cost L2 for everything onchain</span></div>
         <div class="info-row"><span class="label"><a href="https://x402.org">x402</a></span><span class="value">HTTP-native payment protocol</span></div>
         <div class="info-row"><span class="label"><a href="https://netprotocol.app">Net Protocol</a></span><span class="value">Onchain content hosting</span></div>
-        <div class="info-row"><span class="label">ERC-8004</span><span class="value">AI agent registry standard</span></div>
+        <div class="info-row"><span class="label"><a href="https://eips.ethereum.org/EIPS/eip-8004">ERC-8004</a></span><span class="value">AI agent registry standard</span></div>
       </div>
     </div>
 
@@ -1586,32 +2039,21 @@ export function pricingPage(): string {
       <h1>pricing</h1>
     </div>
 
-    <div class="pricing">
-      <div class="price-card">
-        <div class="chars">3 characters</div>
-        <div class="amount">$100</div>
-        <div class="unit">+ $2/yr</div>
-      </div>
-      <div class="price-card">
-        <div class="chars">4 characters</div>
-        <div class="amount">$25</div>
-        <div class="unit">+ $2/yr</div>
-      </div>
-      <div class="price-card">
-        <div class="chars">5+ characters</div>
+    <div style="text-align:center;margin:2rem 0">
+      <div class="price-card" style="display:inline-block;min-width:200px">
+        <div class="chars">any name</div>
         <div class="amount">$5</div>
-        <div class="unit">+ $2/yr</div>
+        <div class="unit">1 year included</div>
       </div>
     </div>
 
     <hr class="divider">
 
     <div class="section">
-      <div class="section-title">Discounts</div>
+      <div class="section-title">Perks</div>
       <div class="info-grid">
-        <div class="info-row"><span class="label">ENS import</span><span class="value">50% off + challenge immunity</span></div>
-        <div class="info-row"><span class="label">Net Library Unlimited Pass</span><span class="value">20% off</span></div>
-        <div class="info-row"><span class="label">Both combined</span><span class="value">60% off (multiplicative)</span></div>
+        <div class="info-row"><span class="label">Unlimited Pass holder</span><span class="value">1 free name <span style="color:#6b8f6b;font-size:0.8rem">(coming soon)</span></span></div>
+        <div class="info-row"><span class="label">ENS names</span><span class="value">Suggested on registration page</span></div>
       </div>
     </div>
 
@@ -1629,14 +2071,32 @@ export function pricingPage(): string {
     <hr class="divider">
 
     <div class="section">
-      <div class="section-title">Namespaces (add-on)</div>
+      <div class="section-title">Expiration lifecycle</div>
+      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
+        When a name expires, it doesn't disappear immediately. Two recovery windows protect you before the name is released.
+      </p>
+      <div class="info-grid">
+        <div class="info-row"><span class="label">Active</span><span class="value">Your name works normally</span></div>
+        <div class="info-row"><span class="label">Grace (30 days)</span><span class="value">Still yours &mdash; renew at $2/year</span></div>
+        <div class="info-row"><span class="label">Redemption (30 days)</span><span class="value">Still yours &mdash; $10 penalty + $2 renewal</span></div>
+        <div class="info-row"><span class="label">Released</span><span class="value">Name available for anyone to register</span></div>
+      </div>
+      <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
+        Your profile page stays visible during grace and redemption but shows a warning badge.
+      </p>
+    </div>
+
+    <hr class="divider">
+
+    <div class="section">
+      <div class="section-title">Namespaces</div>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
         Turn any HAZZA name into a namespace and issue subnames under it.<br>
         Useful for teams, organizations, or agent networks &mdash; e.g. <strong style="color:#fff">alice.yourname</strong>, <strong style="color:#fff">bot.yourname</strong>.
       </p>
       <div class="info-grid">
-        <div class="info-row"><span class="label">Create namespace</span><span class="value">$50 (one-time)</span></div>
-        <div class="info-row"><span class="label">Issue subname</span><span class="value">$1 each</span></div>
+        <div class="info-row"><span class="label">Create namespace</span><span class="value">$20 (one-time)</span></div>
+        <div class="info-row"><span class="label">Issue subname</span><span class="value">Free</span></div>
       </div>
       <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
         Each subname is its own full HAZZA name with a profile, agent, and DNS.
@@ -1648,7 +2108,7 @@ export function pricingPage(): string {
     <div class="section">
       <div class="section-title">Learn more</div>
       <div class="info-grid">
-        <div class="info-row"><span class="label"><a href="/pricing/protections">Protections</a></span><span class="value">Anti-squatting, rate limits, and the challenge system</span></div>
+        <div class="info-row"><span class="label"><a href="/pricing/protections">Protections</a></span><span class="value">Anti-squatting, rate limits, and name rights</span></div>
         <div class="info-row"><span class="label"><a href="/pricing/details">Details</a></span><span class="value">Renewal, expiry, front-running protection, and payment</span></div>
       </div>
     </div>
@@ -1666,7 +2126,7 @@ export function pricingPage(): string {
 export function pricingProtectionsPage(): string {
   return shell(
     "HAZZA \u2014 Protections",
-    "Anti-squatting, rate limits, and the challenge system for HAZZA name registrations.",
+    "Anti-squatting, rate limits, and name rights for HAZZA name registrations.",
     `
     <div class="header">
       <h1>protections</h1>
@@ -1679,13 +2139,12 @@ export function pricingProtectionsPage(): string {
         The contract tracks how many names each wallet registers within a 90-day window and applies multipliers:
       </p>
       <div class="info-grid">
-        <div class="info-row"><span class="label">Names 1&ndash;3</span><span class="value">1x base price</span></div>
-        <div class="info-row"><span class="label">Names 4&ndash;5</span><span class="value">2.5x base price</span></div>
-        <div class="info-row"><span class="label">Names 6&ndash;7</span><span class="value">5x base price</span></div>
-        <div class="info-row"><span class="label">Names 8+</span><span class="value">10x base price</span></div>
+        <div class="info-row"><span class="label">Names 1&ndash;3</span><span class="value">1x ($5 each)</span></div>
+        <div class="info-row"><span class="label">Names 4&ndash;5</span><span class="value">2.5x ($12.50 each)</span></div>
+        <div class="info-row"><span class="label">Names 6&ndash;7</span><span class="value">5x ($25 each)</span></div>
+        <div class="info-row"><span class="label">Names 8+</span><span class="value">10x ($50 each)</span></div>
       </div>
       <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
-        Example: A 5+ char name costs $5, $5, $5, then $12.50, $12.50, then $25, $25, then $50 each.<br>
         The window resets after 90 days.
       </p>
     </div>
@@ -1707,27 +2166,22 @@ export function pricingProtectionsPage(): string {
       </div>
       <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
         Net Library membership is a <a href="https://netlibrary.app">netlibrary.eth</a> subname ($2).<br>
-        The Unlimited Pass is a Net Library storage pass ($20) that also unlocks unlimited HAZZA registrations.
+        The Unlimited Pass ($10, coming soon) also unlocks unlimited HAZZA registrations + 1 free name.
       </p>
     </div>
 
     <hr class="divider">
 
     <div class="section">
-      <div class="section-title">Challenge system</div>
+      <div class="section-title">Name rights</div>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        If someone squats a name that belongs to a legitimate brand or identity, the rightful owner
-        can challenge for it.<br>
-        Challenges are reviewed and approved by the registry admin.
+        HAZZA names are <strong style="color:#fff">first-come, first-served</strong>.
+        There is no challenge or dispute system. Progressive pricing and rate limits provide the anti-squatting protection.
       </p>
       <div class="info-grid">
-        <div class="info-row"><span class="label">Claim cost</span><span class="value">2x original registration price</span></div>
-        <div class="info-row"><span class="label">Compensation</span><span class="value">Full claim price paid to current holder</span></div>
-        <div class="info-row"><span class="label">ENS imports</span><span class="value">Immune to challenges</span></div>
+        <div class="info-row"><span class="label">Ownership</span><span class="value">Whoever registers first, owns it</span></div>
+        <div class="info-row"><span class="label">Protection</span><span class="value">Progressive pricing deters bulk registration</span></div>
       </div>
-      <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
-        The current holder is compensated at 2x what they paid &mdash; good-faith registrants are never punished.
-      </p>
     </div>
 
     <div style="text-align:center;margin:2rem 0">
@@ -1805,6 +2259,11 @@ export function docsPage(): string {
       <h1>docs</h1>
     </div>
 
+    <div class="info-grid" style="margin-bottom:1.5rem">
+      <div class="info-row"><span class="label"><a href="https://github.com/geaux-eth/hazza">GitHub</a></span><span class="value">Source code &amp; contracts</span></div>
+      <div class="info-row"><span class="label"><a href="https://github.com/geaux-eth/hazza/tree/main/worker">Worker</a></span><span class="value">API &amp; gateway source</span></div>
+    </div>
+
     <div class="section">
       <div class="section-title">Read Endpoints</div>
       <div class="info-grid">
@@ -1864,16 +2323,11 @@ export function docsPage(): string {
       </div>
     </div>
 
-    <div class="section">
-      <div class="section-title">Subdomain profiles</div>
-      <p style="color:#aaa;line-height:1.7">
-        Every registered name gets a live profile page at <strong style="color:#fff">name.hazza.name</strong>.
-        Unregistered names show an availability page with a registration link.
-      </p>
-    </div>
-
     <div id="write-api" class="section">
       <div class="section-title">Write API</div>
+      <p style="color:#6b8f6b;font-size:0.8rem;margin-bottom:0.75rem">
+        All write operations are onchain Base transactions. Gas cost is typically ~$0.01 per transaction.
+      </p>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
         Manage your name programmatically with API keys. Generate a key on the <a href="/manage">manage page</a>, then use it to build transactions from any bot, CLI, or server.
       </p>
@@ -2111,7 +2565,7 @@ export function domainsPage(): string {
         <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Routing</span><span class="value">Your domain resolves to your HAZZA profile, agent endpoint, or custom content</span></div>
         <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Subdomain</span><span class="value">yourname.hazza.name always works &mdash; free and included</span></div>
         <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Onchain</span><span class="value">Domain mapping is stored in the HAZZA contract &mdash; verifiable and permanent</span></div>
-        <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Flexible</span><span class="value">Point at your profile, custom HTML via <a href="https://netprotocol.app" style="font-weight:700">Net Protocol</a>, IPFS, or your own server</span></div>
+        <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Flexible</span><span class="value">Point at your profile, custom HTML via <a href="https://netprotocol.app" style="font-weight:700">Net Protocol</a>, or your own server</span></div>
       </div>
     </div>
 
@@ -2135,15 +2589,6 @@ CNAME   www     hazza.name</pre>
     <hr class="divider">
 
     <div class="section">
-      <div class="section-title">Manage DNS records</div>
-      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        If your domain's DNS is managed through HAZZA, you can view and edit records here.
-      </p>
-      <div style="text-align:center;margin-top:1.25rem">
-        <a href="/domains/manage" style="display:inline-block;padding:0.6rem 1.5rem;border:1px solid #00e676;color:#00e676;border-radius:8px;font-weight:700;font-size:0.9rem">Manage DNS</a>
-      </div>
-    </div>
-
     <div style="text-align:center;margin:2rem 0">
       <a href="/" style="display:inline-block;padding:0.75rem 2rem;background:#00e676;color:#000;border-radius:8px;font-weight:700">Register a name</a>
     </div>`

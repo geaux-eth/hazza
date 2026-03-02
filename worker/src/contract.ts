@@ -283,13 +283,12 @@ export type Env = {
   USDC_ADDRESS: string;
   RPC_URL: string;
   CHAIN_ID: string;
-  DOMAIN_PROXY_URL: string;
-  DOMAIN_PROXY_SECRET: string;
   BASE_MAINNET_RPC: string;
   ETH_MAINNET_RPC: string;
   RELAYER_PRIVATE_KEY: string;
   RELAYER_ADDRESS: string;
   PAYMASTER_BUNDLER_RPC: string;
+  GATEWAY_SIGNER_KEY: string;
 };
 
 // Minimal ABI for Exoskeleton NFT (Base mainnet)

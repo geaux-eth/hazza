@@ -8,14 +8,11 @@ routes = [
 ]
 
 [vars]
-REGISTRY_ADDRESS = "0xbDDa076DCc3Ac8C4Fc6CFe8bcE458D5536e695e3"
+REGISTRY_ADDRESS = "0xc30303ff64EAe68C2eaBD2B504b530EbCf819DFf"
 USDC_ADDRESS = "0x06A096A051906dEDd05Ef22dCF61ca1199bb038c"
 RPC_URL = "https://sepolia.base.org"
 CHAIN_ID = "84532"
-DOMAIN_PROXY_URL = "http://dp.hazza.name"
-DOMAIN_PROXY_SECRET = "hazza-proxy-s3cret-2026"
-BASE_MAINNET_RPC = "https://base-mainnet.g.alchemy.com/v2/5g8pTQHi_ZaEnE7e89Tyx"
 ETH_MAINNET_RPC = "https://eth.llamarpc.com"
 RELAYER_ADDRESS = "0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d"
-# TODO: Migrate secrets (DOMAIN_PROXY_SECRET, BASE_MAINNET_RPC) to wrangler secrets
-# RELAYER_PRIVATE_KEY and PAYMASTER_BUNDLER_RPC are stored as wrangler secrets
+# Secrets (stored via wrangler secret put):
+# BASE_MAINNET_RPC, RELAYER_PRIVATE_KEY, PAYMASTER_BUNDLER_RPC, GATEWAY_SIGNER_KEY

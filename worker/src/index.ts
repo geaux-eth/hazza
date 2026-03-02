@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type Env, getClient, getMainnetClient, getEthMainnetClient, buildTx, registryAddress, REGISTRY_ABI, EXOSKELETON_ABI, EXOSKELETON_ADDRESS } from "./contract";
-import { landingPage, profilePage, aboutPage, pricingPage, pricingProtectionsPage, pricingDetailsPage, docsPage, domainsPage, domainsManagePage, registerPage, managePage } from "./pages";
+import { landingPage, profilePage, aboutPage, pricingPage, pricingProtectionsPage, pricingDetailsPage, docsPage, domainsPage, registerPage, managePage, dashboardPage } from "./pages";
+import { handleCcipRead, handleCcipOptions } from "./ccip";
 import { type Address, formatUnits, keccak256, toBytes, isAddress, createWalletClient, http, encodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
@@ -126,21 +127,21 @@ app.get("/api/quote/:name", async (c) => {
     args: [name, wallet, numYears, charCount, ensImport, verifiedPass],
   });
 
-  // Build line items for UI display
+  // Build line items for UI display — renewal is NOT charged at registration
   const lineItems: { label: string; amount: string }[] = [];
-  lineItems.push({ label: "Registration", amount: formatUnits(registrationFee, 6) });
-  lineItems.push({ label: `Renewal (${numYears} yr${numYears > 1n ? "s" : ""})`, amount: formatUnits(renewalFee, 6) });
-  if (ensImport) lineItems.push({ label: "ENS Import Discount", amount: "-50%" });
-  if (verifiedPass) lineItems.push({ label: "Unlimited Pass Discount", amount: "-20%" });
+  lineItems.push({ label: "Registration (1 year included)", amount: formatUnits(registrationFee, 6) });
+  if (ensImport) lineItems.push({ label: "ENS Import", amount: "Challenge immunity" });
+  if (verifiedPass) lineItems.push({ label: "Unlimited Pass", amount: "1 free name" });
 
   return c.json({
     name,
     wallet,
     years: Number(numYears),
-    total: formatUnits(totalCost, 6),
-    totalRaw: totalCost.toString(),
+    total: formatUnits(registrationFee, 6),
+    totalRaw: registrationFee.toString(),
     registrationFee: formatUnits(registrationFee, 6),
     renewalFee: formatUnits(renewalFee, 6),
+    renewalNote: "$2/yr renewal after first year",
     lineItems,
   });
 });
@@ -229,6 +230,47 @@ app.get("/api/text/:name/:key", async (c) => {
   return c.json({ name, key, value });
 });
 
+// OG image generator (SVG)
+app.get("/api/og/:name", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+
+  let subtitle = "available";
+  let statusColor = "#00e676";
+  let ownerText = "";
+
+  try {
+    const [nameOwner, , , , , ,] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+    });
+    if (nameOwner !== "0x0000000000000000000000000000000000000000") {
+      subtitle = "registered";
+      ownerText = `${(nameOwner as string).slice(0, 6)}...${(nameOwner as string).slice(-4)}`;
+    }
+  } catch { /* name not registered or invalid */ }
+
+  const displayName = name.length > 16 ? name.slice(0, 14) + "..." : name;
+  const fontSize = displayName.length > 10 ? 64 : displayName.length > 6 ? 80 : 96;
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0a0a0a"/>
+  <rect x="0" y="0" width="1200" height="4" fill="${statusColor}"/>
+  <text x="80" y="100" font-family="monospace" font-size="28" fill="#333" font-weight="700">h</text>
+  <text x="600" y="${subtitle === "available" ? "280" : "260"}" font-family="sans-serif" font-size="${fontSize}" fill="#fff" font-weight="900" text-anchor="middle">${displayName}<tspan fill="${statusColor}">.hazza.name</tspan></text>
+  <text x="600" y="${subtitle === "available" ? "330" : "310"}" font-family="sans-serif" font-size="24" fill="#6b8f6b" text-anchor="middle">${subtitle}</text>
+  ${ownerText ? `<text x="600" y="350" font-family="monospace" font-size="18" fill="#444" text-anchor="middle">${ownerText}</text>` : ""}
+  <text x="600" y="560" font-family="sans-serif" font-size="20" fill="#333" text-anchor="middle">onchain names on Base</text>
+</svg>`;
+
+  return new Response(svg, {
+    headers: {
+      "Content-Type": "image/svg+xml",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+});
+
 // ERC-721 metadata (served by tokenURI base URL)
 app.get("/api/metadata/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
@@ -269,27 +311,55 @@ app.get("/api/metadata/:name", async (c) => {
 app.get("/api/names/:address", async (c) => {
   const wallet = c.req.param("address") as Address;
   if (!isAddress(wallet)) return c.json({ error: "Invalid address format" }, 400);
+  if (wallet === "0x0000000000000000000000000000000000000000") return c.json({ wallet, names: [], total: 0 });
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
-  const balance = await client.readContract({
-    address: addr, abi: REGISTRY_ABI, functionName: "balanceOf", args: [wallet],
-  });
-  const count = Number(balance);
-  if (count === 0) return c.json({ wallet, names: [] });
 
-  // Fetch up to 50 names
-  const limit = Math.min(count, 50);
-  const names: { name: string; tokenId: string; url: string }[] = [];
-  for (let i = 0; i < limit; i++) {
-    const tokenId = await client.readContract({
-      address: addr, abi: REGISTRY_ABI, functionName: "tokenOfOwnerByIndex", args: [wallet, BigInt(i)],
+  try {
+    const balance = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "balanceOf", args: [wallet],
     });
-    const name = await client.readContract({
-      address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [tokenId],
+    const count = Number(balance);
+    if (count === 0) return c.json({ wallet, names: [], total: 0 });
+
+    // Iterate all tokens and filter by owner (no ERC721Enumerable)
+    const total = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "totalRegistered",
     });
-    if (name) names.push({ name: name as string, tokenId: tokenId.toString(), url: `https://${name}.hazza.name` });
+    const totalCount = Number(total);
+    const names: { name: string; tokenId: string; url: string; expiresAt: number; status: string }[] = [];
+
+    for (let id = 1; id <= totalCount && names.length < count; id++) {
+      try {
+        const name = await client.readContract({
+          address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(id)],
+        });
+        if (!name) continue;
+        const [owner, , , expiresAt] = await client.readContract({
+          address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name as string],
+        });
+        if ((owner as string).toLowerCase() === wallet.toLowerCase()) {
+          // Determine status
+          const [isActive, inGrace, inRedemption] = await Promise.all([
+            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name as string] }),
+            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInGracePeriod", args: [name as string] }),
+            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInRedemptionPeriod", args: [name as string] }),
+          ]);
+          const status = isActive ? "active" : inGrace ? "grace" : inRedemption ? "redemption" : "expired";
+          names.push({
+            name: name as string,
+            tokenId: id.toString(),
+            url: `https://${name}.hazza.name`,
+            expiresAt: Number(expiresAt),
+            status,
+          });
+        }
+      } catch { continue; }
+    }
+    return c.json({ wallet, names, total: names.length });
+  } catch {
+    return c.json({ error: "Failed to fetch names" }, 500);
   }
-  return c.json({ wallet, names, total: count });
 });
 
 // Stats
@@ -305,6 +375,38 @@ app.get("/api/stats", async (c) => {
     contract: registryAddress(c.env),
     chain: c.env.CHAIN_ID,
   });
+});
+
+// ENS name suggestions — look up wallet's ENS name and check HAZZA availability
+app.get("/api/ens-names/:address", async (c) => {
+  const wallet = c.req.param("address") as Address;
+  if (!isAddress(wallet)) return c.json({ error: "Invalid address format" }, 400);
+
+  try {
+    const ethClient = getEthMainnetClient(c.env);
+    const ensName = await ethClient.getEnsName({ address: wallet });
+    if (!ensName) return c.json({ wallet, ensNames: [], suggestions: [] });
+
+    // Extract base name (e.g., "alice.eth" → "alice")
+    const baseName = ensName.replace(/\.eth$/, "").toLowerCase();
+
+    // Check availability on HAZZA
+    const client = getClient(c.env);
+    const available = await client.readContract({
+      address: registryAddress(c.env),
+      abi: REGISTRY_ABI,
+      functionName: "available",
+      args: [baseName],
+    });
+
+    return c.json({
+      wallet,
+      ensNames: [ensName],
+      suggestions: [{ name: baseName, ensSource: ensName, available }],
+    });
+  } catch {
+    return c.json({ wallet, ensNames: [], suggestions: [] });
+  }
 });
 
 // =========================================================================
@@ -420,50 +522,6 @@ app.post("/api/operator/:name", async (c) => {
   return c.json({ name: result.name, operator: operatorAddr, tx });
 });
 
-// =========================================================================
-//                     DOMAIN PROXY PASSTHROUGH
-// =========================================================================
-
-// Helper: proxy a request to the domain proxy on the droplet
-async function domainProxy(c: any, path: string, method: string = "GET", body?: any): Promise<Response> {
-  const url = c.env.DOMAIN_PROXY_URL + path;
-  const headers: Record<string, string> = {
-    "X-Proxy-Secret": c.env.DOMAIN_PROXY_SECRET,
-  };
-  const opts: RequestInit = { method, headers };
-  if (body) {
-    headers["Content-Type"] = "application/json";
-    opts.body = JSON.stringify(body);
-  }
-  try {
-    const res = await fetch(url, opts);
-    const data = await res.json();
-    return c.json(data, res.status);
-  } catch (e: any) {
-    return c.json({ error: "Domain proxy unavailable" }, 502);
-  }
-}
-
-// Validate SLD/TLD format
-const SLD_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i;
-const TLD_RE = /^[a-z]{2,}$/i;
-
-// List DNS records for a domain (for linking your own domain)
-app.get("/api/domains/dns/:sld/:tld", async (c) => {
-  const sld = c.req.param("sld");
-  const tld = c.req.param("tld");
-  if (!SLD_RE.test(sld) || !TLD_RE.test(tld)) return c.json({ error: "Invalid domain format" }, 400);
-  return domainProxy(c, `/domains/dns/${sld}/${tld}`);
-});
-
-// Set DNS records for a domain (for linking your own domain)
-app.post("/api/domains/dns/:sld/:tld", async (c) => {
-  const sld = c.req.param("sld");
-  const tld = c.req.param("tld");
-  if (!SLD_RE.test(sld) || !TLD_RE.test(tld)) return c.json({ error: "Invalid domain format" }, 400);
-  const body = await c.req.json();
-  return domainProxy(c, `/domains/dns/${sld}/${tld}`, "POST", body);
-});
 
 // =========================================================================
 //                         x402 PAYMENT PROTOCOL
@@ -509,10 +567,10 @@ app.post("/x402/register", async (c) => {
   });
   if (!available) return c.json({ error: "Name not available" }, 409);
 
-  // Get quote
+  // Get quote — contract charges registration fee only (renewal paid separately)
   const [totalCost] = await client.readContract({
     address: addr, abi: REGISTRY_ABI, functionName: "quoteName",
-    args: [name, owner, BigInt(years), 0, false, false],
+    args: [name, owner, BigInt(years), 5, false, false],
   });
 
   const paymentHeader = c.req.header("X-PAYMENT");
@@ -625,7 +683,7 @@ app.post("/x402/register", async (c) => {
         name,
         owner,
         BigInt(years),
-        0,      // charCount (ASCII, use byte length)
+        5,      // charCount — flat $5 pricing for all names
         false,  // wantAgent
         "0x0000000000000000000000000000000000000000" as Address, // agentWallet
         "",     // agentURI
@@ -634,17 +692,22 @@ app.post("/x402/register", async (c) => {
       ],
     });
 
-    // Use standard RPC for EOA transactions (paymaster is for ERC-4337 only)
-    const walletClient = createWalletClient({
-      account,
-      chain,
-      transport: http(c.env.RPC_URL),
-    });
+    // Try Coinbase RPC first (faster, validated for mainnet), fall back to public RPC
+    const primaryRpc = c.env.PAYMASTER_BUNDLER_RPC || c.env.RPC_URL;
+    const fallbackRpc = c.env.RPC_URL;
 
-    regTxHash = await walletClient.sendTransaction({
-      to: addr,
-      data: txData,
-    });
+    try {
+      const walletClient = createWalletClient({
+        account, chain, transport: http(primaryRpc),
+      });
+      regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+    } catch {
+      // Fallback to public RPC
+      const walletClient = createWalletClient({
+        account, chain, transport: http(fallbackRpc),
+      });
+      regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+    }
 
     // Wait for confirmation
     const regReceipt = await client.waitForTransactionReceipt({ hash: regTxHash, timeout: 20_000 });
@@ -684,6 +747,16 @@ app.post("/x402/register", async (c) => {
 });
 
 // =========================================================================
+//                         CCIP-READ GATEWAY (ERC-3668)
+// =========================================================================
+
+// CORS preflight for CCIP routes (wallets call from any origin)
+app.options("/ccip/*", () => handleCcipOptions());
+
+// CCIP-Read gateway — ENS wallets query this to resolve .hazza.name addresses
+app.get("/ccip/:sender/:data", handleCcipRead);
+
+// =========================================================================
 //                    WILDCARD SUBDOMAIN ROUTING
 // =========================================================================
 
@@ -714,14 +787,14 @@ app.get("*", async (c) => {
     if (path === "/domains") {
       return c.html(domainsPage());
     }
-    if (path === "/domains/manage") {
-      return c.html(domainsManagePage());
-    }
     if (path === "/register") {
       return c.html(registerPage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID));
     }
     if (path === "/manage") {
       return c.html(managePage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID));
+    }
+    if (path === "/dashboard") {
+      return c.html(dashboardPage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID));
     }
     return c.json({ error: "Not found" }, 404);
   }
@@ -750,6 +823,7 @@ app.get("*", async (c) => {
       "com.twitter", "com.github", "xyz.farcaster", "org.telegram", "com.discord", "com.linkedin",
       "agent.endpoint", "agent.model", "agent.status", "agent.capabilities",
       "agent.uri", "net.profile", "helixa.id", "netlibrary.member", "netlibrary.pass",
+      "site.key",
     ];
 
     const [textValues, isActive, inGrace, inRedemption, chash] = await Promise.all([
@@ -767,6 +841,26 @@ app.get("*", async (c) => {
     if (isActive) status = "active";
     else if (inGrace) status = "grace";
     else if (inRedemption) status = "redemption";
+
+    // Serve custom site from Net Protocol if site.key is set and requesting root
+    const siteKey = texts["site.key"];
+    if (siteKey && (path === "/" || path === "")) {
+      try {
+        const ownerAddr = (nameOwner as string).toLowerCase();
+        const cdnUrl = `https://storedon.net/net/8453/storage/load/${ownerAddr}/${encodeURIComponent(siteKey)}`;
+        if (isAllowedUrl(cdnUrl)) {
+          const siteResp = await fetch(cdnUrl);
+          if (siteResp.ok) {
+            const html = await siteResp.text();
+            return new Response(html, {
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          }
+        }
+      } catch {
+        // Fall through to normal profile page
+      }
+    }
 
     // Fetch external identity data in parallel (all optional, failures silenced)
     const agentUri = texts["agent.uri"];

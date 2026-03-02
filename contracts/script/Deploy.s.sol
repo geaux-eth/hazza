@@ -10,7 +10,7 @@ contract DeployHazza is Script {
     address constant ERC8004_REGISTRY = 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432;
 
     // Base Sepolia
-    address constant USDC_BASE_SEPOLIA = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+    address constant USDC_BASE_SEPOLIA = 0x06A096A051906dEDd05Ef22dCF61ca1199bb038c;
 
     function run() external {
         address treasury = vm.envAddress("HAZZA_TREASURY");
@@ -22,6 +22,9 @@ contract DeployHazza is Script {
 
         // Cheryl's Bankr wallet (relayer)
         address cherylWallet = vm.envOr("CHERYL_WALLET", address(0));
+
+        // Website relayer (0% commission)
+        address websiteRelayer = vm.envOr("WEBSITE_RELAYER", address(0));
 
         address usdc = isTestnet ? USDC_BASE_SEPOLIA : USDC_BASE;
 
@@ -38,6 +41,11 @@ contract DeployHazza is Script {
         // Set Cheryl as relayer with 25% commission
         if (cherylWallet != address(0)) {
             registry.setRelayer(cherylWallet, true, 2500);
+        }
+
+        // Set website relayer with 0% commission
+        if (websiteRelayer != address(0)) {
+            registry.setRelayer(websiteRelayer, true, 0);
         }
 
         vm.stopBroadcast();
