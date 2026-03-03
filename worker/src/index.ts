@@ -409,9 +409,8 @@ app.get("/api/og/:name", async (c) => {
   ${memberBadge ? `<text x="600" y="410" font-family="Inter, sans-serif" font-size="14" fill="#4a6b4a" text-anchor="middle">${svgEsc(memberBadge)}</text>` : ""}
 
   <!-- Footer -->
-  <text x="600" y="570" font-family="Inter, sans-serif" font-size="18" fill="#2a3a2a" text-anchor="middle">onchain names on Base</text>
-  <circle cx="565" cy="594" r="4" fill="#00e676" opacity="0.5"/>
-  <text x="600" y="600" font-family="Inter, sans-serif" font-size="13" fill="#1a2a1a" text-anchor="middle">powered by x402</text>
+  <text x="600" y="568" font-family="Inter, sans-serif" font-size="18" fill="#2a3a2a" text-anchor="middle">onchain names on Base</text>
+  <text x="600" y="598" font-family="Inter, sans-serif" font-size="13" fill="#1a2a1a" text-anchor="middle">powered by x402 and Net Protocol</text>
 </svg>`;
 
   // Try PNG conversion via resvg, fall back to SVG
