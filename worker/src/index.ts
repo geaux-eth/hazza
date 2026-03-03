@@ -6,6 +6,20 @@ import { handleCcipRead, handleCcipOptions } from "./ccip";
 import { type Address, formatUnits, keccak256, toBytes, isAddress, createWalletClient, http, encodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
+import { Resvg, initWasm } from "@resvg/resvg-wasm";
+// @ts-ignore — wasm import handled by wrangler
+import resvgWasm from "../node_modules/@resvg/resvg-wasm/index_bg.wasm";
+
+let wasmInitialized = false;
+let cachedFont: ArrayBuffer | null = null;
+
+async function getFont(): Promise<ArrayBuffer> {
+  if (cachedFont) return cachedFont;
+  // Fetch Inter Bold from Google Fonts CDN (permissive SIL license)
+  const resp = await fetch("https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYMZhrib2Bg-4.ttf");
+  cachedFont = await resp.arrayBuffer();
+  return cachedFont;
+}
 
 type Bindings = Env;
 const app = new Hono<{ Bindings: Bindings }>();
@@ -316,7 +330,7 @@ app.get("/api/text/:name/:key", async (c) => {
   return c.json({ name, key, value });
 });
 
-// OG image generator (SVG)
+// OG image generator (PNG via resvg-wasm)
 app.get("/api/og/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
   const client = getClient(c.env);
@@ -325,6 +339,8 @@ app.get("/api/og/:name", async (c) => {
   let subtitle = "available";
   let statusColor = "#00e676";
   let ownerText = "";
+  let description = "";
+  let memberBadge = "";
 
   try {
     const [nameOwner, , , , , ,] = await client.readContract({
@@ -333,28 +349,103 @@ app.get("/api/og/:name", async (c) => {
     if (nameOwner !== "0x0000000000000000000000000000000000000000") {
       subtitle = "registered";
       ownerText = `${(nameOwner as string).slice(0, 6)}...${(nameOwner as string).slice(-4)}`;
+      // Try to get description and member badge
+      try {
+        const textValues = await client.readContract({
+          address: addr, abi: REGISTRY_ABI, functionName: "textMany",
+          args: [name, ["description", "netlibrary.member"]],
+        });
+        if (textValues[0]) description = String(textValues[0]).slice(0, 80);
+        if (textValues[1]) memberBadge = `Net Library #${textValues[1]}`;
+      } catch { /* non-critical */ }
     }
   } catch { /* name not registered or invalid */ }
 
   const displayName = name.length > 16 ? name.slice(0, 14) + "..." : name;
-  const fontSize = displayName.length > 10 ? 64 : displayName.length > 6 ? 80 : 96;
+  const nameFontSize = displayName.length > 10 ? 56 : displayName.length > 6 ? 72 : 88;
+
+  // Escape for SVG
+  const svgEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <rect width="1200" height="630" fill="#0a0a0a"/>
-  <rect x="0" y="0" width="1200" height="4" fill="${statusColor}"/>
-  <text x="80" y="100" font-family="monospace" font-size="28" fill="#333" font-weight="700">h</text>
-  <text x="600" y="${subtitle === "available" ? "280" : "260"}" font-family="sans-serif" font-size="${fontSize}" fill="#fff" font-weight="900" text-anchor="middle">${displayName}<tspan fill="${statusColor}">.hazza.name</tspan></text>
-  <text x="600" y="${subtitle === "available" ? "330" : "310"}" font-family="sans-serif" font-size="24" fill="#6b8f6b" text-anchor="middle">${subtitle}</text>
-  ${ownerText ? `<text x="600" y="350" font-family="monospace" font-size="18" fill="#444" text-anchor="middle">${ownerText}</text>` : ""}
-  <text x="600" y="560" font-family="sans-serif" font-size="20" fill="#333" text-anchor="middle">onchain names on Base</text>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#050a05"/>
+      <stop offset="100%" stop-color="#0a1a0a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1200" y2="0">
+      <stop offset="0%" stop-color="#00e676"/>
+      <stop offset="100%" stop-color="#00c853"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1200" height="5" fill="url(#accent)"/>
+  <rect x="0" y="625" width="1200" height="5" fill="url(#accent)" opacity="0.3"/>
+
+  <!-- Grid pattern -->
+  <g opacity="0.04">
+    ${Array.from({length: 12}, (_, i) => `<line x1="${i * 100}" y1="0" x2="${i * 100}" y2="630" stroke="#00e676" stroke-width="1"/>`).join("")}
+    ${Array.from({length: 7}, (_, i) => `<line x1="0" y1="${i * 90}" x2="1200" y2="${i * 90}" stroke="#00e676" stroke-width="1"/>`).join("")}
+  </g>
+
+  <!-- Logo mark -->
+  <text x="80" y="80" font-family="Inter, sans-serif" font-size="40" fill="#00e676" font-weight="900" opacity="0.8">h</text>
+  <text x="1120" y="80" font-family="Inter, sans-serif" font-size="16" fill="#333" text-anchor="end">hazza.name</text>
+
+  <!-- Name -->
+  <text x="600" y="${description ? "250" : "280"}" font-family="Inter, sans-serif" font-size="${nameFontSize}" fill="#ffffff" font-weight="900" text-anchor="middle">${svgEsc(displayName)}<tspan fill="${statusColor}">.hazza</tspan></text>
+
+  <!-- Status pill -->
+  <rect x="${600 - (subtitle.length * 6 + 20)}" y="${description ? "268" : "298"}" width="${subtitle.length * 12 + 40}" height="30" rx="15" fill="${statusColor}" opacity="0.15"/>
+  <text x="600" y="${description ? "289" : "319"}" font-family="Inter, sans-serif" font-size="14" fill="${statusColor}" text-anchor="middle" font-weight="700" letter-spacing="2">${subtitle.toUpperCase()}</text>
+
+  <!-- Owner -->
+  ${ownerText ? `<text x="600" y="${description ? "330" : "360"}" font-family="Inter, sans-serif" font-size="16" fill="#445544" text-anchor="middle">${ownerText}</text>` : ""}
+
+  <!-- Description -->
+  ${description ? `<text x="600" y="370" font-family="Inter, sans-serif" font-size="18" fill="#6b8f6b" text-anchor="middle">${svgEsc(description)}</text>` : ""}
+
+  <!-- Member badge -->
+  ${memberBadge ? `<text x="600" y="410" font-family="Inter, sans-serif" font-size="14" fill="#4a6b4a" text-anchor="middle">${svgEsc(memberBadge)}</text>` : ""}
+
+  <!-- Footer -->
+  <text x="600" y="570" font-family="Inter, sans-serif" font-size="18" fill="#2a3a2a" text-anchor="middle">onchain names on Base</text>
+  <circle cx="565" cy="594" r="4" fill="#00e676" opacity="0.5"/>
+  <text x="600" y="600" font-family="Inter, sans-serif" font-size="13" fill="#1a2a1a" text-anchor="middle">powered by x402</text>
 </svg>`;
 
-  return new Response(svg, {
-    headers: {
-      "Content-Type": "image/svg+xml",
-      "Cache-Control": "public, max-age=3600",
-    },
-  });
+  // Try PNG conversion via resvg, fall back to SVG
+  try {
+    if (!wasmInitialized) {
+      await initWasm(resvgWasm);
+      wasmInitialized = true;
+    }
+    const fontData = await getFont();
+    const resvg = new Resvg(svg, {
+      fitTo: { mode: "width", value: 1200 },
+      font: {
+        fontBuffers: [new Uint8Array(fontData)],
+        defaultFontFamily: "Inter",
+      },
+    });
+    const pngData = resvg.render();
+    const pngBuffer = pngData.asPng();
+
+    return new Response(pngBuffer, {
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=3600",
+      },
+    });
+  } catch {
+    // Fallback to SVG if resvg fails
+    return new Response(svg, {
+      headers: {
+        "Content-Type": "image/svg+xml",
+        "Cache-Control": "public, max-age=3600",
+      },
+    });
+  }
 });
 
 // ERC-721 metadata (served by tokenURI base URL)
