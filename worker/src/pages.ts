@@ -654,6 +654,7 @@ const REGISTER_SCRIPT = `
   ];
 
   let provider, signer, userAddress, relayerAddress, totalCostRaw;
+  let freeClaimEligible = false, freeClaimMemberId = 0;
 
   // --- UI helpers ---
   const $ = id => document.getElementById(id);
@@ -791,6 +792,21 @@ const REGISTER_SCRIPT = `
         }
       }).catch(function() {});
 
+      // Check free claim eligibility (non-blocking — falls back to paid)
+      try {
+        const fcRes = await fetch('/api/free-claim/' + userAddress);
+        const fcData = await fcRes.json();
+        if (fcData.eligible) {
+          freeClaimEligible = true;
+          freeClaimMemberId = fcData.memberId;
+          const banner = $('free-claim-banner');
+          if (banner) {
+            banner.innerHTML = '<strong style="color:#00e676">1 free HAZZA name!</strong> Net Library ' + escHtml(fcData.memberName) + ' + Unlimited Pass';
+            banner.style.display = 'block';
+          }
+        }
+      } catch(e) { /* non-fatal */ }
+
       // Load quote with wallet
       await loadQuote();
 
@@ -803,6 +819,12 @@ const REGISTER_SCRIPT = `
   // --- Load quote via x402 ---
   async function loadQuote() {
     try {
+      if (freeClaimEligible) {
+        $('quote-total').textContent = 'FREE';
+        $('quote-total').style.color = '#00e676';
+        totalCostRaw = 0n;
+        return;
+      }
       // Hit x402 endpoint to get price + relayer address
       const res = await fetch('/x402/register', {
         method: 'POST',
@@ -824,17 +846,48 @@ const REGISTER_SCRIPT = `
 
   // --- Checkout flow (x402: transfer USDC to relayer → server registers) ---
   async function checkout() {
-    if (!relayerAddress || !totalCostRaw) {
-      showStatus('Price not loaded. Refresh and try again.', true);
-      return;
-    }
     $('checkout-btn').disabled = true;
     $('checkout-steps').style.display = 'block';
     $('status').style.display = 'none';
 
-    const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
-
     try {
+      // --- Free claim path: no payment needed ---
+      if (freeClaimEligible) {
+        setStep(1, 'done'); // Skip payment step
+        setStep(2, 'active');
+        showStatus('Registering your free name...', false);
+
+        const regRes = await fetch('/x402/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: nameParam, owner: userAddress, years: 1 }),
+        });
+        const regData = await regRes.json();
+        if (!regRes.ok) {
+          throw new Error(regData.error || regData.detail || 'Registration failed');
+        }
+        setStep(2, 'done');
+        setStep(3, 'done');
+        showStatus('', false);
+        $('checkout-steps').style.display = 'none';
+        $('success-section').style.display = 'block';
+        $('success-name').textContent = nameParam + '.hazza.name';
+        $('success-link').href = 'https://' + nameParam + '.hazza.name';
+        $('success-link').textContent = 'view ' + nameParam + '.hazza.name';
+        $('success-manage').href = '/manage?name=' + encodeURIComponent(nameParam);
+        $('checkout-btn').style.display = 'none';
+        return;
+      }
+
+      // --- Paid path ---
+      if (!relayerAddress || !totalCostRaw) {
+        showStatus('Price not loaded. Refresh and try again.', true);
+        $('checkout-btn').disabled = false;
+        return;
+      }
+
+      const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
+
       // Step 1: Check USDC balance
       setStep(1, 'active');
       showStatus('Checking balance...', false);
@@ -911,6 +964,10 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
     <div class="header">
       <h1>register</h1>
       <p>claim your onchain name</p>
+    </div>
+
+    <!-- Free claim banner (shown for eligible Unlimited Pass + NL members) -->
+    <div id="free-claim-banner" style="display:none;margin-bottom:1rem;padding:0.75rem 1rem;background:#0d1a0d;border:1px solid #00e676;border-radius:8px;text-align:center;color:#aaa;font-size:0.9rem">
     </div>
 
     <!-- ENS suggestion (shown after wallet connect if user has ENS) -->
@@ -2052,7 +2109,7 @@ export function pricingPage(): string {
     <div class="section">
       <div class="section-title">Perks</div>
       <div class="info-grid">
-        <div class="info-row"><span class="label">Unlimited Pass holder</span><span class="value">1 free name <span style="color:#6b8f6b;font-size:0.8rem">(coming soon)</span></span></div>
+        <div class="info-row"><span class="label">Unlimited Pass holder</span><span class="value">1 free name + 20% off all registrations</span></div>
         <div class="info-row"><span class="label">ENS names</span><span class="value">Suggested on registration page</span></div>
       </div>
     </div>
@@ -2166,7 +2223,7 @@ export function pricingProtectionsPage(): string {
       </div>
       <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
         Net Library membership is a <a href="https://netlibrary.app">netlibrary.eth</a> subname ($2).<br>
-        The Unlimited Pass ($10, coming soon) also unlocks unlimited HAZZA registrations + 1 free name.
+        The <a href="https://netlibrary.app">Unlimited Pass</a> ($10) unlocks unlimited HAZZA registrations, 20% discount, and 1 free name. Free name tracked by Net Library member number &mdash; one per member, ever.
       </p>
     </div>
 
@@ -2516,7 +2573,7 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
       <div class="section-title">Contract</div>
       <div class="info-grid">
         <div class="info-row"><span class="label">Network</span><span class="value">Base Sepolia (testnet)</span></div>
-        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0xbDDa076DCc3Ac8C4Fc6CFe8bcE458D5536e695e3</span></div>
+        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0xb38d1a7693B2a61A31F3E764A793AF88124940A2</span></div>
         <div class="info-row"><span class="label">USDC</span><span class="value" style="font-size:0.75rem">0x06A096A051906dEDd05Ef22dCF61ca1199bb038c</span></div>
         <div class="info-row"><span class="label">Source</span><span class="value"><a href="https://github.com/geaux-eth/hazza">github.com/geaux-eth/hazza</a></span></div>
       </div>

@@ -982,4 +982,125 @@ contract HazzaRegistryTest is Test {
         vm.expectRevert(HazzaRegistry.NameTooShort.selector);
         registry.registerDirect("some-name", alice, 1, 2, false, address(0), "", false, false);
     }
+
+    // =========================================================================
+    //                  FREE CLAIM (Unlimited Pass + Net Library)
+    // =========================================================================
+
+    function test_freeClaimWithMember() public {
+        registry.registerDirectWithMember("freename", alice, 1, 0, false, address(0), "", false, true, 1);
+        (address resolvedOwner,,,,,,) = registry.resolve("freename");
+        assertEq(resolvedOwner, alice);
+    }
+
+    function test_freeClaimNoPayment() public {
+        uint256 treasuryBefore = usdc.balanceOf(treasury);
+        uint256 deployerBefore = usdc.balanceOf(deployer);
+
+        registry.registerDirectWithMember("freebie", alice, 1, 0, false, address(0), "", false, true, 1);
+
+        assertEq(usdc.balanceOf(treasury), treasuryBefore);
+        assertEq(usdc.balanceOf(deployer), deployerBefore);
+    }
+
+    function test_freeClaimCannotDoubleUse() public {
+        registry.registerDirectWithMember("first-free", alice, 1, 0, false, address(0), "", false, true, 42);
+
+        vm.expectRevert(HazzaRegistry.FreeClaimAlreadyUsed.selector);
+        registry.registerDirectWithMember("second-free", bob, 1, 0, false, address(0), "", false, true, 42);
+    }
+
+    function test_differentMemberIdCanClaim() public {
+        registry.registerDirectWithMember("member-one", alice, 1, 0, false, address(0), "", false, true, 1);
+        registry.registerDirectWithMember("member-two", bob, 1, 0, false, address(0), "", false, true, 2);
+
+        (address owner1,,,,,,) = registry.resolve("member-one");
+        (address owner2,,,,,,) = registry.resolve("member-two");
+        assertEq(owner1, alice);
+        assertEq(owner2, bob);
+    }
+
+    function test_memberIdZeroNoFreeClaim() public {
+        uint256 treasuryBefore = usdc.balanceOf(treasury);
+
+        // memberId=0 should behave like normal registerDirect (paid)
+        registry.registerDirectWithMember("paid-name", alice, 1, 0, false, address(0), "", false, false, 0);
+
+        // Treasury should have received payment
+        assertGt(usdc.balanceOf(treasury), treasuryBefore);
+    }
+
+    function test_afterFreeClaimDiscountStillWorks() public {
+        // Free claim first
+        registry.registerDirectWithMember("my-free", alice, 1, 0, false, address(0), "", false, true, 10);
+
+        // Then a paid registration with verifiedPass discount
+        uint256 balBefore = usdc.balanceOf(deployer);
+        registry.registerDirect("paid-after", alice, 1, 0, false, address(0), "", false, true);
+        uint256 paid = balBefore - usdc.balanceOf(deployer);
+
+        // 5+ char = $5 base, verifiedPass = 20% off = $4
+        assertEq(paid, 4e6);
+    }
+
+    function test_hasClaimedFreeName() public {
+        assertFalse(registry.hasClaimedFreeName(99));
+
+        registry.registerDirectWithMember("claimed", alice, 1, 0, false, address(0), "", false, true, 99);
+
+        assertTrue(registry.hasClaimedFreeName(99));
+    }
+
+    function test_freeClaimEmitsEvent() public {
+        vm.expectEmit(true, true, true, true);
+        emit HazzaRegistry.FreeNameClaimed("evented", alice, 100, 1);
+        registry.registerDirectWithMember("evented", alice, 1, 0, false, address(0), "", false, true, 100);
+    }
+
+    function test_quoteWithMemberFree() public view {
+        (uint256 totalCost, uint256 regFee, uint256 renewFee, bool isFreeClaim) =
+            registry.quoteNameWithMember("quoted", alice, 1, 0, false, true, 5);
+
+        assertEq(totalCost, 0);
+        assertEq(regFee, 0);
+        assertEq(renewFee, 2e6); // $2 renewal
+        assertTrue(isFreeClaim);
+    }
+
+    function test_quoteWithMemberAlreadyClaimed() public {
+        // Claim first
+        registry.registerDirectWithMember("used-up", alice, 1, 0, false, address(0), "", false, true, 5);
+
+        // Now quote with same memberId — should return normal discounted price
+        (uint256 totalCost, uint256 regFee,, bool isFreeClaim) =
+            registry.quoteNameWithMember("another", alice, 1, 0, false, true, 5);
+
+        assertEq(regFee, 4e6); // $5 base, 20% verifiedPass = $4
+        assertEq(totalCost, 4e6);
+        assertFalse(isFreeClaim);
+    }
+
+    function test_freeClaimStoresOriginalPrice() public {
+        // Free claim a 5+ char name (base = $5)
+        registry.registerDirectWithMember("original-price", alice, 1, 0, false, address(0), "", false, true, 7);
+
+        // Verify originalPrice via challenge system: claimPrice = 2x originalPrice = $10
+        registry.approveChallenge("original-price", bob, uint64(block.timestamp + 7 days));
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        vm.prank(bob);
+        registry.executeChallenge("original-price");
+        // Alice gets 2x original base price ($5) = $10 compensation
+        assertEq(usdc.balanceOf(alice) - aliceBefore, 10e6);
+    }
+
+    function test_freeClaimWithAgent() public {
+        registry.registerDirectWithMember(
+            "agent-free", alice, 1, 0, true, alice, "https://example.com/agent.json", false, true, 15
+        );
+
+        (address resolvedOwner,,,,, uint256 agentId, address agentWallet) = registry.resolve("agent-free");
+        assertEq(resolvedOwner, alice);
+        assertGt(agentId, 0);
+        assertEq(agentWallet, alice);
+    }
 }

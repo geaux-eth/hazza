@@ -276,6 +276,52 @@ export const REGISTRY_ABI = [
     ],
     outputs: [],
   },
+  {
+    name: "registerDirectWithMember",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "nameOwner", type: "address" },
+      { name: "numYears", type: "uint256" },
+      { name: "charCount", type: "uint8" },
+      { name: "wantAgent", type: "bool" },
+      { name: "agentWallet", type: "address" },
+      { name: "agentURI", type: "string" },
+      { name: "ensImport", type: "bool" },
+      { name: "verifiedPass", type: "bool" },
+      { name: "memberId", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  // --- Free Claim ---
+  {
+    name: "hasClaimedFreeName",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "memberId", type: "uint256" }],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    name: "quoteNameWithMember",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "wallet", type: "address" },
+      { name: "numYears", type: "uint256" },
+      { name: "charCount", type: "uint8" },
+      { name: "ensImport", type: "bool" },
+      { name: "verifiedPass", type: "bool" },
+      { name: "memberId", type: "uint256" },
+    ],
+    outputs: [
+      { name: "totalCost", type: "uint256" },
+      { name: "registrationFee", type: "uint256" },
+      { name: "renewalFee", type: "uint256" },
+      { name: "isFreeClaim", type: "bool" },
+    ],
+  },
 ] as const;
 
 export type Env = {
@@ -289,6 +335,7 @@ export type Env = {
   RELAYER_ADDRESS: string;
   PAYMASTER_BUNDLER_RPC: string;
   GATEWAY_SIGNER_KEY: string;
+  NET_LIBRARY_API_URL: string;
 };
 
 // Minimal ABI for Exoskeleton NFT (Base mainnet)

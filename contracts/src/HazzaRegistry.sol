@@ -129,6 +129,10 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     mapping(bytes32 => mapping(bytes32 => SubnameRecord)) public subnames;
     mapping(bytes32 => mapping(bytes32 => string)) private _subnameStrings;
 
+    // Free name claims tracked by Net Library member ID (not wallet)
+    // Prevents abuse via NFT transfer: same memberId can only claim once
+    mapping(uint256 => bool) public memberFreeClaimed;
+
     // =========================================================================
     //                            CONSTANTS
     // =========================================================================
@@ -189,6 +193,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     event SubnameRevoked(string namespace, string subname);
     event NamespaceTransferred(string namespace, address indexed newAdmin);
     event ENSImported(string name, address indexed owner, string ensName);
+    event FreeNameClaimed(string name, address indexed owner, uint256 indexed memberId, uint256 indexed tokenId);
 
     // =========================================================================
     //                              ERRORS
@@ -229,6 +234,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     error NameIsNamespace();
     error ChallengeBlockedENS();
     error InvalidCharCount();
+    error FreeClaimAlreadyUsed();
 
     // =========================================================================
     //                           CONSTRUCTOR
@@ -327,10 +333,52 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         }));
     }
 
+    /// @notice Direct registration with Net Library member ID for free claim tracking
+    /// @dev memberId > 0 triggers free claim (if not already used). memberId = 0 behaves like registerDirect.
+    function registerDirectWithMember(
+        string calldata name,
+        address nameOwner,
+        uint256 numYears,
+        uint8 charCount,
+        bool wantAgent,
+        address agentWallet,
+        string calldata agentURI,
+        bool ensImport,
+        bool verifiedPass,
+        uint256 memberId
+    ) external onlyRelayerOrOwner nonReentrant {
+        bool isFreeClaim = false;
+        if (memberId > 0) {
+            if (memberFreeClaimed[memberId]) revert FreeClaimAlreadyUsed();
+            memberFreeClaimed[memberId] = true; // CEI: set before registration
+            isFreeClaim = true;
+        }
+        _registerNameWithMember(name, agentURI, RegistrationConfig({
+            nameOwner: nameOwner,
+            numYears: numYears,
+            charCount: charCount,
+            wantAgent: wantAgent,
+            agentWallet: agentWallet,
+            ensImport: ensImport,
+            verifiedPass: verifiedPass,
+            relayer: msg.sender
+        }), isFreeClaim, memberId);
+    }
+
     function _registerName(
         string calldata name,
         string calldata agentURI,
         RegistrationConfig memory c
+    ) internal {
+        _registerNameWithMember(name, agentURI, c, false, 0);
+    }
+
+    function _registerNameWithMember(
+        string calldata name,
+        string calldata agentURI,
+        RegistrationConfig memory c,
+        bool isFreeClaim,
+        uint256 memberId
     ) internal {
         if (c.nameOwner == address(0)) revert ZeroAddress();
         if (c.numYears == 0) c.numYears = 1;
@@ -357,13 +405,18 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         // Rate limiting (applied to name recipient, not relayer)
         _enforceRateLimit(c.nameOwner, c.verifiedPass);
 
-        // Calculate price — registration fee only, renewal is paid separately later
+        // Calculate price
         uint256 charLen = c.charCount > 0 ? uint256(c.charCount) : bytes(name).length;
         uint256 basePrice = _basePriceByLength(charLen);
-        uint256 totalCost = _adjustedPrice(basePrice, c.nameOwner, c.ensImport, c.verifiedPass);
+        uint256 totalCost;
 
-        // Collect payment (from msg.sender — the payer)
-        _collectPayment(totalCost, c.relayer);
+        if (isFreeClaim) {
+            totalCost = 0;
+            // No payment collected for free claims
+        } else {
+            totalCost = _adjustedPrice(basePrice, c.nameOwner, c.ensImport, c.verifiedPass);
+            _collectPayment(totalCost, c.relayer);
+        }
 
         // Mint NFT
         uint256 tokenId = _nextTokenId++;
@@ -372,7 +425,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         // Compute expiry once
         uint64 expiresAt = uint64(block.timestamp + (c.numYears * YEAR));
 
-        // Store record
+        // Store record (originalPrice always set for challenge system)
         _names[nameHash] = NameRecord({
             tokenId: tokenId,
             registeredAt: uint64(block.timestamp),
@@ -394,6 +447,9 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         _updateWalletInfo(c.nameOwner);
 
         emit NameRegistered(name, c.nameOwner, tokenId, totalCost, expiresAt);
+        if (isFreeClaim) {
+            emit FreeNameClaimed(name, c.nameOwner, memberId, tokenId);
+        }
 
         // Optional ERC-8004 agent registration
         if (c.wantAgent) {
@@ -601,6 +657,35 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         registrationFee = _adjustedPrice(base, wallet, ensImport, verifiedPass);
         renewalFee = RENEWAL_FEE * numYears;
         totalCost = registrationFee; // renewal is paid separately, not bundled
+    }
+
+    /// @notice Check if a Net Library member has already claimed their free name
+    function hasClaimedFreeName(uint256 memberId) external view returns (bool) {
+        return memberFreeClaimed[memberId];
+    }
+
+    /// @notice Quote with free claim check for Net Library members with Unlimited Pass
+    /// @param memberId Net Library member ID (0 = no free claim check)
+    function quoteNameWithMember(
+        string calldata name,
+        address wallet,
+        uint256 numYears,
+        uint8 charCount,
+        bool ensImport,
+        bool verifiedPass,
+        uint256 memberId
+    ) external view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee, bool isFreeClaim) {
+        if (numYears == 0) numYears = 1;
+        uint256 charLen = charCount > 0 ? uint256(charCount) : bytes(name).length;
+        uint256 base = _basePriceByLength(charLen);
+        if (memberId > 0 && !memberFreeClaimed[memberId]) {
+            registrationFee = 0;
+            isFreeClaim = true;
+        } else {
+            registrationFee = _adjustedPrice(base, wallet, ensImport, verifiedPass);
+        }
+        renewalFee = RENEWAL_FEE * numYears;
+        totalCost = registrationFee;
     }
 
     // =========================================================================

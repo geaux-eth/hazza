@@ -118,8 +118,42 @@ app.get("/api/quote/:name", async (c) => {
   const charCount = Number(c.req.query("charCount") || "0");
   const ensImport = c.req.query("ensImport") === "true";
   const verifiedPass = c.req.query("verifiedPass") === "true";
+  const memberId = BigInt(c.req.query("memberId") || "0");
 
   const client = getClient(c.env);
+
+  // Use member-aware quote if memberId provided
+  if (memberId > 0n) {
+    const [totalCost, registrationFee, renewalFee, isFreeClaim] = await client.readContract({
+      address: registryAddress(c.env),
+      abi: REGISTRY_ABI,
+      functionName: "quoteNameWithMember",
+      args: [name, wallet, numYears, charCount, ensImport, verifiedPass, memberId],
+    });
+
+    const lineItems: { label: string; amount: string }[] = [];
+    if (isFreeClaim) {
+      lineItems.push({ label: "Registration (1 year included)", amount: "FREE" });
+      lineItems.push({ label: "Unlimited Pass + Net Library", amount: "1 free name" });
+    } else {
+      lineItems.push({ label: "Registration (1 year included)", amount: formatUnits(registrationFee, 6) });
+      if (verifiedPass) lineItems.push({ label: "Unlimited Pass", amount: "20% discount" });
+    }
+    if (ensImport) lineItems.push({ label: "ENS Import", amount: "Challenge immunity" });
+
+    return c.json({
+      name, wallet, years: Number(numYears),
+      total: formatUnits(totalCost, 6),
+      totalRaw: totalCost.toString(),
+      registrationFee: formatUnits(registrationFee, 6),
+      renewalFee: formatUnits(renewalFee, 6),
+      renewalNote: "$2/yr renewal after first year",
+      isFreeClaim,
+      memberId: memberId.toString(),
+      lineItems,
+    });
+  }
+
   const [totalCost, registrationFee, renewalFee] = await client.readContract({
     address: registryAddress(c.env),
     abi: REGISTRY_ABI,
@@ -131,7 +165,7 @@ app.get("/api/quote/:name", async (c) => {
   const lineItems: { label: string; amount: string }[] = [];
   lineItems.push({ label: "Registration (1 year included)", amount: formatUnits(registrationFee, 6) });
   if (ensImport) lineItems.push({ label: "ENS Import", amount: "Challenge immunity" });
-  if (verifiedPass) lineItems.push({ label: "Unlimited Pass", amount: "1 free name" });
+  if (verifiedPass) lineItems.push({ label: "Unlimited Pass", amount: "20% discount" });
 
   return c.json({
     name,
@@ -143,6 +177,58 @@ app.get("/api/quote/:name", async (c) => {
     renewalFee: formatUnits(renewalFee, 6),
     renewalNote: "$2/yr renewal after first year",
     lineItems,
+  });
+});
+
+// Check free claim eligibility for Unlimited Pass + Net Library members
+app.get("/api/free-claim/:address", async (c) => {
+  const wallet = c.req.param("address") as Address;
+  if (!isAddress(wallet)) return c.json({ error: "Invalid address format" }, 400);
+
+  // Step 1: Check Net Library membership + Unlimited Pass via NL API
+  const nlApiUrl = c.env.NET_LIBRARY_API_URL;
+  if (!nlApiUrl) {
+    return c.json({ eligible: false, reason: "Free claim service unavailable" });
+  }
+
+  let nlData: any;
+  try {
+    const resp = await fetch(`${nlApiUrl}/api/membership?address=${wallet}`);
+    nlData = await resp.json();
+  } catch {
+    // NL API down — non-fatal, fall back to not eligible
+    return c.json({ eligible: false, reason: "Could not verify Net Library membership" });
+  }
+
+  if (!nlData?.isMember) {
+    return c.json({ eligible: false, reason: "Not a Net Library member" });
+  }
+  if (!nlData?.member?.hasUnlimitedPass) {
+    return c.json({ eligible: false, reason: "No Unlimited Pass" });
+  }
+
+  const memberId = nlData.member.memberId;
+  if (!memberId || memberId <= 0) {
+    return c.json({ eligible: false, reason: "Invalid member ID" });
+  }
+
+  // Step 2: Check if this memberId already claimed onchain
+  const client = getClient(c.env);
+  const claimed = await client.readContract({
+    address: registryAddress(c.env),
+    abi: REGISTRY_ABI,
+    functionName: "hasClaimedFreeName",
+    args: [BigInt(memberId)],
+  });
+
+  if (claimed) {
+    return c.json({ eligible: false, reason: "Free name already claimed", memberId });
+  }
+
+  return c.json({
+    eligible: true,
+    memberId,
+    memberName: nlData.member.ensSubname || `Member #${memberId}`,
   });
 });
 
@@ -566,6 +652,82 @@ app.post("/x402/register", async (c) => {
     address: addr, abi: REGISTRY_ABI, functionName: "available", args: [name],
   });
   if (!available) return c.json({ error: "Name not available" }, 409);
+
+  // --- Check free claim eligibility via Net Library API ---
+  let freeClaimMemberId = 0;
+  const nlApiUrl = c.env.NET_LIBRARY_API_URL;
+  if (nlApiUrl) {
+    try {
+      const nlResp = await fetch(`${nlApiUrl}/api/membership?address=${owner}`);
+      const nlData: any = await nlResp.json();
+      if (nlData?.isMember && nlData?.member?.hasUnlimitedPass && nlData.member.memberId > 0) {
+        // Check if already claimed onchain
+        const claimed = await client.readContract({
+          address: addr, abi: REGISTRY_ABI, functionName: "hasClaimedFreeName",
+          args: [BigInt(nlData.member.memberId)],
+        });
+        if (!claimed) {
+          freeClaimMemberId = nlData.member.memberId;
+        }
+      }
+    } catch {
+      // NL API failure is non-fatal — fall through to normal paid flow
+    }
+  }
+
+  // --- Free claim path: skip payment entirely ---
+  if (freeClaimMemberId > 0) {
+    try {
+      const chainId = Number(c.env.CHAIN_ID);
+      const chain = chainId === 8453 ? base : baseSepolia;
+      const account = privateKeyToAccount(c.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+
+      const txData = encodeFunctionData({
+        abi: REGISTRY_ABI,
+        functionName: "registerDirectWithMember",
+        args: [
+          name, owner, BigInt(years), 5,
+          false, "0x0000000000000000000000000000000000000000" as Address, "",
+          false, true, BigInt(freeClaimMemberId),
+        ],
+      });
+
+      let regTxHash: `0x${string}`;
+      const primaryRpc = c.env.PAYMASTER_BUNDLER_RPC || c.env.RPC_URL;
+      try {
+        const walletClient = createWalletClient({ account, chain, transport: http(primaryRpc) });
+        regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+      } catch {
+        const walletClient = createWalletClient({ account, chain, transport: http(c.env.RPC_URL) });
+        regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+      }
+
+      const regReceipt = await client.waitForTransactionReceipt({ hash: regTxHash, timeout: 20_000 });
+      if (regReceipt.status !== "success") {
+        return c.json({ error: "Free claim registration reverted on-chain", tx: regTxHash }, 500);
+      }
+
+      let tokenId = "0";
+      try {
+        const [, tid] = await client.readContract({
+          address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+        });
+        tokenId = tid.toString();
+      } catch { /* non-critical */ }
+
+      return c.json({
+        name, owner, tokenId,
+        registrationTx: regTxHash,
+        profileUrl: `https://${name}.hazza.name`,
+        expiresAt: Math.floor(Date.now() / 1000) + (years * 365 * 86400),
+        freeClaim: true,
+        memberId: freeClaimMemberId,
+      });
+    } catch (e: any) {
+      const msg = e?.shortMessage || e?.message || "Unknown error";
+      return c.json({ error: "Free claim registration failed", detail: msg }, 500);
+    }
+  }
 
   // Get quote — contract charges registration fee only (renewal paid separately)
   const [totalCost] = await client.readContract({

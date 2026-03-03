@@ -421,7 +421,7 @@ Names are NOT permanent-hold-forever. They require a $2/year renewal.
 - Day 8+: unlimited per day
 - Total names per wallet: 30 (hard cap)
 
-**Net Library Unlimited Storage Pass holders:**
+**Net Library Unlimited Pass holders:**
 - Unlimited name registrations per day, no wallet cap
 - 20% discount on all name registration fees (bulk pricing)
 

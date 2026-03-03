@@ -1,0 +1,140 @@
+# HAZZA — Onchain Name Registry
+
+Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an ERC-721 NFT, ENS-compatible resolution via CCIP-Read, and an optional ERC-8004 AI agent identity.
+
+**Live:** [hazza.name](https://hazza.name)
+
+## Architecture
+
+- **Contract:** Solidity (Foundry), deployed on Base Sepolia
+- **Worker:** Cloudflare Worker (TypeScript/Hono), serves the site + API + x402 payment protocol
+- **Resolution:** CCIP-Read (ERC-3668) gateway for ENS-compatible `.hazza.name` resolution
+
+## Contract (Base Sepolia)
+
+**Registry:** `0xb38d1a7693B2a61A31F3E764A793AF88124940A2`
+**MockUSDC:** `0x06A096A051906dEDd05Ef22dCF61ca1199bb038c`
+
+### Key Functions
+
+| Function | Description |
+|----------|-------------|
+| `registerDirect(...)` | Relayer-only registration (9 params) |
+| `registerDirectWithMember(...)` | Registration with Net Library member ID for free claim (10 params) |
+| `quoteName(...)` | Get registration price |
+| `quoteNameWithMember(...)` | Get price with free claim check |
+| `hasClaimedFreeName(uint256)` | Check if member already claimed free name |
+| `resolve(string)` | Resolve name to owner, token ID, expiry, agent |
+| `reverseResolve(address)` | Wallet to primary name |
+| `renew(string, uint256)` | Renew a name |
+
+### Pricing
+
+| Name Length | Price |
+|-------------|-------|
+| 3 characters | $100 |
+| 4 characters | $25 |
+| 5+ characters | $5 |
+| Renewal | $2/year |
+
+Progressive pricing applies for bulk registrations. ENS-verified imports get 50% off.
+
+## Unlimited Pass
+
+[Net Library](https://netlibrary.app) members with an **Unlimited Pass** ($10 NFT on Base) get:
+
+- **1 free HAZZA name** (first registration)
+- **20% discount** on all additional registrations
+- **No rate limits** on registrations
+
+### Anti-Abuse
+
+Free names are tracked by **Net Library member ID** (not wallet address). Each member number can claim exactly 1 free name, ever. Transferring the Unlimited Pass NFT to another wallet doesn't help — the new wallet needs its own Net Library membership with a different member ID.
+
+**Unlimited Pass (Base):** `0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB`
+**Unlimited Pass (Base Sepolia):** `0xC6440c27c3c18A931241A65d237a155889a7B1c7`
+
+## API
+
+All endpoints at `hazza.name`.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/available/:name` | GET | Check name availability |
+| `/api/resolve/:name` | GET | Resolve name to owner + records |
+| `/api/profile/:name` | GET | Full profile with text records |
+| `/api/quote/:name` | GET | Get registration price. Optional: `?memberId=N` for free claim check |
+| `/api/reverse/:address` | GET | Wallet to primary name |
+| `/api/names/:address` | GET | All names owned by wallet |
+| `/api/free-claim/:address` | GET | Check free claim eligibility (NL membership + Unlimited Pass + unclaimed) |
+| `/x402/register` | POST | Register a name via x402 payment protocol |
+| `/api/ens-names/:address` | GET | ENS name suggestions for wallet |
+
+### Free Claim Flow
+
+1. Connect wallet on register page
+2. Worker checks `/api/free-claim/{address}` → queries Net Library API for membership + Unlimited Pass
+3. If eligible: quote shows FREE, checkout skips USDC transfer
+4. Worker calls `registerDirectWithMember(... memberId)` — no payment collected
+5. Contract marks `memberFreeClaimed[memberId] = true` to prevent reuse
+
+### x402 Payment Flow (Paid Registration)
+
+1. `POST /x402/register` with `{ name, owner, years }` — returns 402 with USDC amount
+2. User transfers USDC to relayer address
+3. `POST /x402/register` with `X-PAYMENT` header containing tx proof
+4. Worker verifies payment on-chain, calls `registerDirect` via relayer
+
+## Development
+
+### Contract
+
+```bash
+cd contracts
+forge build
+forge test
+```
+
+### Worker
+
+```bash
+cd worker
+npm install
+npx wrangler dev     # local dev
+npx wrangler deploy  # deploy to Cloudflare
+```
+
+### Deploy Contract (Base Sepolia)
+
+```bash
+# On droplet with Foundry installed
+cd /root/hazza-contracts
+MOCK_USDC=0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
+HAZZA_TREASURY=0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a \
+CHERYL_WALLET=0xaf5e770478e45650e36805d1ccaab240309f4a20 \
+forge script script/DeployMock.s.sol --rpc-url https://sepolia.base.org --private-key $PK --broadcast
+```
+
+## Pages
+
+| Path | Page |
+|------|------|
+| `/` | Landing page with name search |
+| `/register` | Registration flow (wallet connect + x402 checkout) |
+| `/manage` | Name management (text records, agent, operator, custom domain) |
+| `/dashboard` | Dashboard showing all owned names |
+| `/pricing` | Pricing details |
+| `/pricing/protections` | Rate limits and anti-squatting |
+| `/pricing/details` | Full pricing breakdown |
+| `/about` | About HAZZA |
+| `/docs` | API documentation |
+| `*.hazza.name` | Profile pages (wildcard subdomains) |
+
+## Key Wallets
+
+| Role | Address |
+|------|---------|
+| Owner (GEAUX) | `0x96168ACf7f3925e7A9eAA08Ddb21e59643da8097` |
+| Treasury | `0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a` |
+| Cheryl (relayer, 25%) | `0xaf5e770478e45650e36805d1ccaab240309f4a20` |
+| Website relayer (25%) | `0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d` |
