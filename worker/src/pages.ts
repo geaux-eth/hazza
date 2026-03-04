@@ -580,7 +580,7 @@ function shell(title: string, description: string, body: string, script?: string
   <meta name="twitter:title" content="${esc(title)}">
   <meta name="twitter:description" content="${esc(description)}">
   <meta name="twitter:image" content="${ogImg}">
-  <meta name="fc:frame" content='{"version":"1","imageUrl":"${ogImg}","button":{"title":"open hazza","action":{"type":"launch_miniapp","url":"https://hazza.name"}}}'>
+  <meta name="fc:frame" content='{"version":"1","imageUrl":"https://hazza.name/api/share","button":{"title":"open hazza","action":{"type":"launch_miniapp","url":"https://hazza.name"}}}'>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>h</text></svg>">
   <style>${STYLES}</style>
 </head>

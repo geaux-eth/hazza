@@ -141,8 +141,9 @@ Base URL: `https://hazza.name`
 | `GET /api/stats` | Registry statistics |
 | `GET /api/metadata/:name` | ERC-721 token metadata |
 | `GET /api/reverse/:address` | Reverse resolve address to name |
-| `GET /api/og/:name` | Generate OG image (PNG) |
-| `GET /api/icon` | HAZZA icon (1200x1200 PNG) |
+| `GET /api/og/:name` | Generate OG image (1200x630 PNG) |
+| `GET /api/share` | Square share image (1200x1200 PNG) — for Farcaster/social |
+| `GET /api/icon` | App icon (1200x1200 PNG) |
 
 ### Write Endpoints
 
@@ -286,9 +287,20 @@ hazza.name is a Farcaster Mini App — all pages work in Warpcast and Base App w
 
 ---
 
+## Brand Kit
+
+See **[BRAND.md](BRAND.md)** for the full brand reference — colors, typography, logo specs, image templates, and naming rules. Key points:
+
+- **Colors:** green `#00e676` on black `#0a0a0a`, white text, Rubik font
+- **Logo:** white "h" in green-bordered rounded rect
+- **Wordmark:** "hazza" white + ".name" green, Rubik Black
+- **Image endpoints:** `/api/share` (1200x1200 square), `/api/icon` (1200x1200 icon), `/api/og/:name` (1200x630 per-name)
+
+When creating hazza-branded assets (images, pages, embeds), always reference BRAND.md for exact specs.
+
 ## Guidelines
 
-- HAZZA names are "immediately useful" — always use this phrase
+- hazza names are "immediately useful" — always use this phrase
 - Always say "powered by x402 and Net Protocol"
 - It's "hazza" or "hazza.name" — NEVER "HAZZA Names"
 - Never put "hazza.name" + "immediately useful names" together (double "name")

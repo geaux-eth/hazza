@@ -490,6 +490,64 @@ app.get("/api/icon", async (c) => {
   }
 });
 
+// 1200x1200 square share image for Farcaster Mini App embed
+app.get("/api/share", async (c) => {
+  // Serve from CF edge cache if available
+  const cacheKey = new Request("https://hazza.name/api/share", { method: "GET" });
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+  <rect width="1200" height="1200" fill="#0a0a0a"/>
+
+  <!-- Icon logo centered near top -->
+  <rect x="556" y="300" width="88" height="88" rx="14" fill="#0a0a0a" stroke="#00e676" stroke-width="5"/>
+  <text x="600" y="344" font-family="Rubik, sans-serif" font-size="48" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
+
+  <!-- hazza.name large centered -->
+  <text x="600" y="530" font-family="Rubik, sans-serif" font-weight="900" text-anchor="middle">
+    <tspan font-size="96" fill="#ffffff">hazza</tspan><tspan font-size="96" fill="#00e676">.name</tspan>
+  </text>
+
+  <!-- immediately useful -->
+  <text x="600" y="620" font-family="Rubik, sans-serif" font-size="42" fill="#ffffff" font-weight="700" text-anchor="middle" opacity="0.85">immediately useful</text>
+</svg>`;
+
+  try {
+    if (!wasmInitialized) {
+      await initWasm(resvgWasm);
+      wasmInitialized = true;
+    }
+    const fontData = await getFonts();
+    const resvg = new Resvg(svg, {
+      fitTo: { mode: "width", value: 1200 },
+      font: {
+        fontBuffers: fontData.map(f => new Uint8Array(f)),
+        defaultFontFamily: "Rubik",
+      },
+    });
+    const pngData = resvg.render();
+    const pngBuffer = pngData.asPng();
+
+    const resp = new Response(pngBuffer, {
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+    c.executionCtx.waitUntil(cache.put(cacheKey, resp.clone()));
+    return resp;
+  } catch {
+    return new Response(svg, {
+      headers: {
+        "Content-Type": "image/svg+xml",
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+  }
+});
+
 // NFTs owned by address (for avatar picker)
 app.get("/api/nfts/:address", async (c) => {
   const address = c.req.param("address") as `0x${string}`;
