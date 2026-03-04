@@ -1,0 +1,19 @@
+{
+  "name": "hazza-cli",
+  "version": "1.0.0",
+  "description": "CLI for HAZZA — onchain names on Base, powered by x402 and Net Protocol",
+  "bin": {
+    "hazza": "bin/hazza.js"
+  },
+  "keywords": ["hazza", "ens", "names", "onchain", "base", "x402", "net-protocol", "cli"],
+  "author": "HAZZA",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "cli-table3": "^0.6.5",
+    "commander": "^12.0.0"
+  }
+}
