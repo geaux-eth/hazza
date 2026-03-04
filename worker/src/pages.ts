@@ -3474,25 +3474,174 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
       });
     }
 
+    // Seaport constants
+    var ZONE_PUBLIC = '0x000000007F8c58fbf215bF91Bda7421A806cf3ae';
+    var ZERO_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
+    var SEAPORT_GET_COUNTER_ABI = [{ name: 'getCounter', type: 'function', stateMutability: 'view', inputs: [{ name: 'offerer', type: 'address' }], outputs: [{ type: 'uint256' }] }];
+    var BAZAAR_SUBMIT_ABI = [{
+      name: 'submit', type: 'function', stateMutability: 'nonpayable',
+      inputs: [{ name: 'submission', type: 'tuple', components: [
+        { name: 'parameters', type: 'tuple', components: [
+          { name: 'offerer', type: 'address' }, { name: 'zone', type: 'address' },
+          { name: 'offer', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }] },
+          { name: 'consideration', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }, { name: 'recipient', type: 'address' }] },
+          { name: 'orderType', type: 'uint8' }, { name: 'startTime', type: 'uint256' }, { name: 'endTime', type: 'uint256' },
+          { name: 'zoneHash', type: 'bytes32' }, { name: 'salt', type: 'uint256' }, { name: 'conduitKey', type: 'bytes32' }, { name: 'totalOriginalConsiderationItems', type: 'uint256' }
+        ]},
+        { name: 'counter', type: 'uint256' },
+        { name: 'signature', type: 'bytes' }
+      ]}], outputs: []
+    }];
+    var SEAPORT_FULFILL_ABI = [{
+      name: 'fulfillOrder', type: 'function', stateMutability: 'payable',
+      inputs: [
+        { name: 'order', type: 'tuple', components: [
+          { name: 'parameters', type: 'tuple', components: [
+            { name: 'offerer', type: 'address' }, { name: 'zone', type: 'address' },
+            { name: 'offer', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }] },
+            { name: 'consideration', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }, { name: 'recipient', type: 'address' }] },
+            { name: 'orderType', type: 'uint8' }, { name: 'startTime', type: 'uint256' }, { name: 'endTime', type: 'uint256' },
+            { name: 'zoneHash', type: 'bytes32' }, { name: 'salt', type: 'uint256' }, { name: 'conduitKey', type: 'bytes32' }, { name: 'totalOriginalConsiderationItems', type: 'uint256' }
+          ]},
+          { name: 'signature', type: 'bytes' }
+        ]},
+        { name: 'fulfillerConduitKey', type: 'bytes32' }
+      ],
+      outputs: [{ name: 'fulfilled', type: 'bool' }]
+    }];
+
+    // EIP-712 types for Seaport OrderComponents
+    var SEAPORT_EIP712_TYPES = {
+      OrderComponents: [
+        { name: 'offerer', type: 'address' },
+        { name: 'zone', type: 'address' },
+        { name: 'offer', type: 'OfferItem[]' },
+        { name: 'consideration', type: 'ConsiderationItem[]' },
+        { name: 'orderType', type: 'uint8' },
+        { name: 'startTime', type: 'uint256' },
+        { name: 'endTime', type: 'uint256' },
+        { name: 'zoneHash', type: 'bytes32' },
+        { name: 'salt', type: 'uint256' },
+        { name: 'conduitKey', type: 'bytes32' },
+        { name: 'counter', type: 'uint256' }
+      ],
+      OfferItem: [
+        { name: 'itemType', type: 'uint8' },
+        { name: 'token', type: 'address' },
+        { name: 'identifierOrCriteria', type: 'uint256' },
+        { name: 'startAmount', type: 'uint256' },
+        { name: 'endAmount', type: 'uint256' }
+      ],
+      ConsiderationItem: [
+        { name: 'itemType', type: 'uint8' },
+        { name: 'token', type: 'address' },
+        { name: 'identifierOrCriteria', type: 'uint256' },
+        { name: 'startAmount', type: 'uint256' },
+        { name: 'endAmount', type: 'uint256' },
+        { name: 'recipient', type: 'address' }
+      ]
+    };
+
+    function generateSalt() {
+      var bytes = new Uint8Array(32);
+      crypto.getRandomValues(bytes);
+      return '0x' + Array.from(bytes).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+    }
+
     async function buyListing(orderHash) {
       var listing = listingsData.find(function(l) { return l.orderHash === orderHash; });
       if (!listing) return alert('Listing not found');
+      if (!listing.orderComponents) return alert('Listing data incomplete — cannot fulfill');
       if (!wallet) { await connectWallet(); if (!wallet) return; }
 
       try {
+        var oc = listing.orderComponents;
+
+        // For USDC listings, approve USDC to Seaport first
         if (listing.currency === 'USDC') {
-          // Approve USDC to Seaport
           var erc20 = new ethers.Contract(USDC, ERC20_ABI, signer);
+          var totalUsdc = 0n;
+          oc.consideration.forEach(function(c) {
+            if (c.itemType === 1) totalUsdc += BigInt(c.startAmount);
+          });
           var allowance = await erc20.allowance(wallet, SEAPORT);
-          var needed = ethers.parseUnits(String(listing.price), 6);
-          if (allowance < needed) {
-            var approveTx = await erc20.approve(SEAPORT, needed);
-            await approveTx.wait();
+          if (allowance < totalUsdc) {
+            var appTx = await erc20.approve(SEAPORT, totalUsdc);
+            await appTx.wait();
           }
         }
-        alert('Listing purchase requires Seaport fulfillOrder. Full Seaport integration coming soon.\\n\\nOrder hash: ' + orderHash);
+
+        // Build order parameters for fulfillOrder
+        var orderParams = {
+          offerer: oc.offerer,
+          zone: oc.zone,
+          offer: oc.offer.map(function(o) {
+            return [o.itemType, o.token, BigInt(o.identifierOrCriteria), BigInt(o.startAmount), BigInt(o.endAmount)];
+          }),
+          consideration: oc.consideration.map(function(c) {
+            return [c.itemType, c.token, BigInt(c.identifierOrCriteria), BigInt(c.startAmount), BigInt(c.endAmount), c.recipient];
+          }),
+          orderType: oc.orderType,
+          startTime: BigInt(oc.startTime),
+          endTime: BigInt(oc.endTime),
+          zoneHash: oc.zoneHash,
+          salt: BigInt(oc.salt),
+          conduitKey: oc.conduitKey,
+          totalOriginalConsiderationItems: BigInt(oc.totalOriginalConsiderationItems)
+        };
+
+        // Calculate ETH value (sum of NATIVE consideration items)
+        var ethValue = 0n;
+        oc.consideration.forEach(function(c) {
+          if (c.itemType === 0) ethValue += BigInt(c.startAmount);
+        });
+
+        // Call Seaport fulfillOrder
+        var seaport = new ethers.Contract(SEAPORT, SEAPORT_FULFILL_ABI, signer);
+
+        // Reconstruct the signature from messageData or use a known approach
+        // The listing should include the seller's signature in messageData
+        var sig = '0x'; // placeholder — we need the seller signature
+        if (listing.messageData) {
+          // The messageData is the ABI-encoded Seaport submission containing the signature
+          try {
+            var abiCoder = ethers.AbiCoder.defaultAbiCoder();
+            var decoded = abiCoder.decode(
+              ['((address,address,(uint8,address,uint256,uint256,uint256)[],(uint8,address,uint256,uint256,uint256,address)[],uint8,uint256,uint256,bytes32,uint256,bytes32,uint256),uint256,bytes)'],
+              listing.messageData
+            );
+            sig = decoded[0][2]; // signature is the 3rd element
+          } catch(decErr) {
+            console.error('Failed to decode messageData', decErr);
+          }
+        }
+
+        if (sig === '0x' || sig.length < 10) {
+          return alert('Could not extract seller signature from listing data. This listing may need to be re-indexed.');
+        }
+
+        var order = {
+          parameters: [
+            orderParams.offerer, orderParams.zone,
+            orderParams.offer, orderParams.consideration,
+            orderParams.orderType, orderParams.startTime, orderParams.endTime,
+            orderParams.zoneHash, orderParams.salt, orderParams.conduitKey,
+            orderParams.totalOriginalConsiderationItems
+          ],
+          signature: sig
+        };
+
+        var tx = await seaport.fulfillOrder(order, ZERO_BYTES32, { value: ethValue });
+        var receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          alert('Purchase successful! ' + listing.name + '.hazza.name is now yours.\\n\\nTx: ' + tx.hash);
+          loadListings(); // Refresh
+        } else {
+          alert('Transaction reverted. Check the block explorer for details.');
+        }
       } catch(e) {
-        alert('Buy failed: ' + (e.message || e));
+        alert('Buy failed: ' + (e.shortMessage || e.message || e));
       }
     }
 
@@ -3563,6 +3712,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
       if (!wallet) { await connectWallet(); if (!wallet) return; }
       var price = $('sell-price-' + name).value;
       var currency = $('sell-currency-' + name).value;
+      var duration = $('sell-duration-' + name).value;
       if (!price || parseFloat(price) <= 0) return alert('Enter a valid price');
 
       try {
@@ -3570,14 +3720,118 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
         var nft = new ethers.Contract(REGISTRY, ERC721_ABI, signer);
         var approved = await nft.isApprovedForAll(wallet, SEAPORT);
         if (!approved) {
-          var tx = await nft.setApprovalForAll(SEAPORT, true);
-          await tx.wait();
+          var appTx = await nft.setApprovalForAll(SEAPORT, true);
+          await appTx.wait();
         }
 
-        // Step 2: Create Seaport order (simplified — full integration needs EIP-712 signing)
-        alert('NFT approved for Seaport. Full Seaport order creation (EIP-712 signing + Bazaar submission) coming soon.\\n\\nName: ' + name + '\\nPrice: ' + price + ' ' + currency);
+        // Step 2: Get counter from Seaport
+        var seaportRead = new ethers.Contract(SEAPORT, SEAPORT_GET_COUNTER_ABI, provider);
+        var counter = await seaportRead.getCounter(wallet);
+
+        // Step 3: Build order components
+        var isUsdc = (currency === 'USDC');
+        var priceWei;
+        if (isUsdc) {
+          priceWei = ethers.parseUnits(price, 6); // USDC = 6 decimals
+        } else {
+          priceWei = ethers.parseEther(price);
+        }
+
+        var endTime = (duration === '0')
+          ? BigInt('115792089237316195423570985008687907853269984665640564039457584007913129639935') // max uint256 = no expiry
+          : BigInt(Math.floor(Date.now() / 1000) + parseInt(duration));
+
+        // Offer: seller offers 1 ERC721
+        var offer = [{
+          itemType: 2, // ERC721
+          token: REGISTRY,
+          identifierOrCriteria: BigInt(tokenId),
+          startAmount: 1n,
+          endAmount: 1n
+        }];
+
+        // Consideration: seller receives payment (Base has 0% fee)
+        var consideration = [{
+          itemType: isUsdc ? 1 : 0, // 0=NATIVE(ETH), 1=ERC20(USDC)
+          token: isUsdc ? USDC : '0x0000000000000000000000000000000000000000',
+          identifierOrCriteria: 0n,
+          startAmount: priceWei,
+          endAmount: priceWei,
+          recipient: wallet
+        }];
+
+        var orderParameters = {
+          offerer: wallet,
+          zone: ZONE_PUBLIC,
+          offer: offer,
+          consideration: consideration,
+          orderType: 2, // FULL_RESTRICTED
+          startTime: 0n,
+          endTime: endTime,
+          zoneHash: ZERO_BYTES32,
+          salt: BigInt(generateSalt()),
+          conduitKey: ZERO_BYTES32,
+          totalOriginalConsiderationItems: BigInt(consideration.length)
+        };
+
+        // Step 4: EIP-712 sign the order
+        var domain = {
+          name: 'Seaport',
+          version: '1.6',
+          chainId: parseInt(CHAIN_ID),
+          verifyingContract: SEAPORT
+        };
+
+        // Message uses counter instead of totalOriginalConsiderationItems
+        var message = {
+          offerer: orderParameters.offerer,
+          zone: orderParameters.zone,
+          offer: offer,
+          consideration: consideration,
+          orderType: orderParameters.orderType,
+          startTime: orderParameters.startTime,
+          endTime: orderParameters.endTime,
+          zoneHash: orderParameters.zoneHash,
+          salt: orderParameters.salt,
+          conduitKey: orderParameters.conduitKey,
+          counter: counter
+        };
+
+        var signature = await signer.signTypedData(domain, SEAPORT_EIP712_TYPES, message);
+
+        // Step 5: Submit to Bazaar V2 contract
+        var bazaar = new ethers.Contract(BAZAAR, BAZAAR_SUBMIT_ABI, signer);
+
+        var submission = {
+          parameters: [
+            orderParameters.offerer,
+            orderParameters.zone,
+            offer.map(function(o) { return [o.itemType, o.token, o.identifierOrCriteria, o.startAmount, o.endAmount]; }),
+            consideration.map(function(c) { return [c.itemType, c.token, c.identifierOrCriteria, c.startAmount, c.endAmount, c.recipient]; }),
+            orderParameters.orderType,
+            orderParameters.startTime,
+            orderParameters.endTime,
+            orderParameters.zoneHash,
+            orderParameters.salt,
+            orderParameters.conduitKey,
+            orderParameters.totalOriginalConsiderationItems
+          ],
+          counter: counter,
+          signature: signature
+        };
+
+        var tx = await bazaar.submit(submission);
+        var receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          alert('Listed! ' + name + '.hazza.name is now for sale at ' + price + ' ' + currency + '.\\n\\nTx: ' + tx.hash + '\\n\\nThis listing appears on hazza.name/marketplace and netprotocol.app/bazaar.');
+          showSellForm(name, tokenId); // Close the form
+          loadListings(); // Refresh browse tab
+        } else {
+          alert('Submission reverted. Check block explorer.');
+        }
       } catch(e) {
-        alert('Listing failed: ' + (e.message || e));
+        alert('Listing failed: ' + (e.shortMessage || e.message || e));
       }
     }
 

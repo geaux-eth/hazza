@@ -1160,6 +1160,34 @@ async function enrichListing(listing: any, client: any, addr: Address) {
       nameStatus: isActive ? "active" : "expired",
       avatar: avatar || null,
       profileUrl: `https://${name}.hazza.name`,
+      messageData: listing.messageData || null,
+      orderComponents: listing.orderComponents ? {
+        offerer: listing.orderComponents.offerer,
+        zone: listing.orderComponents.zone,
+        offer: listing.orderComponents.offer?.map((o: any) => ({
+          itemType: Number(o.itemType),
+          token: o.token,
+          identifierOrCriteria: o.identifierOrCriteria?.toString() || "0",
+          startAmount: o.startAmount?.toString() || "1",
+          endAmount: o.endAmount?.toString() || "1",
+        })),
+        consideration: listing.orderComponents.consideration?.map((c: any) => ({
+          itemType: Number(c.itemType),
+          token: c.token,
+          identifierOrCriteria: c.identifierOrCriteria?.toString() || "0",
+          startAmount: c.startAmount?.toString() || "0",
+          endAmount: c.endAmount?.toString() || "0",
+          recipient: c.recipient,
+        })),
+        orderType: Number(listing.orderComponents.orderType),
+        startTime: listing.orderComponents.startTime?.toString() || "0",
+        endTime: listing.orderComponents.endTime?.toString() || "0",
+        zoneHash: listing.orderComponents.zoneHash,
+        salt: listing.orderComponents.salt?.toString() || "0",
+        conduitKey: listing.orderComponents.conduitKey,
+        counter: listing.orderComponents.counter?.toString() || "0",
+        totalOriginalConsiderationItems: listing.orderComponents.totalOriginalConsiderationItems?.toString() || "0",
+      } : null,
     };
   } catch {
     return null;
