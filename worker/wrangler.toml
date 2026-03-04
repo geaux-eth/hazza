@@ -1,6 +1,7 @@
 name = "hazza-name"
 main = "src/index.ts"
 compatibility_date = "2025-02-20"
+compatibility_flags = ["nodejs_compat"]
 
 routes = [
   { pattern = "hazza.name/*", zone_id = "b8ce09cf557f0f90e5b9d1a4e8578449" },
@@ -15,5 +16,12 @@ CHAIN_ID = "84532"
 ETH_MAINNET_RPC = "https://eth.llamarpc.com"
 RELAYER_ADDRESS = "0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d"
 NET_LIBRARY_API_URL = "https://miniapp-generator-fid-282520-251210015136529.neynar.app"
+SEAPORT_ADDRESS = "0x0000000000000068F116a894984e2DB1123eB395"
+BAZAAR_ADDRESS = "0x000000058f3ade587388daf827174d0e6fc97595"
+BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 # Secrets (stored via wrangler secret put):
 # BASE_MAINNET_RPC, RELAYER_PRIVATE_KEY, PAYMASTER_BUNDLER_RPC, GATEWAY_SIGNER_KEY
+
+[[kv_namespaces]]
+binding = "WATCHLIST_KV"
+id = "9f703511d8ae41aeb028b13c449bfc1e"

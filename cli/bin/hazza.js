@@ -28,6 +28,7 @@ program.addCommand(require('../commands/profile'));
 program.addCommand(require('../commands/renew'));
 program.addCommand(require('../commands/records'));
 program.addCommand(require('../commands/stats'));
+program.addCommand(require('../commands/marketplace'));
 
 // Alias: hazza set <name> <key> <value> → hazza records set
 program

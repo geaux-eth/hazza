@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type Env, getClient, getMainnetClient, getEthMainnetClient, buildTx, registryAddress, REGISTRY_ABI, EXOSKELETON_ABI, EXOSKELETON_ADDRESS } from "./contract";
-import { landingPage, profilePage, aboutPage, pricingPage, pricingProtectionsPage, pricingDetailsPage, docsPage, domainsPage, registerPage, managePage, dashboardPage } from "./pages";
+import { landingPage, profilePage, aboutPage, pricingPage, pricingProtectionsPage, pricingDetailsPage, docsPage, domainsPage, registerPage, managePage, dashboardPage, marketplacePage } from "./pages";
 import { handleCcipRead, handleCcipOptions } from "./ccip";
 import { type Address, formatUnits, keccak256, toBytes, isAddress, createWalletClient, http, encodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
 import { Resvg, initWasm } from "@resvg/resvg-wasm";
+import { BazaarClient } from "@net-protocol/bazaar";
 // @ts-ignore — wasm import handled by wrangler
 import resvgWasm from "../node_modules/@resvg/resvg-wasm/index_bg.wasm";
 
@@ -1101,6 +1102,210 @@ app.post("/x402/register", async (c) => {
 });
 
 // =========================================================================
+//                         MARKETPLACE API (Bazaar)
+// =========================================================================
+
+// Helper: create BazaarClient for current chain
+function getBazaarClient(env: Env) {
+  const chainId = Number(env.CHAIN_ID);
+  return new BazaarClient({ chainId, rpcUrl: env.RPC_URL });
+}
+
+// Enrich a listing with name data from the registry
+async function enrichListing(listing: any, client: any, addr: Address) {
+  const tokenId = listing.tokenId;
+  try {
+    const name = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(tokenId)],
+    });
+    if (!name) return null;
+
+    const [, , , expiresAt] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name as string],
+    });
+    const [isActive] = await Promise.all([
+      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name as string] }),
+    ]);
+
+    // Detect currency from consideration items
+    let currency = "ETH";
+    let price = listing.price;
+    let priceRaw = listing.priceWei?.toString() || "0";
+    if (listing.orderComponents?.consideration?.[0]?.itemType === 1) {
+      currency = "USDC";
+      // USDC has 6 decimals, but Bazaar SDK formats with 18
+      const rawWei = listing.priceWei || 0n;
+      price = Number(formatUnits(rawWei, 6));
+      priceRaw = rawWei.toString();
+    }
+
+    // Fetch avatar
+    let avatar = "";
+    try {
+      avatar = await client.readContract({
+        address: addr, abi: REGISTRY_ABI, functionName: "text", args: [name as string, "avatar"],
+      }) as string;
+    } catch {}
+
+    return {
+      name: name as string,
+      tokenId: tokenId.toString(),
+      seller: listing.maker,
+      price,
+      priceRaw,
+      currency,
+      expiresAt: Number(expiresAt),
+      listingExpiry: listing.expirationDate,
+      orderHash: listing.orderHash,
+      nameStatus: isActive ? "active" : "expired",
+      avatar: avatar || null,
+      profileUrl: `https://${name}.hazza.name`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// GET /api/marketplace/listings — active HAZZA name listings
+app.get("/api/marketplace/listings", async (c) => {
+  try {
+    const bazaar = getBazaarClient(c.env);
+    const nftAddress = registryAddress(c.env);
+    const rawListings = await bazaar.getListings({ nftAddress });
+
+    const client = getClient(c.env);
+    const addr = registryAddress(c.env);
+
+    const enriched = await Promise.all(
+      rawListings.map((l: any) => enrichListing(l, client, addr))
+    );
+
+    return c.json({
+      listings: enriched.filter(Boolean),
+      total: enriched.filter(Boolean).length,
+    });
+  } catch (e: any) {
+    return c.json({ listings: [], total: 0, error: e.message });
+  }
+});
+
+// GET /api/marketplace/offers — active collection offers
+app.get("/api/marketplace/offers", async (c) => {
+  try {
+    const bazaar = getBazaarClient(c.env);
+    const nftAddress = registryAddress(c.env);
+    const rawOffers = await bazaar.getCollectionOffers({ nftAddress });
+
+    return c.json({
+      offers: rawOffers.map((o: any) => ({
+        offerer: o.maker,
+        price: o.price,
+        priceRaw: o.priceWei?.toString() || "0",
+        currency: o.currency || "ETH",
+        expirationDate: o.expirationDate,
+        orderHash: o.orderHash,
+      })),
+      total: rawOffers.length,
+    });
+  } catch (e: any) {
+    return c.json({ offers: [], total: 0, error: e.message });
+  }
+});
+
+// GET /api/marketplace/sales — recent sales
+app.get("/api/marketplace/sales", async (c) => {
+  try {
+    const bazaar = getBazaarClient(c.env);
+    const nftAddress = registryAddress(c.env);
+    const rawSales = await bazaar.getSales({ nftAddress });
+
+    const client = getClient(c.env);
+    const addr = registryAddress(c.env);
+
+    const enrichedSales = await Promise.all(
+      rawSales.slice(0, 50).map(async (s: any) => {
+        let name = "";
+        try {
+          name = await client.readContract({
+            address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(s.tokenId)],
+          }) as string;
+        } catch {}
+
+        let currency = "ETH";
+        let price = s.price;
+        if (s.itemType === 1) {
+          currency = "USDC";
+          price = Number(formatUnits(s.priceWei || 0n, 6));
+        }
+
+        return {
+          name: name || `Token #${s.tokenId}`,
+          tokenId: s.tokenId,
+          seller: s.seller,
+          buyer: s.buyer,
+          price,
+          priceRaw: s.priceWei?.toString() || "0",
+          currency,
+          timestamp: s.timestamp,
+          orderHash: s.orderHash,
+        };
+      })
+    );
+
+    return c.json({ sales: enrichedSales, total: enrichedSales.length });
+  } catch (e: any) {
+    return c.json({ sales: [], total: 0, error: e.message });
+  }
+});
+
+// Watchlist endpoints (Worker KV)
+app.get("/api/marketplace/watch/:orderHash", async (c) => {
+  const orderHash = c.req.param("orderHash");
+  try {
+    const data = await c.env.WATCHLIST_KV.get(`watch:${orderHash}`, "json") as string[] | null;
+    return c.json({ orderHash, count: data ? data.length : 0 });
+  } catch {
+    return c.json({ orderHash, count: 0 });
+  }
+});
+
+app.post("/api/marketplace/watch", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.orderHash || !body?.address) {
+    return c.json({ error: "Missing orderHash and address" }, 400);
+  }
+  const key = `watch:${body.orderHash}`;
+  try {
+    const existing = (await c.env.WATCHLIST_KV.get(key, "json") as string[] | null) || [];
+    const addr = body.address.toLowerCase();
+    if (!existing.includes(addr)) {
+      existing.push(addr);
+      await c.env.WATCHLIST_KV.put(key, JSON.stringify(existing));
+    }
+    return c.json({ orderHash: body.orderHash, count: existing.length });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+app.delete("/api/marketplace/watch", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.orderHash || !body?.address) {
+    return c.json({ error: "Missing orderHash and address" }, 400);
+  }
+  const key = `watch:${body.orderHash}`;
+  try {
+    const existing = (await c.env.WATCHLIST_KV.get(key, "json") as string[] | null) || [];
+    const addr = body.address.toLowerCase();
+    const filtered = existing.filter((a: string) => a !== addr);
+    await c.env.WATCHLIST_KV.put(key, JSON.stringify(filtered));
+    return c.json({ orderHash: body.orderHash, count: filtered.length });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+// =========================================================================
 //                         CCIP-READ GATEWAY (ERC-3668)
 // =========================================================================
 
@@ -1149,6 +1354,32 @@ app.get("*", async (c) => {
     }
     if (path === "/dashboard") {
       return c.html(dashboardPage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID));
+    }
+    if (path === "/marketplace") {
+      return c.html(marketplacePage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID, c.env.SEAPORT_ADDRESS, c.env.BAZAAR_ADDRESS));
+    }
+    if (path === "/.well-known/farcaster.json") {
+      return c.json({
+        accountAssociation: {
+          header: "eyJmaWQiOjI4MjUyMCwidHlwZSI6ImF1dGgiLCJrZXkiOiIweDE4QTQzMkQwMDhhMGU1RTFENjExZWFlMTk0RUUzYmRjN0ZEM2YzRkEifQ",
+          payload: "eyJkb21haW4iOiJoYXp6YS5uYW1lIn0",
+          signature: "nqc8sk/3P2Fopj86Xodvi3C8a/HqnpRDlTIHhBj++NV6rxGfKfGdE4NNpkLGjAj5R/OYL1VNIj0XUHohJfsy+Bw=",
+        },
+        miniapp: {
+          version: "1",
+          name: "hazza",
+          subtitle: "immediately useful",
+          description: "register and trade onchain names on Base, powered by x402 and Net Protocol",
+          homeUrl: "https://hazza.name",
+          iconUrl: "https://hazza.name/api/icon",
+          splashImageUrl: "https://hazza.name/api/icon",
+          splashBackgroundColor: "#0a0a0a",
+          primaryCategory: "utility",
+          tags: ["names", "identity", "onchain", "base"],
+          requiredChains: ["eip155:8453"],
+          requiredCapabilities: ["wallet.getEthereumProvider"],
+        },
+      });
     }
     return c.json({ error: "Not found" }, 404);
   }

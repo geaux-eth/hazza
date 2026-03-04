@@ -336,6 +336,10 @@ export type Env = {
   PAYMASTER_BUNDLER_RPC: string;
   GATEWAY_SIGNER_KEY: string;
   NET_LIBRARY_API_URL: string;
+  SEAPORT_ADDRESS: string;
+  BAZAAR_ADDRESS: string;
+  BASE_USDC_ADDRESS: string;
+  WATCHLIST_KV: KVNamespace;
 };
 
 // Minimal ABI for Exoskeleton NFT (Base mainnet)

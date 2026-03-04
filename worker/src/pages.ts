@@ -447,6 +447,7 @@ const NAV = `
     <button class="hamburger" id="hamburger-btn" aria-label="Menu">&#9776;</button>
     <div class="links" id="nav-links">
       <a href="/register">register</a>
+      <a href="/marketplace">marketplace</a>
       <a href="/dashboard">dashboard</a>
       <a href="/pricing">pricing</a>
       <a href="/about">about</a>
@@ -544,6 +545,7 @@ function profileShell(name: string, title: string, description: string, body: st
     <a class="logo" href="https://${encodeURIComponent(name)}.hazza.name"><span class="logo-icon">${esc(iconChar)}</span></a>
     <div class="links">
       <a href="https://hazza.name/manage?name=${encodeURIComponent(name)}">edit</a>
+      <a href="https://hazza.name/marketplace">marketplace</a>
       <a href="https://hazza.name/register">register</a>
       <a href="https://hazza.name">hazza.name</a>
     </div>
@@ -578,6 +580,7 @@ function shell(title: string, description: string, body: string, script?: string
   <meta name="twitter:title" content="${esc(title)}">
   <meta name="twitter:description" content="${esc(description)}">
   <meta name="twitter:image" content="${ogImg}">
+  <meta name="fc:frame" content='{"version":"1","imageUrl":"${ogImg}","button":{"title":"open hazza","action":{"type":"launch_miniapp","url":"https://hazza.name"}}}'>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>h</text></svg>">
   <style>${STYLES}</style>
 </head>
@@ -592,6 +595,11 @@ function shell(title: string, description: string, body: string, script?: string
   ${externals}
   <script>${NAV_SCRIPT}</script>
   ${script ? `<script>${script}</script>` : ""}
+  <script>
+  if (window.farcaster || window.parent !== window) {
+    import('https://esm.sh/@farcaster/miniapp-sdk@latest').then(function(m) { if (m.sdk) m.sdk.actions.ready(); }).catch(function(){});
+  }
+  </script>
 </body>
 </html>`;
 }
@@ -875,6 +883,7 @@ const REGISTER_SCRIPT = `
         $('success-link').href = 'https://' + nameParam + '.hazza.name';
         $('success-link').textContent = 'view ' + nameParam + '.hazza.name';
         $('success-manage').href = '/manage?name=' + encodeURIComponent(nameParam);
+        if ($('success-sell')) $('success-sell').href = '/marketplace?sell=' + encodeURIComponent(nameParam);
         $('checkout-btn').style.display = 'none';
         return;
       }
@@ -936,6 +945,7 @@ const REGISTER_SCRIPT = `
       $('success-link').href = 'https://' + nameParam + '.hazza.name';
       $('success-link').textContent = 'view ' + nameParam + '.hazza.name';
       $('success-manage').href = '/manage?name=' + encodeURIComponent(nameParam);
+      if ($('success-sell')) $('success-sell').href = '/marketplace?sell=' + encodeURIComponent(nameParam);
       $('checkout-btn').style.display = 'none';
 
     } catch (e) {
@@ -1039,6 +1049,7 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
         <a id="success-link" href="#" style="display:inline-block;padding:0.75rem 2rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;text-decoration:none;margin-bottom:0.5rem">view your page</a>
         <div style="display:flex;justify-content:center;gap:1.5rem;margin-top:0.75rem">
           <a id="success-manage" href="#" style="color:#6b8f6b;font-size:0.85rem">manage &rarr;</a>
+          <a id="success-sell" href="/marketplace" style="color:#6b8f6b;font-size:0.85rem">list on marketplace &rarr;</a>
           <a href="/dashboard" style="color:#6b8f6b;font-size:0.85rem">dashboard &rarr;</a>
         </div>
       </div>
@@ -1741,6 +1752,7 @@ const DASHBOARD_SCRIPT = `
         html += '</div></div>';
         html += '<div style="display:flex;gap:0.5rem">';
         html += '<a href="/manage?name=' + uName + '" style="color:#00e676;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">manage</a>';
+        html += '<a href="/marketplace?sell=' + uName + '" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">sell</a>';
         if (n.status !== 'expired') html += '<button onclick="toggleRenew(\'' + eName + '\')" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;background:transparent;cursor:pointer;font-family:\'Rubik\',sans-serif">renew</button>';
         html += '</div></div>';
         // Inline renew panel (hidden by default)
@@ -2933,5 +2945,854 @@ export function domainsManagePage(): string {
       <a href="/domains" style="display:inline-block;padding:0.6rem 1.5rem;border:1px solid #00e676;color:#00e676;border-radius:8px;font-weight:700;font-size:0.9rem">&larr; Back to Domains</a>
     </div>`,
     DNS_MANAGE_SCRIPT
+  );
+}
+
+// =========================================================================
+//                         MARKETPLACE PAGE
+// =========================================================================
+
+const MARKETPLACE_STYLES = `
+  .tabs { display: flex; gap: 0; border-bottom: 2px solid #1a2e1a; margin-bottom: 1.5rem; }
+  .tab {
+    padding: 0.75rem 1.25rem;
+    background: none;
+    border: none;
+    color: #6b8f6b;
+    font-family: 'Rubik', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab:hover { color: #00e676; }
+  .tab.active { color: #00e676; border-bottom-color: #00e676; font-weight: 700; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .listing-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+  .listing-card {
+    background: #111;
+    border: 1px solid #1a2e1a;
+    border-radius: 10px;
+    padding: 1.25rem;
+    transition: border-color 0.15s;
+    position: relative;
+  }
+  .listing-card:hover { border-color: #00e676; }
+  .listing-name { font-size: 1.15rem; font-weight: 700; color: #fff; margin-bottom: 0.25rem; }
+  .listing-name a { color: #fff; }
+  .listing-name a:hover { color: #00e676; }
+  .listing-meta { font-size: 0.8rem; color: #6b8f6b; margin-bottom: 0.75rem; }
+  .listing-price { font-size: 1.3rem; font-weight: 900; color: #fff; }
+  .currency-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-left: 0.5rem;
+    vertical-align: middle;
+  }
+  .badge-eth { background: #3b82f6; color: #fff; }
+  .badge-usdc { background: #00e676; color: #000; }
+  .listing-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+  .btn-buy {
+    flex: 1;
+    padding: 0.6rem;
+    background: #00e676;
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    font-weight: 700;
+    font-family: 'Rubik', sans-serif;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .btn-buy:hover { background: #00c853; }
+  .btn-watch {
+    padding: 0.6rem 0.75rem;
+    background: transparent;
+    border: 1px solid #1a2e1a;
+    border-radius: 6px;
+    color: #6b8f6b;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+  }
+  .btn-watch:hover { border-color: #00e676; color: #00e676; }
+  .btn-watch.saved { color: #00e676; border-color: #00e676; }
+  .watch-count { font-size: 0.7rem; color: #4a6a4a; margin-top: 0.35rem; text-align: right; }
+  .sell-form {
+    background: #0d0d0d;
+    border: 1px solid #1a2e1a;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 0.75rem;
+  }
+  .sell-form label { display: block; color: #6b8f6b; font-size: 0.8rem; margin-bottom: 0.25rem; }
+  .sell-form input, .sell-form select {
+    width: 100%;
+    padding: 0.5rem;
+    background: #111;
+    border: 1px solid #1a2e1a;
+    border-radius: 6px;
+    color: #fff;
+    font-family: 'Rubik', sans-serif;
+    font-size: 0.9rem;
+    margin-bottom: 0.75rem;
+  }
+  .sell-form input:focus, .sell-form select:focus { border-color: #00e676; outline: none; }
+  .btn-sell {
+    width: 100%;
+    padding: 0.6rem;
+    background: #00e676;
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    font-weight: 700;
+    font-family: 'Rubik', sans-serif;
+    cursor: pointer;
+  }
+  .btn-cancel {
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border: 1px solid #ff5252;
+    color: #ff5252;
+    border-radius: 6px;
+    font-weight: 700;
+    font-family: 'Rubik', sans-serif;
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+  .btn-cancel:hover { background: #ff5252; color: #fff; }
+  .name-card {
+    background: #111;
+    border: 1px solid #1a2e1a;
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .name-card-info { flex: 1; min-width: 200px; }
+  .name-card-name { font-weight: 700; color: #fff; font-size: 1rem; }
+  .name-card-detail { font-size: 0.8rem; color: #6b8f6b; }
+  .name-card-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .name-card-actions a, .name-card-actions button {
+    padding: 0.4rem 0.85rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-family: 'Rubik', sans-serif;
+    cursor: pointer;
+    text-decoration: none;
+    border: 1px solid #1a2e1a;
+    background: transparent;
+    color: #6b8f6b;
+  }
+  .name-card-actions a:hover, .name-card-actions button:hover { border-color: #00e676; color: #00e676; text-decoration: none; }
+  .sales-table { width: 100%; border-collapse: collapse; }
+  .sales-table th { text-align: left; padding: 0.5rem; color: #6b8f6b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #1a2e1a; }
+  .sales-table td { padding: 0.6rem 0.5rem; border-bottom: 1px solid #0d1a0d; font-size: 0.85rem; }
+  .empty-state { text-align: center; padding: 3rem 1rem; color: #4a6a4a; }
+  .empty-state p { margin-bottom: 1rem; }
+  .offer-card {
+    background: #111;
+    border: 1px solid #1a2e1a;
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+  .cart-fab {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: #00e676;
+    color: #000;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,230,118,0.3);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .cart-fab .badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: #ff5252;
+    color: #fff;
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cart-drawer {
+    position: fixed;
+    top: 0;
+    right: -400px;
+    width: 380px;
+    max-width: 90vw;
+    height: 100vh;
+    background: #0a0a0a;
+    border-left: 1px solid #1a2e1a;
+    z-index: 200;
+    transition: right 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .cart-drawer.open { right: 0; }
+  .cart-drawer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #1a2e1a;
+  }
+  .cart-drawer-header h3 { color: #fff; font-size: 1rem; margin: 0; }
+  .cart-drawer-close {
+    background: none;
+    border: none;
+    color: #6b8f6b;
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .cart-items { flex: 1; overflow-y: auto; padding: 1rem 1.25rem; }
+  .cart-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #0d1a0d;
+  }
+  .cart-item-info { flex: 1; }
+  .cart-item-type { font-size: 0.7rem; color: #4a6a4a; text-transform: uppercase; letter-spacing: 0.05em; }
+  .cart-item-name { font-weight: 700; color: #fff; font-size: 0.9rem; }
+  .cart-item-price { font-size: 0.85rem; color: #6b8f6b; }
+  .cart-item-remove {
+    background: none;
+    border: none;
+    color: #ff5252;
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.25rem;
+  }
+  .cart-footer {
+    padding: 1rem 1.25rem;
+    border-top: 1px solid #1a2e1a;
+  }
+  .cart-total { color: #fff; font-weight: 700; margin-bottom: 0.75rem; font-size: 0.9rem; }
+  .btn-execute {
+    width: 100%;
+    padding: 0.75rem;
+    background: #00e676;
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    font-weight: 700;
+    font-family: 'Rubik', sans-serif;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  .btn-execute:hover { background: #00c853; }
+  .btn-execute:disabled { background: #1a2e1a; color: #4a6a4a; cursor: not-allowed; }
+  .cart-saved-section { margin-top: 1rem; }
+  .cart-saved-title { font-size: 0.75rem; color: #6b8f6b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+  .progress-bar {
+    background: #111;
+    border: 1px solid #1a2e1a;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 0.75rem;
+  }
+  .progress-step { padding: 0.25rem 0; font-size: 0.85rem; color: #6b8f6b; }
+  .progress-step.done { color: #00e676; }
+  .progress-step.active { color: #fff; }
+  .progress-step.error { color: #ff5252; }
+  @media (max-width: 600px) {
+    .listing-grid { grid-template-columns: 1fr; }
+    .cart-drawer { width: 100vw; max-width: 100vw; right: -100vw; }
+    .tabs { overflow-x: auto; }
+    .tab { white-space: nowrap; font-size: 0.8rem; padding: 0.6rem 0.9rem; }
+  }
+`;
+
+export function marketplacePage(registryAddress: string, usdcAddress: string, chainId: string, seaportAddress: string, bazaarAddress: string): string {
+  const SEAPORT_ABI_SNIPPET = JSON.stringify([
+    { name: "fulfillOrder", type: "function", stateMutability: "payable",
+      inputs: [{ name: "order", type: "tuple", components: [
+        { name: "parameters", type: "tuple", components: [
+          { name: "offerer", type: "address" }, { name: "zone", type: "address" },
+          { name: "offer", type: "tuple[]", components: [{ name: "itemType", type: "uint8" }, { name: "token", type: "address" }, { name: "identifierOrCriteria", type: "uint256" }, { name: "startAmount", type: "uint256" }, { name: "endAmount", type: "uint256" }] },
+          { name: "consideration", type: "tuple[]", components: [{ name: "itemType", type: "uint8" }, { name: "token", type: "address" }, { name: "identifierOrCriteria", type: "uint256" }, { name: "startAmount", type: "uint256" }, { name: "endAmount", type: "uint256" }, { name: "recipient", type: "address" }] },
+          { name: "orderType", type: "uint8" }, { name: "startTime", type: "uint256" }, { name: "endTime", type: "uint256" },
+          { name: "zoneHash", type: "bytes32" }, { name: "salt", type: "uint256" }, { name: "conduitKey", type: "bytes32" }, { name: "totalOriginalConsiderationItems", type: "uint256" }
+        ]},
+        { name: "signature", type: "bytes" }
+      ]}, { name: "fulfillerConduitKey", type: "bytes32" }],
+      outputs: [{ name: "fulfilled", type: "bool" }]
+    },
+    { name: "cancel", type: "function", stateMutability: "nonpayable",
+      inputs: [{ name: "orders", type: "tuple[]", components: [
+        { name: "offerer", type: "address" }, { name: "zone", type: "address" },
+        { name: "offer", type: "tuple[]", components: [{ name: "itemType", type: "uint8" }, { name: "token", type: "address" }, { name: "identifierOrCriteria", type: "uint256" }, { name: "startAmount", type: "uint256" }, { name: "endAmount", type: "uint256" }] },
+        { name: "consideration", type: "tuple[]", components: [{ name: "itemType", type: "uint8" }, { name: "token", type: "address" }, { name: "identifierOrCriteria", type: "uint256" }, { name: "startAmount", type: "uint256" }, { name: "endAmount", type: "uint256" }, { name: "recipient", type: "address" }] },
+        { name: "orderType", type: "uint8" }, { name: "startTime", type: "uint256" }, { name: "endTime", type: "uint256" },
+        { name: "zoneHash", type: "bytes32" }, { name: "salt", type: "uint256" }, { name: "conduitKey", type: "bytes32" }, { name: "totalOriginalConsiderationItems", type: "uint256" },
+        { name: "counter", type: "uint256" }
+      ]}],
+      outputs: [{ name: "cancelled", type: "bool" }]
+    }
+  ]);
+
+  const ERC721_APPROVE_ABI = JSON.stringify([
+    { name: "approve", type: "function", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "tokenId", type: "uint256" }], outputs: [] },
+    { name: "setApprovalForAll", type: "function", stateMutability: "nonpayable", inputs: [{ name: "operator", type: "address" }, { name: "approved", type: "bool" }], outputs: [] },
+    { name: "isApprovedForAll", type: "function", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "operator", type: "address" }], outputs: [{ type: "bool" }] },
+  ]);
+
+  const ERC20_ABI = JSON.stringify([
+    { name: "approve", type: "function", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
+    { name: "allowance", type: "function", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] },
+  ]);
+
+  const script = `
+    var REGISTRY = '${esc(registryAddress)}';
+    var USDC = '${esc(usdcAddress)}';
+    var CHAIN_ID = '${esc(chainId)}';
+    var SEAPORT = '${esc(seaportAddress)}';
+    var BAZAAR = '${esc(bazaarAddress)}';
+    var SEAPORT_ABI = ${SEAPORT_ABI_SNIPPET};
+    var ERC721_ABI = ${ERC721_APPROVE_ABI};
+    var ERC20_ABI = ${ERC20_ABI};
+    var wallet = null;
+    var provider = null;
+    var signer = null;
+
+    function $(id) { return document.getElementById(id); }
+    function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    function truncAddr(a) { return a ? a.slice(0,6) + '...' + a.slice(-4) : ''; }
+    function formatDate(ts) { return ts ? new Date(ts * 1000).toLocaleDateString() : '—'; }
+
+    // --- Cart ---
+    var cart = JSON.parse(localStorage.getItem('hazza_cart') || '[]');
+    var watchlist = JSON.parse(localStorage.getItem('hazza_watchlist') || '[]');
+
+    function saveCart() { localStorage.setItem('hazza_cart', JSON.stringify(cart)); updateCartUI(); }
+    function saveWatchlist() { localStorage.setItem('hazza_watchlist', JSON.stringify(watchlist)); }
+
+    function addToCart(item) {
+      if (cart.find(function(c) { return c.id === item.id; })) return;
+      cart.push(item);
+      saveCart();
+    }
+    function removeFromCart(id) {
+      cart = cart.filter(function(c) { return c.id !== id; });
+      saveCart();
+    }
+
+    function toggleWatch(orderHash, name, price, currency) {
+      var idx = watchlist.findIndex(function(w) { return w.orderHash === orderHash; });
+      if (idx >= 0) {
+        watchlist.splice(idx, 1);
+        if (wallet) fetch('/api/marketplace/watch', { method: 'DELETE', headers: {'Content-Type':'application/json'}, body: JSON.stringify({orderHash: orderHash, address: wallet}) }).catch(function(){});
+      } else {
+        watchlist.push({ orderHash: orderHash, name: name, price: price, currency: currency });
+        if (wallet) fetch('/api/marketplace/watch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({orderHash: orderHash, address: wallet}) }).catch(function(){});
+      }
+      saveWatchlist();
+      renderListings();
+    }
+
+    function isWatched(orderHash) {
+      return watchlist.some(function(w) { return w.orderHash === orderHash; });
+    }
+
+    function updateCartUI() {
+      var fab = $('cart-fab');
+      var badge = $('cart-badge');
+      if (cart.length > 0) {
+        fab.style.display = 'flex';
+        badge.textContent = cart.length;
+      } else {
+        fab.style.display = 'none';
+      }
+    }
+
+    function openCart() { $('cart-drawer').classList.add('open'); renderCartItems(); }
+    function closeCart() { $('cart-drawer').classList.remove('open'); }
+
+    function renderCartItems() {
+      var container = $('cart-items-list');
+      if (cart.length === 0) {
+        container.innerHTML = '<p style="color:#4a6a4a;text-align:center;padding:2rem 0">Cart is empty</p>';
+        $('cart-total').textContent = '';
+        $('btn-execute-all').disabled = true;
+      } else {
+        var html = '';
+        var ethTotal = 0, usdcTotal = 0;
+        cart.forEach(function(item) {
+          html += '<div class="cart-item">'
+            + '<div class="cart-item-info">'
+            + '<div class="cart-item-type">' + escHtml(item.type) + '</div>'
+            + '<div class="cart-item-name">' + escHtml(item.name) + '</div>'
+            + '<div class="cart-item-price">' + item.price + ' ' + item.currency + '</div>'
+            + '</div>'
+            + '<button class="cart-item-remove" onclick="removeFromCart(\\''+item.id+'\\')">✕</button>'
+            + '</div>';
+          if (item.currency === 'ETH') ethTotal += parseFloat(item.price) || 0;
+          else usdcTotal += parseFloat(item.price) || 0;
+        });
+        container.innerHTML = html;
+        var totalParts = [];
+        if (ethTotal > 0) totalParts.push(ethTotal.toFixed(4) + ' ETH');
+        if (usdcTotal > 0) totalParts.push(usdcTotal.toFixed(2) + ' USDC');
+        $('cart-total').textContent = 'Total: ' + totalParts.join(' + ');
+        $('btn-execute-all').disabled = false;
+      }
+
+      // Saved/watchlist section
+      var savedContainer = $('cart-saved-list');
+      if (watchlist.length > 0) {
+        var shtml = '';
+        watchlist.forEach(function(w) {
+          shtml += '<div class="cart-item">'
+            + '<div class="cart-item-info">'
+            + '<div class="cart-item-name">' + escHtml(w.name) + '</div>'
+            + '<div class="cart-item-price">' + w.price + ' ' + w.currency + '</div>'
+            + '</div>'
+            + '<button class="btn-buy" style="flex:0;padding:0.4rem 0.6rem;font-size:0.75rem" onclick="addToCart({id:\\'buy-'+w.orderHash+'\\',type:\\'Buy\\',name:\\''+escHtml(w.name)+'\\',price:\\''+w.price+'\\',currency:\\''+w.currency+'\\',orderHash:\\''+w.orderHash+'\\'})">+ cart</button>'
+            + '</div>';
+        });
+        savedContainer.innerHTML = shtml;
+        $('cart-saved-section').style.display = 'block';
+      } else {
+        $('cart-saved-section').style.display = 'none';
+      }
+    }
+
+    // --- Tabs ---
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+      document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+      document.querySelector('[data-tab="'+tabName+'"]').classList.add('active');
+      $('panel-'+tabName).classList.add('active');
+      if (tabName === 'browse') loadListings();
+      else if (tabName === 'mynames') loadMyNames();
+      else if (tabName === 'offers') loadOffers();
+      else if (tabName === 'sales') loadSales();
+    }
+
+    // --- Connect Wallet ---
+    async function connectWallet() {
+      if (!window.ethereum) { alert('No wallet detected. Install MetaMask or open in Warpcast.'); return; }
+      try {
+        var accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        if (accounts && accounts[0]) {
+          wallet = accounts[0];
+          provider = new ethers.BrowserProvider(window.ethereum);
+          signer = await provider.getSigner();
+          $('mp-connect-btn').textContent = truncAddr(wallet);
+          $('mp-connect-btn').classList.add('connected');
+          // Report watchlist to server
+          watchlist.forEach(function(w) {
+            fetch('/api/marketplace/watch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({orderHash: w.orderHash, address: wallet}) }).catch(function(){});
+          });
+        }
+      } catch(e) { console.error('Connect failed', e); }
+    }
+
+    // --- Browse Listings ---
+    var listingsData = [];
+    async function loadListings() {
+      $('listings-container').innerHTML = '<p style="color:#6b8f6b;text-align:center">Loading listings...</p>';
+      try {
+        var res = await fetch('/api/marketplace/listings');
+        var data = await res.json();
+        listingsData = data.listings || [];
+        renderListings();
+      } catch(e) {
+        $('listings-container').innerHTML = '<div class="empty-state"><p>Failed to load listings</p></div>';
+      }
+    }
+
+    function renderListings() {
+      var container = $('listings-container');
+      if (listingsData.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>No names listed yet.</p><p><a href="/dashboard">List yours from the dashboard</a></p></div>';
+        return;
+      }
+      var html = '<div class="listing-grid">';
+      listingsData.forEach(function(l) {
+        var badgeClass = l.currency === 'USDC' ? 'badge-usdc' : 'badge-eth';
+        var watched = isWatched(l.orderHash);
+        html += '<div class="listing-card">'
+          + '<div class="listing-name"><a href="' + escHtml(l.profileUrl) + '">' + escHtml(l.name) + '<span style="color:#00e676">.hazza.name</span></a></div>'
+          + '<div class="listing-meta">Seller: ' + truncAddr(l.seller) + ' &middot; Expires: ' + formatDate(l.listingExpiry) + '</div>'
+          + '<div class="listing-price">' + l.price + '<span class="currency-badge ' + badgeClass + '">' + l.currency + '</span></div>'
+          + '<div class="listing-actions">'
+          + '<button class="btn-buy" onclick="buyListing(\\'' + l.orderHash + '\\')">Buy</button>'
+          + '<button class="btn-buy" style="background:transparent;border:1px solid #1a2e1a;color:#6b8f6b;flex:0;padding:0.6rem 0.75rem" onclick="addToCart({id:\\'buy-'+l.orderHash+'\\',type:\\'Buy\\',name:\\''+escHtml(l.name)+'\\',price:\\''+l.price+'\\',currency:\\''+l.currency+'\\',orderHash:\\''+l.orderHash+'\\'})">+</button>'
+          + '<button class="btn-watch' + (watched ? ' saved' : '') + '" onclick="toggleWatch(\\'' + l.orderHash + '\\',\\'' + escHtml(l.name) + '\\',\\'' + l.price + '\\',\\'' + l.currency + '\\')">' + (watched ? '★' : '☆') + '</button>'
+          + '</div>';
+
+        // Watchlist count
+        html += '<div class="watch-count" id="wc-' + l.orderHash.slice(0,10) + '"></div>';
+        html += '</div>';
+      });
+      html += '</div>';
+      container.innerHTML = html;
+
+      // Load watch counts
+      listingsData.forEach(function(l) {
+        fetch('/api/marketplace/watch/' + l.orderHash)
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            var el = document.getElementById('wc-' + l.orderHash.slice(0,10));
+            if (el && d.count > 0) el.textContent = 'in ' + d.count + ' watchlist' + (d.count > 1 ? 's' : '');
+          }).catch(function(){});
+      });
+    }
+
+    async function buyListing(orderHash) {
+      var listing = listingsData.find(function(l) { return l.orderHash === orderHash; });
+      if (!listing) return alert('Listing not found');
+      if (!wallet) { await connectWallet(); if (!wallet) return; }
+
+      try {
+        if (listing.currency === 'USDC') {
+          // Approve USDC to Seaport
+          var erc20 = new ethers.Contract(USDC, ERC20_ABI, signer);
+          var allowance = await erc20.allowance(wallet, SEAPORT);
+          var needed = ethers.parseUnits(String(listing.price), 6);
+          if (allowance < needed) {
+            var approveTx = await erc20.approve(SEAPORT, needed);
+            await approveTx.wait();
+          }
+        }
+        alert('Listing purchase requires Seaport fulfillOrder. Full Seaport integration coming soon.\\n\\nOrder hash: ' + orderHash);
+      } catch(e) {
+        alert('Buy failed: ' + (e.message || e));
+      }
+    }
+
+    // --- My Names ---
+    async function loadMyNames() {
+      var container = $('mynames-container');
+      if (!wallet) {
+        container.innerHTML = '<div class="empty-state"><p>Connect your wallet to see your names</p><button class="btn-buy" onclick="connectWallet()" style="display:inline-block;width:auto;padding:0.6rem 1.5rem">connect wallet</button></div>';
+        return;
+      }
+      container.innerHTML = '<p style="color:#6b8f6b;text-align:center">Loading your names...</p>';
+      try {
+        var res = await fetch('/api/names/' + wallet);
+        var data = await res.json();
+        var names = data.names || [];
+        if (names.length === 0) {
+          container.innerHTML = '<div class="empty-state"><p>You don\\'t own any hazza names yet.</p><a href="/register" class="btn-buy" style="display:inline-block;width:auto;padding:0.6rem 1.5rem;text-decoration:none">register your first name</a></div>';
+          return;
+        }
+        var html = '';
+        names.forEach(function(n) {
+          var statusClass = 'status-' + n.status;
+          html += '<div class="name-card">'
+            + '<div class="name-card-info">'
+            + '<div class="name-card-name">' + escHtml(n.name) + '<span style="color:#00e676">.hazza.name</span>'
+            + ' <span class="status-badge ' + statusClass + '">' + n.status + '</span></div>'
+            + '<div class="name-card-detail">Token #' + n.tokenId + ' &middot; Expires ' + formatDate(n.expiresAt) + '</div>'
+            + '</div>'
+            + '<div class="name-card-actions">'
+            + '<a href="https://' + encodeURIComponent(n.name) + '.hazza.name">view</a>'
+            + '<a href="/manage?name=' + encodeURIComponent(n.name) + '">manage</a>'
+            + '<button onclick="showSellForm(\\'' + escHtml(n.name) + '\\', \\'' + n.tokenId + '\\')">sell</button>'
+            + '</div>'
+            + '</div>'
+            + '<div id="sell-form-' + escHtml(n.name) + '" style="display:none"></div>';
+        });
+        container.innerHTML = html;
+      } catch(e) {
+        container.innerHTML = '<div class="empty-state"><p>Failed to load names: ' + escHtml(e.message || '') + '</p></div>';
+      }
+    }
+
+    function showSellForm(name, tokenId) {
+      var el = $('sell-form-' + name);
+      if (!el) return;
+      if (el.style.display === 'block') { el.style.display = 'none'; return; }
+      el.style.display = 'block';
+      el.innerHTML = '<div class="sell-form">'
+        + '<label>Price</label>'
+        + '<input type="number" id="sell-price-' + name + '" placeholder="0.01" step="any" min="0">'
+        + '<label>Currency</label>'
+        + '<select id="sell-currency-' + name + '">'
+        + '<option value="ETH">ETH</option>'
+        + '<option value="USDC">USDC</option>'
+        + '</select>'
+        + '<label>Duration</label>'
+        + '<select id="sell-duration-' + name + '">'
+        + '<option value="604800">7 days</option>'
+        + '<option value="2592000" selected>30 days</option>'
+        + '<option value="7776000">90 days</option>'
+        + '<option value="0">No expiry</option>'
+        + '</select>'
+        + '<button class="btn-sell" onclick="createListing(\\'' + name + '\\', \\'' + tokenId + '\\')">List for Sale</button>'
+        + '</div>';
+    }
+
+    async function createListing(name, tokenId) {
+      if (!wallet) { await connectWallet(); if (!wallet) return; }
+      var price = $('sell-price-' + name).value;
+      var currency = $('sell-currency-' + name).value;
+      if (!price || parseFloat(price) <= 0) return alert('Enter a valid price');
+
+      try {
+        // Step 1: Approve NFT to Seaport
+        var nft = new ethers.Contract(REGISTRY, ERC721_ABI, signer);
+        var approved = await nft.isApprovedForAll(wallet, SEAPORT);
+        if (!approved) {
+          var tx = await nft.setApprovalForAll(SEAPORT, true);
+          await tx.wait();
+        }
+
+        // Step 2: Create Seaport order (simplified — full integration needs EIP-712 signing)
+        alert('NFT approved for Seaport. Full Seaport order creation (EIP-712 signing + Bazaar submission) coming soon.\\n\\nName: ' + name + '\\nPrice: ' + price + ' ' + currency);
+      } catch(e) {
+        alert('Listing failed: ' + (e.message || e));
+      }
+    }
+
+    // --- Offers ---
+    async function loadOffers() {
+      $('offers-container').innerHTML = '<p style="color:#6b8f6b;text-align:center">Loading offers...</p>';
+      try {
+        var res = await fetch('/api/marketplace/offers');
+        var data = await res.json();
+        var offers = data.offers || [];
+        if (offers.length === 0) {
+          $('offers-container').innerHTML = '<div class="empty-state"><p>No collection offers yet.</p></div>';
+          return;
+        }
+        var html = '';
+        offers.forEach(function(o) {
+          html += '<div class="offer-card">'
+            + '<div>'
+            + '<div style="font-weight:700;color:#fff">' + o.price + ' ' + (o.currency || 'ETH') + '</div>'
+            + '<div style="font-size:0.8rem;color:#6b8f6b">From: ' + truncAddr(o.offerer) + ' &middot; Expires: ' + formatDate(o.expirationDate) + '</div>'
+            + '</div>';
+          if (wallet) {
+            html += '<button class="btn-buy" style="flex:0;white-space:nowrap;padding:0.5rem 1rem;font-size:0.8rem">Accept</button>';
+          }
+          html += '</div>';
+        });
+        $('offers-container').innerHTML = html;
+      } catch(e) {
+        $('offers-container').innerHTML = '<div class="empty-state"><p>Failed to load offers</p></div>';
+      }
+    }
+
+    // --- Sales ---
+    async function loadSales() {
+      $('sales-container').innerHTML = '<p style="color:#6b8f6b;text-align:center">Loading sales...</p>';
+      try {
+        var res = await fetch('/api/marketplace/sales');
+        var data = await res.json();
+        var sales = data.sales || [];
+        if (sales.length === 0) {
+          $('sales-container').innerHTML = '<div class="empty-state"><p>No sales recorded yet.</p></div>';
+          return;
+        }
+        var html = '<table class="sales-table"><thead><tr><th>Name</th><th>Price</th><th>Buyer</th><th>Seller</th><th>Date</th></tr></thead><tbody>';
+        sales.forEach(function(s) {
+          html += '<tr>'
+            + '<td><a href="https://' + encodeURIComponent(s.name) + '.hazza.name">' + escHtml(s.name) + '</a></td>'
+            + '<td style="font-weight:700">' + s.price + ' ' + s.currency + '</td>'
+            + '<td>' + truncAddr(s.buyer) + '</td>'
+            + '<td>' + truncAddr(s.seller) + '</td>'
+            + '<td>' + formatDate(s.timestamp) + '</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table>';
+        $('sales-container').innerHTML = html;
+      } catch(e) {
+        $('sales-container').innerHTML = '<div class="empty-state"><p>Failed to load sales</p></div>';
+      }
+    }
+
+    // --- Execute Cart ---
+    async function executeCart() {
+      if (cart.length === 0) return;
+      if (!wallet) { await connectWallet(); if (!wallet) return; }
+      var progress = $('cart-progress');
+      progress.style.display = 'block';
+      progress.innerHTML = '';
+      $('btn-execute-all').disabled = true;
+
+      // Sort: listings first, then buys, then registrations
+      var listings = cart.filter(function(c) { return c.type === 'List'; });
+      var buys = cart.filter(function(c) { return c.type === 'Buy'; });
+      var regs = cart.filter(function(c) { return c.type === 'Register'; });
+      var all = listings.concat(buys).concat(regs);
+
+      for (var i = 0; i < all.length; i++) {
+        var item = all[i];
+        var stepEl = document.createElement('div');
+        stepEl.className = 'progress-step active';
+        stepEl.textContent = item.type + ': ' + item.name + '...';
+        progress.appendChild(stepEl);
+
+        try {
+          if (item.type === 'Buy') {
+            await buyListing(item.orderHash);
+          } else if (item.type === 'List') {
+            await createListing(item.name, item.tokenId);
+          }
+          stepEl.className = 'progress-step done';
+          stepEl.textContent = '✓ ' + item.type + ': ' + item.name;
+          removeFromCart(item.id);
+        } catch(e) {
+          stepEl.className = 'progress-step error';
+          stepEl.textContent = '✗ ' + item.type + ': ' + item.name + ' — ' + (e.message || 'failed');
+        }
+      }
+      $('btn-execute-all').disabled = false;
+    }
+
+    // --- Init ---
+    document.addEventListener('DOMContentLoaded', function() {
+      // Check URL params
+      var params = new URLSearchParams(window.location.search);
+      var sellName = params.get('sell');
+      var buyHash = params.get('buy');
+
+      if (sellName) {
+        switchTab('mynames');
+        // Auto-open sell form after names load
+        setTimeout(function() { showSellForm(sellName, ''); }, 1500);
+      } else if (buyHash) {
+        switchTab('browse');
+      } else {
+        loadListings();
+      }
+
+      updateCartUI();
+
+      // Auto-connect if wallet was saved
+      if (typeof window.ethereum !== 'undefined') {
+        var saved = null;
+        try { saved = sessionStorage.getItem('hazza_wallet'); } catch(e) {}
+        if (saved) {
+          wallet = saved;
+          $('mp-connect-btn').textContent = truncAddr(wallet);
+          $('mp-connect-btn').classList.add('connected');
+          window.ethereum.request({ method: 'eth_accounts' }).then(function(accts) {
+            if (accts && accts[0]) {
+              wallet = accts[0];
+              provider = new ethers.BrowserProvider(window.ethereum);
+              provider.getSigner().then(function(s) { signer = s; });
+            }
+          }).catch(function(){});
+        }
+      }
+
+      // Farcaster Mini App ready
+      if (window.farcaster || (window.parent !== window)) {
+        try {
+          import('https://esm.sh/@farcaster/miniapp-sdk@latest').then(function(mod) {
+            if (mod.sdk) mod.sdk.actions.ready();
+          }).catch(function(){});
+        } catch(e) {}
+      }
+    });
+  `;
+
+  return shell(
+    "hazza marketplace — buy and sell names",
+    "Buy, sell, and trade onchain names on Base. Powered by Seaport, x402, and Net Protocol.",
+    `
+    <style>${MARKETPLACE_STYLES}</style>
+
+    <div class="header">
+      <h1>hazza <span>marketplace</span></h1>
+      <p>buy and sell onchain names</p>
+      <div style="margin-top:0.75rem">
+        <button id="mp-connect-btn" class="nav-wallet-btn" onclick="connectWallet()">connect wallet</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="browse" onclick="switchTab('browse')">browse</button>
+      <button class="tab" data-tab="mynames" onclick="switchTab('mynames')">my names</button>
+      <button class="tab" data-tab="offers" onclick="switchTab('offers')">offers</button>
+      <button class="tab" data-tab="sales" onclick="switchTab('sales')">recent sales</button>
+    </div>
+
+    <div id="panel-browse" class="tab-panel active">
+      <div id="listings-container">
+        <p style="color:#6b8f6b;text-align:center">Loading listings...</p>
+      </div>
+    </div>
+
+    <div id="panel-mynames" class="tab-panel">
+      <div id="mynames-container">
+        <div class="empty-state"><p>Connect your wallet to see your names</p></div>
+      </div>
+    </div>
+
+    <div id="panel-offers" class="tab-panel">
+      <div id="offers-container">
+        <p style="color:#6b8f6b;text-align:center">Loading offers...</p>
+      </div>
+    </div>
+
+    <div id="panel-sales" class="tab-panel">
+      <div id="sales-container">
+        <p style="color:#6b8f6b;text-align:center">Loading sales...</p>
+      </div>
+    </div>
+
+    <!-- Cart FAB -->
+    <button class="cart-fab" id="cart-fab" onclick="openCart()">
+      🛒<span class="badge" id="cart-badge">0</span>
+    </button>
+
+    <!-- Cart Drawer -->
+    <div class="cart-drawer" id="cart-drawer">
+      <div class="cart-drawer-header">
+        <h3>Cart</h3>
+        <button class="cart-drawer-close" onclick="closeCart()">&times;</button>
+      </div>
+      <div class="cart-items" id="cart-items-list"></div>
+      <div class="cart-saved-section" id="cart-saved-section" style="display:none;padding:0 1.25rem">
+        <div class="cart-saved-title">Saved for Later</div>
+        <div id="cart-saved-list"></div>
+      </div>
+      <div class="cart-footer">
+        <div class="cart-total" id="cart-total"></div>
+        <div id="cart-progress" class="progress-bar" style="display:none"></div>
+        <button class="btn-execute" id="btn-execute-all" onclick="executeCart()" disabled>Execute All</button>
+      </div>
+    </div>`,
+    script,
+    { externalScripts: ["https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"] }
   );
 }

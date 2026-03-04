@@ -55,9 +55,15 @@ async function registerX402(data, paymentHeader) {
   return post('/x402/register', data, headers);
 }
 
+// Marketplace endpoints
+async function marketListings() { return get('/api/marketplace/listings'); }
+async function marketOffers() { return get('/api/marketplace/offers'); }
+async function marketSales() { return get('/api/marketplace/sales'); }
+
 module.exports = {
   get, post, request,
   checkAvailable, resolve, quote, freeClaim,
   profile, getText, names, stats, metadata,
   registerX402,
+  marketListings, marketOffers, marketSales,
 };
