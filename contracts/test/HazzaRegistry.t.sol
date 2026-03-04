@@ -113,6 +113,11 @@ contract HazzaRegistryTest is Test {
         registry.registerDirect(name, to, 1, 0, false, address(0), "", false, false);
     }
 
+    /// @dev Burn the first-registration-free slot for a wallet so pricing tests check normal rates
+    function _burnFirstFree(address to, string memory suffix) internal {
+        registry.registerDirect(string(abi.encodePacked("warmup-", suffix)), to, 1, 0, false, address(0), "", false, false);
+    }
+
     function _registerWithAgent(string memory name, address to) internal {
         registry.registerDirect(name, to, 1, 0, true, to, "https://example.com/agent.json", false, false);
     }
@@ -202,23 +207,55 @@ contract HazzaRegistryTest is Test {
         assertEq(registry.price("abcde", 0), 5e6);
     }
 
-    function test_paymentIncludesRenewal() public {
-        uint256 before = usdc.balanceOf(treasury);
-        _register("hello", alice); // 5 chars = $5 + $2 renewal = $7
-        assertEq(usdc.balanceOf(treasury) - before, 7e6);
+    // =========================================================================
+    //                   FIRST REGISTRATION FREE
+    // =========================================================================
+
+    function test_firstRegistrationFree() public {
+        uint256 treasuryBefore = usdc.balanceOf(treasury);
+        _register("myfirst", alice);
+        // First registration is free — treasury receives $0
+        assertEq(usdc.balanceOf(treasury), treasuryBefore);
     }
 
-    function test_multiYearPayment() public {
-        uint256 before = usdc.balanceOf(treasury);
-        registry.registerDirect("hello", alice, 3, 0, false, address(0), "", false, false); // $5 + $6 renewal
-        assertEq(usdc.balanceOf(treasury) - before, 11e6);
+    function test_firstRegistrationFreeQuote() public view {
+        (uint256 total, uint256 regFee, uint256 renewFee) = registry.quoteName("hello", alice, 1, 0, false, false);
+        assertEq(regFee, 0); // First registration free
+        assertEq(renewFee, 2e6);
+        assertEq(total, 0);
     }
 
-    function test_quoteName() public view {
+    function test_secondRegistrationPaid() public {
+        _register("first", alice); // free
+        uint256 treasuryBefore = usdc.balanceOf(treasury);
+        vm.warp(block.timestamp + 1 days); // new day (rate limit)
+        _register("second", alice); // paid
+        assertEq(usdc.balanceOf(treasury) - treasuryBefore, 5e6);
+    }
+
+    function test_paymentIncludesRegistration() public {
+        _burnFirstFree(alice, "pr");
+        uint256 before = usdc.balanceOf(treasury);
+        vm.warp(block.timestamp + 1 days);
+        _register("hello", alice); // 5 chars = $5 (renewal is paid separately via renew())
+        assertEq(usdc.balanceOf(treasury) - before, 5e6);
+    }
+
+    function test_multiYearRegistration_fee() public {
+        _burnFirstFree(alice, "my");
+        uint256 before = usdc.balanceOf(treasury);
+        vm.warp(block.timestamp + 1 days);
+        registry.registerDirect("hello", alice, 3, 0, false, address(0), "", false, false);
+        // Registration fee only — multi-year only affects expiry, renewal is separate
+        assertEq(usdc.balanceOf(treasury) - before, 5e6);
+    }
+
+    function test_quoteName() public {
+        _burnFirstFree(alice, "qn");
         (uint256 total, uint256 regFee, uint256 renewFee) = registry.quoteName("hello", alice, 1, 0, false, false);
         assertEq(regFee, 5e6);
         assertEq(renewFee, 2e6);
-        assertEq(total, 7e6);
+        assertEq(total, 5e6); // totalCost = registrationFee only
     }
 
     // =========================================================================
@@ -229,14 +266,15 @@ contract HazzaRegistryTest is Test {
         // Make alice a member so she can register 3/day (no pricing effect for tier 1)
         membership.setMember(alice, true);
 
-        // Names 1-3: base price (same day OK — member early limit is 3)
-        _register("name1", alice);
-        _register("name2", alice);
-        _register("name3", alice);
+        // Name 1 is free (first registration), names 2-3 are base price
+        // All three count in the pricing window (count → 3)
+        _register("name1", alice); // free (first-reg), window count=1
+        _register("name2", alice); // $5 base, window count=2
+        _register("name3", alice); // $5 base, window count=3
 
-        // Name 4: 2.5x
+        // Name 4: 2.5x (count=3 → next is 2.5x bracket)
         (uint256 total4,,) = registry.quoteName("name4", alice, 1, 0, false, false);
-        assertEq(total4, (5e6 * 25 / 10) + 2e6); // 12.5 + 2 = 14.5
+        assertEq(total4, 5e6 * 25 / 10); // 12.5
 
         vm.warp(block.timestamp + 1 days); // new day to stay under daily limit
         _register("name4", alice);
@@ -244,14 +282,15 @@ contract HazzaRegistryTest is Test {
         // Name 6: 5x
         _register("name5", alice);
         (uint256 total6,,) = registry.quoteName("name6", alice, 1, 0, false, false);
-        assertEq(total6, (5e6 * 5) + 2e6); // 25 + 2 = 27
+        assertEq(total6, 5e6 * 5); // 25
     }
 
     function test_unlimitedPassDiscount() public {
+        _burnFirstFree(alice, "upd");
         unlimitedPass.setMember(alice, true);
         (uint256 total,,) = registry.quoteName("hello", alice, 1, 0, false, false);
-        // $5 * 80% + $2 = $6
-        assertEq(total, 4e6 + 2e6);
+        // $5 * 80% = $4
+        assertEq(total, 4e6);
     }
 
     function test_pricingWindowResets() public {
@@ -260,6 +299,7 @@ contract HazzaRegistryTest is Test {
 
         uint256 t0 = 100000;
         vm.warp(t0);
+        // old1a is alice's first → free, but still counts in window
         _register("old1a", alice);
         _register("old2a", alice);
         _register("old3a", alice);
@@ -267,9 +307,9 @@ contract HazzaRegistryTest is Test {
         // Warp past 90-day window
         vm.warp(t0 + 91 days);
 
-        // Should be back to base price — use 5+ char name for $5 base
+        // Should be back to base price
         (uint256 total,,) = registry.quoteName("newone", alice, 1, 0, false, false);
-        assertEq(total, 7e6); // base $5 + $2 renewal
+        assertEq(total, 5e6); // base $5 (renewal is separate)
     }
 
     // =========================================================================
@@ -450,13 +490,16 @@ contract HazzaRegistryTest is Test {
     }
 
     function test_relayerCommission() public {
+        _burnFirstFree(alice, "rc");
+
         uint256 treasuryBefore = usdc.balanceOf(treasury);
         uint256 cherylBefore = usdc.balanceOf(cheryl);
 
+        vm.warp(block.timestamp + 1 days);
         vm.prank(cheryl);
         registry.registerDirect("commission", alice, 1, 0, false, address(0), "", false, false);
 
-        uint256 totalPaid = 7e6; // $5 reg + $2 renewal
+        uint256 totalPaid = 5e6; // $5 registration (renewal is separate)
         uint256 expectedCommission = (totalPaid * 2500) / 10000; // 25%
         uint256 expectedTreasury = totalPaid - expectedCommission;
 
@@ -652,14 +695,14 @@ contract HazzaRegistryTest is Test {
         assertEq(admin, bob);
     }
 
-    function test_namespaceCosts50() public {
-        _register("pricens", alice);
+    function test_namespaceCosts20() public {
+        _register("pricens", alice); // free (first reg)
         uint256 before = usdc.balanceOf(treasury);
 
         vm.prank(alice);
         registry.registerNamespace("pricens");
 
-        assertEq(usdc.balanceOf(treasury) - before, 50e6);
+        assertEq(usdc.balanceOf(treasury) - before, 20e6); // NAMESPACE_PRICE = $20
     }
 
     function test_subnameCosts1() public {
@@ -864,20 +907,23 @@ contract HazzaRegistryTest is Test {
     // =========================================================================
 
     function test_charCountOverridesByteLength() public {
+        _burnFirstFree(alice, "cc");
         // Register an emoji name (simulated): 12 bytes UTF-8 but 3 grapheme clusters
         // Relayer passes charCount=3 → should price as 3-char ($100)
         uint256 before = usdc.balanceOf(treasury);
+        vm.warp(block.timestamp + 1 days);
         registry.registerDirect("emoji-test1", alice, 1, 3, false, address(0), "", false, false);
-        // 3-char price ($100) + $2 renewal = $102
-        assertEq(usdc.balanceOf(treasury) - before, 102e6);
+        assertEq(usdc.balanceOf(treasury) - before, 100e6);
     }
 
     function test_charCountZeroUsesByteLength() public {
+        _burnFirstFree(alice, "cz");
         // charCount=0 falls back to byte length
         uint256 before = usdc.balanceOf(treasury);
+        vm.warp(block.timestamp + 1 days);
         registry.registerDirect("fivechars", alice, 1, 0, false, address(0), "", false, false);
-        // "fivechars" = 9 bytes → 5+ char price ($5) + $2 = $7
-        assertEq(usdc.balanceOf(treasury) - before, 7e6);
+        // "fivechars" = 9 bytes → 5+ char price ($5)
+        assertEq(usdc.balanceOf(treasury) - before, 5e6);
     }
 
     function test_priceWithCharCount() public view {
@@ -892,11 +938,13 @@ contract HazzaRegistryTest is Test {
     // =========================================================================
 
     function test_ensImport50PercentDiscount() public {
+        _burnFirstFree(alice, "ei");
         uint256 before = usdc.balanceOf(treasury);
-        // ENS import: 50% off registration + $2 renewal
+        vm.warp(block.timestamp + 1 days);
+        // ENS import: 50% off registration
         registry.registerDirect("ensname", alice, 1, 0, false, address(0), "", true, false);
-        // $5 base * 50% = $2.50 + $2 renewal = $4.50 → $4 (integer division: 5e6/2 = 2.5e6)
-        assertEq(usdc.balanceOf(treasury) - before, 2500000 + 2e6);
+        // $5 base * 50% = $2.50
+        assertEq(usdc.balanceOf(treasury) - before, 2500000);
     }
 
     function test_ensImportChallengeImmunity() public {
@@ -917,10 +965,11 @@ contract HazzaRegistryTest is Test {
         assertFalse(registry.ensVerified(keccak256(bytes("regular"))));
     }
 
-    function test_ensQuoteShowsDiscount() public view {
-        // Quote with ENS import: 50% off $5 + $2 = $4.50
+    function test_ensQuoteShowsDiscount() public {
+        _burnFirstFree(alice, "eq");
+        // Quote with ENS import: 50% off $5 = $2.50
         (uint256 total,,) = registry.quoteName("hello", alice, 1, 0, true, false);
-        assertEq(total, 2500000 + 2e6);
+        assertEq(total, 2500000);
     }
 
     // =========================================================================
@@ -928,11 +977,13 @@ contract HazzaRegistryTest is Test {
     // =========================================================================
 
     function test_verifiedPassDiscount() public {
+        _burnFirstFree(alice, "vp");
         // verifiedPass=true gives 20% discount even without on-chain pass
         uint256 before = usdc.balanceOf(treasury);
+        vm.warp(block.timestamp + 1 days);
         registry.registerDirect("crosswallet", alice, 1, 0, false, address(0), "", false, true);
-        // $5 * 80% + $2 = $6
-        assertEq(usdc.balanceOf(treasury) - before, 6e6);
+        // $5 * 80% = $4
+        assertEq(usdc.balanceOf(treasury) - before, 4e6);
     }
 
     function test_verifiedPassBypassesRateLimit() public {
@@ -949,17 +1000,20 @@ contract HazzaRegistryTest is Test {
     }
 
     function test_stackedDiscounts() public {
+        _burnFirstFree(alice, "sd");
         // ENS import (50%) + Unlimited Pass (20%) = multiplicative: price * 0.8 * 0.5
         uint256 before = usdc.balanceOf(treasury);
+        vm.warp(block.timestamp + 1 days);
         registry.registerDirect("stacked", alice, 1, 0, false, address(0), "", true, true);
-        // $5 * 80% = $4 * 50% = $2 + $2 renewal = $4
-        assertEq(usdc.balanceOf(treasury) - before, 4e6);
+        // $5 * 80% = $4 * 50% = $2
+        assertEq(usdc.balanceOf(treasury) - before, 2e6);
     }
 
-    function test_stackedQuote() public view {
+    function test_stackedQuote() public {
+        _burnFirstFree(alice, "sq");
         (uint256 total,,) = registry.quoteName("hello", alice, 1, 0, true, true);
-        // $5 * 80% * 50% + $2 = $4
-        assertEq(total, 4e6);
+        // $5 * 80% * 50% = $2
+        assertEq(total, 2e6);
     }
 
     // =========================================================================
@@ -1021,9 +1075,11 @@ contract HazzaRegistryTest is Test {
     }
 
     function test_memberIdZeroNoFreeClaim() public {
+        _burnFirstFree(alice, "mz");
         uint256 treasuryBefore = usdc.balanceOf(treasury);
 
         // memberId=0 should behave like normal registerDirect (paid)
+        vm.warp(block.timestamp + 1 days);
         registry.registerDirectWithMember("paid-name", alice, 1, 0, false, address(0), "", false, false, 0);
 
         // Treasury should have received payment

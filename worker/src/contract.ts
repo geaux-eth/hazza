@@ -4,6 +4,18 @@ import { baseSepolia, base, mainnet } from "viem/chains";
 // Minimal ABI — only the read functions the Worker needs
 export const REGISTRY_ABI = [
   {
+    name: "walletInfo",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "wallet", type: "address" }],
+    outputs: [
+      { name: "totalRegistrations", type: "uint128" },
+      { name: "firstRegistrationTime", type: "uint64" },
+      { name: "pricingWindowStart", type: "uint64" },
+      { name: "pricingWindowCount", type: "uint128" },
+    ],
+  },
+  {
     name: "available",
     type: "function",
     stateMutability: "view",

@@ -27,12 +27,16 @@ const cmd = new Command('register')
         process.exit(1);
       }
 
-      // Check free claim
+      // Check free claim (first registration free for everyone, + Unlimited Pass bonus)
       out.info('Checking free claim eligibility...');
       const fc = await api.freeClaim(wallet).catch(() => null);
       const isFree = fc && fc.eligible;
       if (isFree) {
-        out.success('Free claim eligible! No payment required.');
+        if (fc.reason === 'first-registration') {
+          out.success('First name is free — just pay gas!');
+        } else {
+          out.success('Unlimited Pass: free name claim! No payment required.');
+        }
       }
 
       // Get price quote

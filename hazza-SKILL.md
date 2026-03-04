@@ -1,19 +1,20 @@
 ---
 name: hazza
-description: HAZZA onchain name registry — register, manage, and resolve immediately useful names on Base, powered by x402 and Net Protocol.
+description: hazza onchain name registry — register, manage, and resolve immediately useful names on Base, powered by x402 and Net Protocol.
 metadata: {"clawdbot":{"emoji":"📛","always":false,"requires":{"bins":["hazza","cast"]}}}
 auto_trigger: false
 ---
 
-# HAZZA — Onchain Names on Base
+# hazza — Onchain Names on Base
 
-You can help users register, manage, and resolve HAZZA names — short, immediately useful onchain names on Base. HAZZA uses x402 for payments and is powered by Net Protocol.
+You can help users register, manage, and resolve hazza names — short, immediately useful onchain names on Base. hazza uses x402 for payments and is powered by Net Protocol.
 
-## What is HAZZA
+## What is hazza
 
 - **Short onchain names** on Base (e.g., `geaux.hazza.name`)
-- **$5 USDC** for 1 year registration, **$2/yr** renewal
-- **Free name** for Net Library Unlimited Pass holders (1 per member)
+- **First name free** for everyone (just pay gas), then **$5 USDC** per year
+- **$2/yr** renewal starting year 2
+- **Unlimited Pass holders** get 1 additional free name + 20% off all registrations
 - Every name gets a profile page at `https://<name>.hazza.name`
 - Text records for avatar, description, social links, agent config
 - Names are ERC-721 NFTs — transferable, composable, onchain
@@ -21,7 +22,7 @@ You can help users register, manage, and resolve HAZZA names — short, immediat
 ## Key Info
 
 - **Website:** https://hazza.name
-- **Contract (Sepolia):** `0xb38d1a7693B2a61A31F3E764A793AF88124940A2`
+- **Contract (Sepolia):** `0x126453000d57Ec2952F6c863874ce21d23a7F402`
 - **USDC (Sepolia):** `0x06A096A051906dEDd05Ef22dCF61ca1199bb038c`
 - **Chain:** Base Sepolia (chainId 84532) — mainnet coming soon
 - **Powered by:** x402 payment protocol + Net Protocol
@@ -30,7 +31,7 @@ You can help users register, manage, and resolve HAZZA names — short, immediat
 
 ## CLI Reference
 
-The `hazza` CLI lets you interact with the HAZZA registry from the terminal.
+The `hazza` CLI lets you interact with the hazza registry from the terminal.
 
 ### Installation
 
@@ -134,7 +135,7 @@ Base URL: `https://hazza.name`
 | `GET /api/available/:name` | Check name availability |
 | `GET /api/resolve/:name` | Resolve name to owner address |
 | `GET /api/quote/:name?wallet=&years=` | Get registration/renewal price |
-| `GET /api/free-claim/:address` | Check free claim eligibility |
+| `GET /api/free-claim/:address` | Check free claim eligibility (first-registration + Unlimited Pass) |
 | `GET /api/profile/:name` | Full profile with text records |
 | `GET /api/text/:name/:key` | Get single text record |
 | `GET /api/names/:address` | List names owned by address |
@@ -171,9 +172,10 @@ Base URL: `https://hazza.name`
 
 | Item | Cost |
 |------|------|
-| Registration | $5 USDC / year |
+| First registration | **FREE + gas** (1 per wallet) |
+| Additional registration | $5 USDC / year |
 | Renewal | $2 USDC / year |
-| Unlimited Pass perk | 1 free name (registration only) |
+| Unlimited Pass perk | 1 additional free name + 20% off |
 
 ---
 
@@ -261,7 +263,7 @@ hazza market buy <orderHash>  # Buy a listing
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/marketplace/listings` | Active HAZZA name listings (ETH + USDC) |
+| `GET /api/marketplace/listings` | Active hazza name listings (ETH + USDC) |
 | `GET /api/marketplace/offers` | Active collection offers |
 | `GET /api/marketplace/sales` | Recent sales |
 | `GET /api/marketplace/watch/:orderHash` | Watchlist count for a listing |

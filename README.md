@@ -1,4 +1,4 @@
-# HAZZA — Onchain Name Registry
+# hazza — Onchain Name Registry
 
 Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an ERC-721 NFT, ENS-compatible resolution via CCIP-Read, and an optional ERC-8004 AI agent identity.
 
@@ -12,7 +12,7 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 
 ## Contract (Base Sepolia)
 
-**Registry:** `0xb38d1a7693B2a61A31F3E764A793AF88124940A2`
+**Registry:** `0x126453000d57Ec2952F6c863874ce21d23a7F402`
 **MockUSDC:** `0x06A096A051906dEDd05Ef22dCF61ca1199bb038c`
 
 ### Key Functions
@@ -37,13 +37,15 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 | 5+ characters | $5 |
 | Renewal | $2/year |
 
+**First name free:** Everyone's first registration is free (just pay gas). Pricing above applies to additional names.
+
 Progressive pricing applies for bulk registrations. ENS-verified imports get 50% off.
 
 ## Unlimited Pass
 
 [Net Library](https://netlibrary.app) members with an **Unlimited Pass** ($10 NFT on Base) get:
 
-- **1 free HAZZA name** (first registration)
+- **1 free hazza name** (bonus, in addition to everyone's first-free)
 - **20% discount** on all additional registrations
 - **No rate limits** on registrations
 
@@ -126,7 +128,7 @@ forge script script/DeployMock.s.sol --rpc-url https://sepolia.base.org --privat
 | `/pricing` | Pricing details |
 | `/pricing/protections` | Rate limits and anti-squatting |
 | `/pricing/details` | Full pricing breakdown |
-| `/about` | About HAZZA |
+| `/about` | About hazza |
 | `/docs` | API documentation |
 | `*.hazza.name` | Profile pages (wildcard subdomains) |
 

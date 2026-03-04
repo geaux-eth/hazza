@@ -1,4 +1,4 @@
-// HTML templates for the HAZZA Worker
+// HTML templates for the hazza Worker
 // Palette: echoes Net Protocol green on dark background
 // Font: Rubik Black (900) for headings, Rubik Regular for body
 
@@ -403,7 +403,7 @@ const STYLES = `
   }
 `;
 
-const SEARCH_SCRIPT = `
+function searchScript(explorerHost: string) { return `
   const input = document.getElementById('name-input');
   const btn = document.getElementById('search-btn');
   const result = document.getElementById('result');
@@ -424,12 +424,11 @@ const SEARCH_SCRIPT = `
       const avail = await fetch('/api/available/' + encodeURIComponent(name)).then(r => r.json());
       if (avail.available) {
         result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span class="available">.hazza.name</span> is available! '
-          + '<strong>$5</strong> '
           + '<a href="/register?name=' + encodeURIComponent(name) + '" style="display:inline-block;padding:0.3rem 1rem;background:#00e676;color:#000;border-radius:6px;font-weight:700;font-size:0.85rem;vertical-align:middle;margin-left:0.5rem;text-decoration:none">Register</a>';
       } else {
         const res = await fetch('/api/resolve/' + encodeURIComponent(name)).then(r => r.json());
         result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span class="taken">.hazza.name</span> is taken. '
-          + 'Owner: <a href="https://basescan.org/address/' + escHtml(res.owner) + '">'
+          + 'Owner: <a href="https://${explorerHost}/address/' + escHtml(res.owner) + '">'
           + escHtml(res.owner.slice(0, 6) + '...' + res.owner.slice(-4)) + '</a>';
       }
     } catch (e) {
@@ -439,7 +438,7 @@ const SEARCH_SCRIPT = `
 
   btn.addEventListener('click', search);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
-`;
+`; }
 
 const NAV = `
   <nav>
@@ -604,9 +603,10 @@ function shell(title: string, description: string, body: string, script?: string
 </html>`;
 }
 
-export function landingPage(): string {
+export function landingPage(chainId?: string): string {
+  const explorerHost = chainId === "84532" ? "sepolia.basescan.org" : "basescan.org";
   return shell(
-    "HAZZA \u2014 Your Onchain Name",
+    "hazza \u2014 Your Onchain Name",
     "One x402 payment. Your name, your website, your agent, your DNS \u2014 all onchain on Base, instantly.",
     `
     <div class="header">
@@ -636,7 +636,7 @@ export function landingPage(): string {
         </div>
       </div>
     </div>`,
-    SEARCH_SCRIPT
+    searchScript(explorerHost)
   );
 }
 
@@ -689,12 +689,12 @@ const REGISTER_SCRIPT = `
     try {
       const avail = await fetch('/api/available/' + encodeURIComponent(name)).then(r => r.json());
       if (avail.available) {
-        result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span style="color:#00e676">.hazza.name</span> is available! <strong>$5 USDC</strong> '
+        result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span style="color:#00e676">.hazza.name</span> is available! '
           + '<a href="/register?name=' + encodeURIComponent(name) + '" style="display:inline-block;padding:0.3rem 1rem;background:#00e676;color:#000;border-radius:6px;font-weight:700;font-size:0.85rem;vertical-align:middle;margin-left:0.5rem;text-decoration:none">Register</a>';
       } else {
         const res = await fetch('/api/resolve/' + encodeURIComponent(name)).then(r => r.json());
         result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span style="color:#ff5252">.hazza.name</span> is taken. '
-          + 'Owner: <a href="https://basescan.org/address/' + escHtml(res.owner) + '">'
+          + 'Owner: <a href="https://' + (CHAIN_ID === 84532 ? 'sepolia.basescan.org' : 'basescan.org') + '/address/' + escHtml(res.owner) + '">'
           + escHtml(res.owner.slice(0, 6) + '...' + res.owner.slice(-4)) + '</a>';
       }
     } catch (e) {
@@ -719,8 +719,8 @@ const REGISTER_SCRIPT = `
         $('reg-checkout-section').innerHTML = '<p style="color:#ff5252;text-align:center">' + escHtml(nameParam) + '.hazza.name is already taken. <a href="/register">Try another name</a></p>';
         return;
       }
-      $('reg-price').textContent = '$5';
-      $('reg-renewal').textContent = '1 year included';
+      $('reg-price').textContent = 'from FREE';
+      $('reg-renewal').textContent = '1st name free + gas, then $5';
       $('connect-section').style.display = 'block';
     } catch (e) {
       showStatus('Error loading name info. Try again.', true);
@@ -806,10 +806,14 @@ const REGISTER_SCRIPT = `
         const fcData = await fcRes.json();
         if (fcData.eligible) {
           freeClaimEligible = true;
-          freeClaimMemberId = fcData.memberId;
+          freeClaimMemberId = fcData.memberId || 0;
           const banner = $('free-claim-banner');
           if (banner) {
-            banner.innerHTML = '<strong style="color:#00e676">1 free HAZZA name!</strong> Net Library ' + escHtml(fcData.memberName) + ' + Unlimited Pass';
+            if (fcData.reason === 'first-registration') {
+              banner.innerHTML = '<strong style="color:#00e676">Your first name is free!</strong> Just pay gas.';
+            } else {
+              banner.innerHTML = '<strong style="color:#00e676">1 free hazza name!</strong> Net Library ' + escHtml(fcData.memberName || '') + ' + Unlimited Pass';
+            }
             banner.style.display = 'block';
           }
         }
@@ -824,28 +828,46 @@ const REGISTER_SCRIPT = `
     }
   }
 
-  // --- Load quote via x402 ---
+  // --- Load quote via API ---
   async function loadQuote() {
     try {
       if (freeClaimEligible) {
-        $('quote-total').textContent = 'FREE';
+        $('quote-total').textContent = 'FREE + gas';
         $('quote-total').style.color = '#00e676';
         totalCostRaw = 0n;
         return;
       }
-      // Hit x402 endpoint to get price + relayer address
-      const res = await fetch('/x402/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: nameParam, owner: userAddress, years: 1 }),
-      });
-      const data = await res.json();
-      if (res.status === 402) {
-        relayerAddress = data.accepts[0].payTo;
-        totalCostRaw = BigInt(data.accepts[0].maxAmountRequired);
-        $('quote-total').textContent = '$' + data.price + ' USDC';
+      // Get price quote (read-only, no side effects)
+      const quoteRes = await fetch('/api/quote/' + encodeURIComponent(nameParam) + '?wallet=' + userAddress + '&years=1');
+      const quoteData = await quoteRes.json();
+      if (quoteData.firstRegistration) {
+        // First registration is free — set the flag and update UI
+        freeClaimEligible = true;
+        totalCostRaw = 0n;
+        $('quote-total').textContent = 'FREE + gas';
+        $('quote-total').style.color = '#00e676';
+        const banner = $('free-claim-banner');
+        if (banner) {
+          banner.innerHTML = '<strong style="color:#00e676">Your first name is free!</strong> Just pay gas.';
+          banner.style.display = 'block';
+        }
+        return;
+      }
+      totalCostRaw = BigInt(quoteData.totalRaw || '0');
+      if (totalCostRaw > 0n) {
+        $('quote-total').textContent = '$' + quoteData.total + ' USDC';
+        // Get relayer address from x402 402 response
+        const x402Res = await fetch('/x402/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: nameParam, owner: userAddress, years: 1 }),
+        });
+        if (x402Res.status === 402) {
+          const x402Data = await x402Res.json();
+          relayerAddress = x402Data.accepts[0].payTo;
+        }
       } else {
-        $('quote-total').textContent = data.error || 'Error loading price';
+        $('quote-total').textContent = quoteData.total || 'Error loading price';
       }
     } catch (e) {
       $('quote-total').textContent = 'Error loading price';
@@ -967,8 +989,8 @@ const REGISTER_SCRIPT = `
 
 export function registerPage(registryAddress: string, usdcAddress: string, chainId: string): string {
   return shell(
-    "HAZZA \u2014 Register",
-    "Register a HAZZA name. Connect your wallet, pay with USDC, and get your onchain name instantly.",
+    "hazza \u2014 Register",
+    "Register a hazza name. Connect your wallet, pay with USDC, and get your onchain name instantly.",
     `<div id="hazza-config" data-registry="${registryAddress}" data-usdc="${usdcAddress}" data-chainid="${chainId}" style="display:none"></div>
 
     <div class="header">
@@ -992,7 +1014,7 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
       </div>
       <div class="result" id="reg-search-result"></div>
       <div style="margin-top:1.5rem;color:#6b8f6b;font-size:0.9rem;line-height:1.7;text-align:center">
-        <p><strong style="color:#fff">$5</strong> for any name. 1 year included.</p>
+        <p><strong style="color:#00e676">1st name free</strong> + gas. additional names <strong style="color:#fff">$5</strong>. 1 year included.</p>
         <p style="margin-top:0.5rem">renew for $2/yr after that. pay with USDC on Base.</p>
       </div>
     </div>
@@ -1082,14 +1104,16 @@ const MANAGE_SCRIPT = `
     "function renew(string name, uint256 numYears) external",
     "function registerAgent(string name, string agentURI, address agentWallet) external",
     "function generateApiKey(string name, bytes32 salt) external returns (bytes32)",
-    "function quoteName(string name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee)"
+    "function quoteName(string name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee)",
+    "function transferFrom(address from, address to, uint256 tokenId) external",
+    "function resolve(string name) view returns (address owner, uint256 tokenId, uint256 registeredAt, uint256 expiresAt, address operator, uint256 agentId, address agentWallet)"
   ];
   const ERC20_ABI = [
     "function approve(address spender, uint256 amount) external returns (bool)",
     "function allowance(address owner, address spender) view returns (uint256)"
   ];
 
-  let provider, signer, userAddress, profileData;
+  let provider, signer, userAddress, profileData, currentTokenId;
 
   const $ = id => document.getElementById(id);
 
@@ -1133,6 +1157,9 @@ const MANAGE_SCRIPT = `
       $('info-status').textContent = profileData.status;
       $('info-owner').textContent = profileData.owner.slice(0, 6) + '...' + profileData.owner.slice(-4);
       $('info-expires').textContent = new Date(profileData.expiresAt * 1000).toLocaleDateString();
+
+      // Store tokenId for transfer
+      currentTokenId = profileData.tokenId;
 
       // Show renew section if in grace/redemption
       if (profileData.status === 'grace' || profileData.status === 'redemption') {
@@ -1208,6 +1235,11 @@ const MANAGE_SCRIPT = `
       $('connect-btn').style.opacity = '0.6';
       $('edit-section').style.display = 'block';
       $('actions-section').style.display = 'block';
+
+      // Only owner can transfer (not operators)
+      if (isOwner) {
+        $('transfer-section').style.display = 'block';
+      }
 
       // Load My Names
       loadMyNames();
@@ -1327,6 +1359,37 @@ const MANAGE_SCRIPT = `
     }
   }
 
+  // --- Transfer name ---
+  async function transferName() {
+    const to = $('transfer-to').value.trim();
+    const statusEl = $('transfer-status');
+    if (!to || !ethers.isAddress(to)) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = 'Enter a valid wallet address (0x...)';
+      return;
+    }
+    if (to.toLowerCase() === userAddress.toLowerCase()) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = 'Cannot transfer to yourself';
+      return;
+    }
+    if (!confirm('Transfer ' + nameParam + '.hazza.name to ' + to.slice(0,6) + '...' + to.slice(-4) + '? This is irreversible.')) return;
+    const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
+    try {
+      statusEl.style.color = '#6b8f6b';
+      statusEl.textContent = 'Sending transfer...';
+      const tx = await registry.transferFrom(userAddress, to, currentTokenId);
+      statusEl.textContent = 'Confirming...';
+      await tx.wait();
+      statusEl.style.color = '#00e676';
+      statusEl.textContent = 'Transferred! Redirecting...';
+      setTimeout(() => { window.location.href = '/dashboard'; }, 2000);
+    } catch (e) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = e.reason || e.message || 'Transfer failed';
+    }
+  }
+
   // --- Register agent ---
   async function registerAgent() {
     const uri = $('field-agent-uri').value.trim();
@@ -1434,8 +1497,8 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
     </div>`;
 
   return shell(
-    "HAZZA — Manage",
-    "Manage your HAZZA name. Edit profile, set text records, renew, and configure your onchain identity.",
+    "hazza — Manage",
+    "Manage your hazza name. Edit profile, set text records, renew, and configure your onchain identity.",
     `<div id="hazza-config" data-registry="${registryAddress}" data-usdc="${usdcAddress}" data-chainid="${chainId}" style="display:none"></div>
     <div id="manage-body">
     <div class="header">
@@ -1620,6 +1683,19 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
         <hr class="divider">
       </div>
 
+      <div id="transfer-section" style="display:none">
+        <div class="section">
+          <div class="section-title">Transfer</div>
+          <p style="color:#6b8f6b;font-size:0.85rem;margin-bottom:0.75rem">Transfer ownership of this name to another wallet. This is irreversible.</p>
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+            <input id="transfer-to" type="text" placeholder="0x... recipient address" style="flex:1;min-width:200px;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif;outline:none">
+            <button onclick="transferName()" style="padding:0.5rem 1.5rem;background:#ff5252;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.85rem;font-family:'Rubik',sans-serif">Transfer</button>
+          </div>
+          <p id="transfer-status" style="font-size:0.8rem;margin-top:0.5rem;color:#6b8f6b"></p>
+        </div>
+        <hr class="divider">
+      </div>
+
       <div style="text-align:center;margin:1.5rem 0">
         <a id="profile-link" href="#" style="color:#6b8f6b;font-size:0.85rem">view page &rarr;</a>
       </div>
@@ -1645,7 +1721,9 @@ const DASHBOARD_SCRIPT = `
   const REGISTRY_ABI = [
     "function primaryName(address wallet) view returns (bytes32)",
     "function renew(string name, uint256 numYears) external",
-    "function quoteName(string name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee)"
+    "function quoteName(string name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee)",
+    "function transferFrom(address from, address to, uint256 tokenId) external",
+    "function resolve(string name) view returns (address owner, uint256 tokenId, uint256 registeredAt, uint256 expiresAt, address operator, uint256 agentId, address agentWallet)"
   ];
   const ERC20_ABI = [
     "function approve(address spender, uint256 amount) external returns (bool)",
@@ -1727,7 +1805,7 @@ const DASHBOARD_SCRIPT = `
       if (!data.names || data.names.length === 0) {
         list.innerHTML = '<div style="text-align:center;padding:2rem 0">'
           + '<p style="color:#6b8f6b;margin-bottom:1rem">no names yet</p>'
-          + '<a href="/register" style="display:inline-block;padding:0.6rem 1.5rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;text-decoration:none">register your first name</a>'
+          + '<a href="/register" style="display:inline-block;padding:0.6rem 1.5rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;text-decoration:none">register your first name — it\\\'s free!</a>'
           + '</div>';
         return;
       }
@@ -1752,9 +1830,20 @@ const DASHBOARD_SCRIPT = `
         html += '</div></div>';
         html += '<div style="display:flex;gap:0.5rem">';
         html += '<a href="/manage?name=' + uName + '" style="color:#00e676;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">manage</a>';
+        html += '<button onclick="toggleTransfer(\'' + eName + '\', ' + n.tokenId + ')" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;background:transparent;cursor:pointer;font-family:\'Rubik\',sans-serif">transfer</button>';
         html += '<a href="/marketplace?sell=' + uName + '" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">sell</a>';
         if (n.status !== 'expired') html += '<button onclick="toggleRenew(\'' + eName + '\')" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;background:transparent;cursor:pointer;font-family:\'Rubik\',sans-serif">renew</button>';
         html += '</div></div>';
+        // Inline transfer panel (hidden by default)
+        html += '<div id="transfer-' + eName + '" style="display:none;padding:0.75rem 1rem;background:#0d1a0d;border:1px solid #1a2e1a;border-top:none;border-radius:0 0 8px 8px">';
+        html += '<div style="font-size:0.8rem;color:#6b8f6b;margin-bottom:0.5rem">Transfer <strong style="color:#fff">' + eName + '.hazza.name</strong> to another wallet</div>';
+        html += '<div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">';
+        html += '<input id="transfer-to-' + eName + '" type="text" placeholder="0x... recipient address" style="flex:1;min-width:200px;padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:\'Rubik\',sans-serif">';
+        html += '<button onclick="doTransfer(\'' + eName + '\', ' + n.tokenId + ')" style="padding:0.4rem 1rem;background:#ff5252;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:\'Rubik\',sans-serif">Transfer</button>';
+        html += '</div>';
+        html += '<span id="transfer-status-' + eName + '" style="font-size:0.8rem;color:#6b8f6b;display:block;margin-top:0.35rem"></span>';
+        html += '<div style="font-size:0.7rem;color:#444;margin-top:0.35rem">This transfers full ownership. The recipient controls the name, records, and renewal.</div>';
+        html += '</div>';
         // Inline renew panel (hidden by default)
         if (n.status !== 'expired') {
           html += '<div id="renew-' + eName + '" style="display:none;padding:0.75rem 1rem;background:#0d1a0d;border:1px solid #1a2e1a;border-top:none;border-radius:0 0 8px 8px">';
@@ -1769,7 +1858,6 @@ const DASHBOARD_SCRIPT = `
         html += '</div>';
       }
       if (data.total > 50) html += '<p style="color:#888;font-size:0.8rem;margin-top:0.5rem">showing 50 of ' + data.total + '</p>';
-      html += '<p style="color:#333;font-size:0.75rem;margin-top:2rem;text-align:center">Namespace management and transfer &mdash; coming soon</p>';
       list.innerHTML = html;
     } catch (e) {
       list.innerHTML = '<span style="color:#ff5252;font-size:0.85rem">error loading names</span>';
@@ -1779,6 +1867,48 @@ const DASHBOARD_SCRIPT = `
   function toggleRenew(name) {
     const panel = $('renew-' + name);
     if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    // Close transfer panel if open
+    const tp = $('transfer-' + name);
+    if (tp) tp.style.display = 'none';
+  }
+
+  function toggleTransfer(name, tokenId) {
+    const panel = $('transfer-' + name);
+    if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    // Close renew panel if open
+    const rp = $('renew-' + name);
+    if (rp) rp.style.display = 'none';
+  }
+
+  async function doTransfer(name, tokenId) {
+    const statusEl = $('transfer-status-' + name);
+    const toInput = $('transfer-to-' + name);
+    const to = toInput.value.trim();
+    if (!to || !to.match(/^0x[a-fA-F0-9]{40}$/)) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = 'Enter a valid wallet address (0x...)';
+      return;
+    }
+    if (to.toLowerCase() === userAddress.toLowerCase()) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = 'Cannot transfer to yourself';
+      return;
+    }
+    if (!confirm('Transfer ' + name + '.hazza.name to ' + to.slice(0,6) + '...' + to.slice(-4) + '? This is irreversible.')) return;
+    try {
+      const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
+      statusEl.style.color = '#6b8f6b';
+      statusEl.textContent = 'Sending transfer...';
+      const tx = await registry.transferFrom(userAddress, to, tokenId);
+      statusEl.textContent = 'Confirming...';
+      await tx.wait();
+      statusEl.style.color = '#00e676';
+      statusEl.textContent = 'Transferred!';
+      setTimeout(() => loadNames(), 2000);
+    } catch (e) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = e.reason || e.message || 'Transfer failed';
+    }
   }
 
   async function doRenew(name) {
@@ -1814,8 +1944,8 @@ const DASHBOARD_SCRIPT = `
 
 export function dashboardPage(registryAddress: string, usdcAddress: string, chainId: string): string {
   return shell(
-    "HAZZA \u2014 Dashboard",
-    "View and manage all your HAZZA names from one place.",
+    "hazza \u2014 Dashboard",
+    "View and manage all your hazza names from one place.",
     `<div id="hazza-config" data-registry="${registryAddress}" data-usdc="${usdcAddress}" data-chainid="${chainId}" style="display:none"></div>
 
     <div class="header">
@@ -1906,7 +2036,8 @@ function statusBadge(status: string): string {
   return `<span class="status-badge status-${status}">${labels[status] || status}</span>`;
 }
 
-export function profilePage(name: string, data: ProfileData | null): string {
+export function profilePage(name: string, data: ProfileData | null, chainId?: string): string {
+  const explorer = chainId === "84532" ? "sepolia.basescan.org" : "basescan.org";
   const title = data ? `${name}.hazza.name` : `${name}.hazza.name \u2014 Available`;
 
   let content: string;
@@ -1985,7 +2116,7 @@ export function profilePage(name: string, data: ProfileData | null): string {
         agentRows.push(`<div class="agent-card"><div class="agent-label">Agent ID</div><div class="agent-value">#${esc(data.agentId)}</div></div>`);
         if (data.agentWallet !== zeroAddr) {
           const shortAgent = data.agentWallet.slice(0, 6) + "..." + data.agentWallet.slice(-4);
-          agentRows.push(`<div class="agent-card"><div class="agent-label">Agent Wallet</div><div class="agent-value"><a href="https://basescan.org/address/${esc(data.agentWallet)}">${esc(shortAgent)}</a></div></div>`);
+          agentRows.push(`<div class="agent-card"><div class="agent-label">Agent Wallet</div><div class="agent-value"><a href="https://${explorer}/address/${esc(data.agentWallet)}">${esc(shortAgent)}</a></div></div>`);
         }
       }
       if (texts["agent.endpoint"]) agentRows.push(`<div class="agent-card"><div class="agent-label">Endpoint</div><div class="agent-value">${esc(texts["agent.endpoint"])}</div></div>`);
@@ -2156,7 +2287,7 @@ export function profilePage(name: string, data: ProfileData | null): string {
       <div class="info-grid">
         <div class="info-row">
           <span class="label">Owner</span>
-          <span class="value"><a href="https://basescan.org/address/${esc(data.owner)}">${esc(ownerDisplay)}</a></span>
+          <span class="value"><a href="https://${explorer}/address/${esc(data.owner)}">${esc(ownerDisplay)}</a></span>
         </div>
         <div class="info-row">
           <span class="label">Token ID</span>
@@ -2172,7 +2303,7 @@ export function profilePage(name: string, data: ProfileData | null): string {
         </div>
         ${hasOperator ? `<div class="info-row">
           <span class="label">Operator</span>
-          <span class="value"><a href="https://basescan.org/address/${esc(data.operator)}">${esc(data.operator.slice(0, 6) + "..." + data.operator.slice(-4))}</a></span>
+          <span class="value"><a href="https://${explorer}/address/${esc(data.operator)}">${esc(data.operator.slice(0, 6) + "..." + data.operator.slice(-4))}</a></span>
         </div>` : ""}
         <div class="info-row">
           <span class="label">Subdomain</span>
@@ -2201,7 +2332,7 @@ export function profilePage(name: string, data: ProfileData | null): string {
   return profileShell(
     name,
     title,
-    data ? `${name}.hazza.name \u2014 owned by ${data.owner}` : `${name}.hazza.name is available on HAZZA`,
+    data ? `${name}.hazza.name \u2014 owned by ${data.owner}` : `${name}.hazza.name is available on hazza`,
     content
   );
 }
@@ -2212,17 +2343,17 @@ export function profilePage(name: string, data: ProfileData | null): string {
 
 export function aboutPage(): string {
   return shell(
-    "HAZZA \u2014 About",
-    "HAZZA is an onchain domain registry on Base. One x402 payment gives you a name, website, agent, and DNS.",
+    "hazza \u2014 About",
+    "hazza is an onchain domain registry on Base. One x402 payment gives you a name, website, agent, and DNS.",
     `
     <div class="header">
       <h1>about</h1>
     </div>
 
     <div class="section">
-      <div class="section-title">What is HAZZA?</div>
+      <div class="section-title">What is hazza?</div>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        HAZZA is an onchain name registry on Base. Register a <strong style="color:#fff">.hazza.name</strong> domain
+        hazza is an onchain name registry on Base. Register a <strong style="color:#fff">.hazza.name</strong> domain
         and get an ERC-721 NFT that serves as your identity, your subdomain, your content host, and your AI agent endpoint &mdash; all in one.
       </p>
     </div>
@@ -2279,16 +2410,21 @@ export function aboutPage(): string {
 
 export function pricingPage(): string {
   return shell(
-    "HAZZA \u2014 Pricing",
-    "HAZZA name pricing, anti-squatting protections, discounts, and everything you need to know before registering.",
+    "hazza \u2014 Pricing",
+    "hazza name pricing, anti-squatting protections, discounts, and everything you need to know before registering.",
     `
     <div class="header">
       <h1>pricing</h1>
     </div>
 
     <div style="text-align:center;margin:2rem 0">
+      <div class="price-card" style="display:inline-block;min-width:200px;margin-right:1rem">
+        <div class="chars">first name</div>
+        <div class="amount" style="color:#00e676">FREE</div>
+        <div class="unit">just pay gas</div>
+      </div>
       <div class="price-card" style="display:inline-block;min-width:200px">
-        <div class="chars">any name</div>
+        <div class="chars">additional names</div>
         <div class="amount">$5</div>
         <div class="unit">1 year included</div>
       </div>
@@ -2299,7 +2435,8 @@ export function pricingPage(): string {
     <div class="section">
       <div class="section-title">Perks</div>
       <div class="info-grid">
-        <div class="info-row"><span class="label">Unlimited Pass holder</span><span class="value">1 free name + 20% off all registrations</span></div>
+        <div class="info-row"><span class="label">First name</span><span class="value">Free for everyone &mdash; 1 per wallet, just pay gas</span></div>
+        <div class="info-row"><span class="label">Unlimited Pass holder</span><span class="value">1 additional free name + 20% off all registrations</span></div>
         <div class="info-row"><span class="label">ENS names</span><span class="value">Suggested on registration page</span></div>
       </div>
     </div>
@@ -2338,7 +2475,7 @@ export function pricingPage(): string {
     <div class="section">
       <div class="section-title">Namespaces</div>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        Turn any HAZZA name into a namespace and issue subnames under it.<br>
+        Turn any hazza name into a namespace and issue subnames under it.<br>
         Useful for teams, organizations, or agent networks &mdash; e.g. <strong style="color:#fff">alice.yourname</strong>, <strong style="color:#fff">bot.yourname</strong>.
       </p>
       <div class="info-grid">
@@ -2346,7 +2483,7 @@ export function pricingPage(): string {
         <div class="info-row"><span class="label">Issue subname</span><span class="value">Free</span></div>
       </div>
       <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
-        Each subname is its own full HAZZA name with a profile, agent, and DNS.
+        Each subname is its own full hazza name with a profile, agent, and DNS.
       </p>
     </div>
 
@@ -2372,8 +2509,8 @@ export function pricingPage(): string {
 
 export function pricingProtectionsPage(): string {
   return shell(
-    "HAZZA \u2014 Protections",
-    "Anti-squatting, rate limits, and name rights for HAZZA name registrations.",
+    "hazza \u2014 Protections",
+    "Anti-squatting, rate limits, and name rights for hazza name registrations.",
     `
     <div class="header">
       <h1>protections</h1>
@@ -2413,7 +2550,7 @@ export function pricingProtectionsPage(): string {
       </div>
       <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
         Net Library membership is a <a href="https://netlibrary.app">netlibrary.eth</a> subname ($2).<br>
-        The <a href="https://netlibrary.app">Unlimited Pass</a> ($10) unlocks unlimited HAZZA registrations, 20% discount, and 1 free name. Free name tracked by Net Library member number &mdash; one per member, ever.
+        The <a href="https://netlibrary.app">Unlimited Pass</a> ($10) unlocks unlimited hazza registrations, 20% discount, and 1 free name. Free name tracked by Net Library member number &mdash; one per member, ever.
       </p>
     </div>
 
@@ -2422,7 +2559,7 @@ export function pricingProtectionsPage(): string {
     <div class="section">
       <div class="section-title">Name rights</div>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        HAZZA names are <strong style="color:#fff">first-come, first-served</strong>.
+        hazza names are <strong style="color:#fff">first-come, first-served</strong>.
         There is no challenge or dispute system. Progressive pricing and rate limits provide the anti-squatting protection.
       </p>
       <div class="info-grid">
@@ -2443,8 +2580,8 @@ export function pricingProtectionsPage(): string {
 
 export function pricingDetailsPage(): string {
   return shell(
-    "HAZZA \u2014 Details",
-    "Renewal, expiry, front-running protection, and payment details for HAZZA names.",
+    "hazza \u2014 Details",
+    "Renewal, expiry, front-running protection, and payment details for hazza names.",
     `
     <div class="header">
       <h1>details</h1>
@@ -2499,8 +2636,8 @@ export function pricingDetailsPage(): string {
 
 export function docsPage(): string {
   return shell(
-    "HAZZA \u2014 Docs",
-    "HAZZA documentation. Registration flow, API endpoints, contract reference, and text record keys.",
+    "hazza \u2014 Docs",
+    "hazza documentation. Registration flow, API endpoints, contract reference, and text record keys.",
     `
     <div class="header">
       <h1>docs</h1>
@@ -2669,7 +2806,7 @@ cast send $TO $DATA --private-key $KEY --rpc-url $RPC</pre>
         <div class="info-row"><span class="label">agent.model</span><span class="value">AI model name</span></div>
         <div class="info-row"><span class="label">agent.status</span><span class="value">Agent status (online/offline)</span></div>
       </div>
-      <p style="color:#6b8f6b;font-size:0.8rem;margin-top:0.75rem">Any string key is valid. The keys above are conventions used by the profile page and other HAZZA integrations.</p>
+      <p style="color:#6b8f6b;font-size:0.8rem;margin-top:0.75rem">Any string key is valid. The keys above are conventions used by the profile page and other hazza integrations.</p>
     </div>
 
     <hr class="divider">
@@ -2763,7 +2900,7 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
       <div class="section-title">Contract</div>
       <div class="info-grid">
         <div class="info-row"><span class="label">Network</span><span class="value">Base Sepolia (testnet)</span></div>
-        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0xb38d1a7693B2a61A31F3E764A793AF88124940A2</span></div>
+        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0x126453000d57Ec2952F6c863874ce21d23a7F402</span></div>
         <div class="info-row"><span class="label">USDC</span><span class="value" style="font-size:0.75rem">0x06A096A051906dEDd05Ef22dCF61ca1199bb038c</span></div>
         <div class="info-row"><span class="label">Source</span><span class="value"><a href="https://github.com/geaux-eth/hazza">github.com/geaux-eth/hazza</a></span></div>
       </div>
@@ -2777,8 +2914,8 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
 
 export function domainsPage(): string {
   return shell(
-    "HAZZA \u2014 Custom Domains",
-    "Link your own domain to your HAZZA name. Route any .com, .xyz, or .io to your onchain profile.",
+    "hazza \u2014 Custom Domains",
+    "Link your own domain to your hazza name. Route any .com, .xyz, or .io to your onchain profile.",
     `
     <div class="header">
       <h1>custom domains</h1>
@@ -2787,7 +2924,7 @@ export function domainsPage(): string {
     <div class="section">
       <div class="section-title">Bring your own domain</div>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        Every HAZZA name gets a live subdomain at <strong style="color:#fff">yourname.hazza.name</strong> automatically.<br>
+        Every hazza name gets a live subdomain at <strong style="color:#fff">yourname.hazza.name</strong> automatically.<br>
         But you can also link any domain you already own &mdash; .com, .xyz, .io, whatever &mdash; and it will resolve to your onchain profile.
       </p>
     </div>
@@ -2797,7 +2934,7 @@ export function domainsPage(): string {
     <div class="section">
       <div class="section-title">How to link your domain</div>
       <div class="info-grid">
-        <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">1. Register</span><span class="value">Get a HAZZA name at <a href="/register">/register</a></span></div>
+        <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">1. Register</span><span class="value">Get a hazza name at <a href="/register">/register</a></span></div>
         <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">2. Buy a domain</span><span class="value">Use any registrar &mdash; Namecheap, GoDaddy, Cloudflare, etc.</span></div>
         <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">3. Point DNS</span><span class="value">Add a CNAME record pointing to <strong style="color:#00e676">hazza.name</strong></span></div>
         <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">4. Link onchain</span><span class="value">Call <code style="color:#00e676">setCustomDomain</code> on the contract (or use the API)</span></div>
@@ -2809,9 +2946,9 @@ export function domainsPage(): string {
     <div class="section">
       <div class="section-title">What you get</div>
       <div class="info-grid">
-        <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Routing</span><span class="value">Your domain resolves to your HAZZA profile, agent endpoint, or custom content</span></div>
+        <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Routing</span><span class="value">Your domain resolves to your hazza profile, agent endpoint, or custom content</span></div>
         <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Subdomain</span><span class="value">yourname.hazza.name always works &mdash; free and included</span></div>
-        <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Onchain</span><span class="value">Domain mapping is stored in the HAZZA contract &mdash; verifiable and permanent</span></div>
+        <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Onchain</span><span class="value">Domain mapping is stored in the hazza contract &mdash; verifiable and permanent</span></div>
         <div class="info-row" style="flex-direction:column;align-items:flex-start;gap:0.25rem"><span class="label">Flexible</span><span class="value">Point at your profile, custom HTML via <a href="https://netprotocol.app" style="font-weight:700">Net Protocol</a>, or your own server</span></div>
       </div>
     </div>
@@ -2829,7 +2966,7 @@ CNAME   @       hazza.name
 CNAME   www     hazza.name</pre>
       </div>
       <p style="color:#888;font-size:0.85rem;line-height:1.7">
-        Some registrars don't support CNAME on root (@). Use an A record pointing to HAZZA's IP, or use a registrar that supports CNAME flattening (Cloudflare, etc.).
+        Some registrars don't support CNAME on root (@). Use an A record pointing to hazza's IP, or use a registrar that supports CNAME flattening (Cloudflare, etc.).
       </p>
     </div>
 
@@ -2967,8 +3104,8 @@ const DNS_MANAGE_SCRIPT = `
 
 export function domainsManagePage(): string {
   return shell(
-    "HAZZA \u2014 Manage DNS",
-    "Manage DNS records, nameservers, and routing for your HAZZA domain.",
+    "hazza \u2014 Manage DNS",
+    "Manage DNS records, nameservers, and routing for your hazza domain.",
     `
     <div class="header">
       <h1>manage dns</h1>
@@ -3007,7 +3144,7 @@ export function domainsManagePage(): string {
           Apply a preset configuration with one click. This replaces all existing records.
         </p>
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap">
-          <button onclick="applyPreset('profile')" style="padding:0.5rem 1rem;background:none;border:1px solid #1a2e1a;color:#aaa;border-radius:6px;font-size:0.85rem;cursor:pointer;font-family:'Rubik',sans-serif">HAZZA Profile</button>
+          <button onclick="applyPreset('profile')" style="padding:0.5rem 1rem;background:none;border:1px solid #1a2e1a;color:#aaa;border-radius:6px;font-size:0.85rem;cursor:pointer;font-family:'Rubik',sans-serif">hazza Profile</button>
           <button onclick="applyPreset('server')" style="padding:0.5rem 1rem;background:none;border:1px solid #1a2e1a;color:#aaa;border-radius:6px;font-size:0.85rem;cursor:pointer;font-family:'Rubik',sans-serif">External Server</button>
         </div>
       </div>
@@ -3483,6 +3620,25 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
         if (accounts && accounts[0]) {
           wallet = accounts[0];
           provider = new ethers.BrowserProvider(window.ethereum);
+          // Verify correct chain
+          var network = await provider.getNetwork();
+          var targetChainId = parseInt(CHAIN_ID);
+          if (Number(network.chainId) !== targetChainId) {
+            try {
+              await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x' + targetChainId.toString(16) }] });
+            } catch(switchErr) {
+              if (switchErr.code === 4902) {
+                await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{
+                  chainId: '0x' + targetChainId.toString(16),
+                  chainName: targetChainId === 84532 ? 'Base Sepolia' : 'Base',
+                  nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                  rpcUrls: [targetChainId === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
+                  blockExplorerUrls: [targetChainId === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
+                }]});
+              } else { alert('Please switch to ' + (targetChainId === 84532 ? 'Base Sepolia' : 'Base') + ' in your wallet.'); return; }
+            }
+            provider = new ethers.BrowserProvider(window.ethereum);
+          }
           signer = await provider.getSigner();
           $('mp-connect-btn').textContent = truncAddr(wallet);
           $('mp-connect-btn').classList.add('connected');
@@ -3730,7 +3886,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
         var data = await res.json();
         var names = data.names || [];
         if (names.length === 0) {
-          container.innerHTML = '<div class="empty-state"><p>You don\\'t own any hazza names yet.</p><a href="/register" class="btn-buy" style="display:inline-block;width:auto;padding:0.6rem 1.5rem;text-decoration:none">register your first name</a></div>';
+          container.innerHTML = '<div class="empty-state"><p>You don\\'t own any hazza names yet.</p><a href="/register" class="btn-buy" style="display:inline-block;width:auto;padding:0.6rem 1.5rem;text-decoration:none">register your first name — it\\'s free!</a></div>';
           return;
         }
         var html = '';

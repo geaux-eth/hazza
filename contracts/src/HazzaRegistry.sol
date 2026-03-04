@@ -608,6 +608,9 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     ) internal view returns (uint256) {
         WalletInfo memory info = walletInfo[wallet];
 
+        // First registration is free for everyone (just pay gas)
+        if (info.totalRegistrations == 0) return 0;
+
         // Get count in current pricing window
         uint256 count = info.pricingWindowCount;
         if (info.pricingWindowStart != 0 && block.timestamp - info.pricingWindowStart > PRICING_WINDOW) {
@@ -693,6 +696,8 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     // =========================================================================
 
     function _collectPayment(uint256 amount, address relayer) internal {
+        if (amount == 0) return; // Nothing to collect (first registration free)
+
         uint256 allowed = usdc.allowance(msg.sender, address(this));
         if (allowed < amount) revert InsufficientPayment();
 
