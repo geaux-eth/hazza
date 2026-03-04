@@ -568,25 +568,59 @@ app.get("/api/share", async (c) => {
   }
 });
 
-// NFTs owned by address (for avatar picker)
+// NFTs owned by address (for avatar picker) — uses Alchemy NFT API on mainnet
 app.get("/api/nfts/:address", async (c) => {
   const address = c.req.param("address") as `0x${string}`;
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return c.json({ error: "Invalid address" }, 400);
 
-  const mainnet = getMainnetClient(c.env);
-  const nfts: { collection: string; tokenId: string; name: string; image: string }[] = [];
+  const nfts: { collection: string; contract: string; tokenId: string; name: string; image: string }[] = [];
 
+  // Try Alchemy NFT API (works on mainnet where BASE_MAINNET_RPC is an Alchemy URL)
+  const rpcUrl = c.env.BASE_MAINNET_RPC || "";
+  const alchemyMatch = rpcUrl.match(/g\.alchemy\.com\/v2\/(.+)$/);
+  if (alchemyMatch) {
+    const apiKey = alchemyMatch[1];
+    const alchemyBase = `https://base-mainnet.g.alchemy.com/nft/v3/${apiKey}`;
+    try {
+      const res = await fetch(
+        `${alchemyBase}/getNFTsForOwner?owner=${address}&withMetadata=true&pageSize=50&excludeFilters[]=SPAM`,
+      );
+      if (res.ok) {
+        const data = await res.json() as {
+          ownedNfts: {
+            contract: { address: string; name?: string; openSeaMetadata?: { collectionName?: string } };
+            tokenId: string;
+            name?: string;
+            image?: { cachedUrl?: string; thumbnailUrl?: string; pngUrl?: string; originalUrl?: string };
+          }[];
+        };
+        for (const nft of data.ownedNfts || []) {
+          const img = nft.image?.thumbnailUrl || nft.image?.cachedUrl || nft.image?.pngUrl || nft.image?.originalUrl || "";
+          if (!img) continue;
+          nfts.push({
+            collection: nft.contract.openSeaMetadata?.collectionName || nft.contract.name || "Unknown",
+            contract: nft.contract.address,
+            tokenId: nft.tokenId,
+            name: nft.name || `#${nft.tokenId}`,
+            image: img,
+          });
+        }
+        return c.json({ nfts, source: "alchemy" }, 200, { "Cache-Control": "public, max-age=300" });
+      }
+    } catch { /* fall through to on-chain method */ }
+  }
+
+  // Fallback: on-chain enumeration for known collections (works on any chain)
+  const mainnet = getMainnetClient(c.env);
   const collections = [
     { name: "Exoskeleton", address: EXOSKELETON_ADDRESS },
   ];
-
   const normalizeImage = (url: string): string => {
     if (!url) return "";
     if (url.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + url.slice(7);
     if (url.startsWith("ar://")) return "https://arweave.net/" + url.slice(5);
     return url;
   };
-
   for (const col of collections) {
     try {
       const bal = await mainnet.readContract({
@@ -603,29 +637,17 @@ app.get("/api/nfts/:address", async (c) => {
           }) as string;
           let image = "", nftName = "";
           if (uri && uri.startsWith("data:")) {
-            try {
-              const b64 = uri.split(",")[1];
-              const json = JSON.parse(atob(b64));
-              image = normalizeImage(json.image || "");
-              nftName = json.name || "";
-            } catch { /* skip */ }
+            try { const json = JSON.parse(atob(uri.split(",")[1])); image = normalizeImage(json.image || ""); nftName = json.name || ""; } catch {}
           } else if (uri) {
-            try {
-              const metaRes = await fetch(normalizeImage(uri));
-              if (metaRes.ok) {
-                const json = await metaRes.json() as { image?: string; name?: string };
-                image = normalizeImage(json.image || "");
-                nftName = json.name || "";
-              }
-            } catch { /* skip */ }
+            try { const r = await fetch(normalizeImage(uri)); if (r.ok) { const j = await r.json() as any; image = normalizeImage(j.image || ""); nftName = j.name || ""; } } catch {}
           }
-          if (image) nfts.push({ collection: col.name, tokenId: tokenId.toString(), name: nftName, image });
-        } catch { /* skip token */ }
+          if (image) nfts.push({ collection: col.name, contract: col.address, tokenId: tokenId.toString(), name: nftName, image });
+        } catch {}
       }
-    } catch { /* skip collection */ }
+    } catch {}
   }
 
-  return c.json({ nfts }, 200, { "Cache-Control": "public, max-age=300" });
+  return c.json({ nfts, source: "onchain" }, 200, { "Cache-Control": "public, max-age=300" });
 });
 
 // ERC-721 metadata (served by tokenURI base URL)
