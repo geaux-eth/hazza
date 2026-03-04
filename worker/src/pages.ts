@@ -1367,6 +1367,44 @@ const MANAGE_SCRIPT = `
     });
   }
 
+  // --- NFT Avatar Picker ---
+  function openNftPicker() {
+    if (!userAddress) { showMsg('Connect your wallet first.', true); return; }
+    const picker = $('nft-picker');
+    const grid = $('nft-grid');
+    const status = $('nft-picker-status');
+    picker.style.display = 'block';
+    grid.innerHTML = '';
+    status.textContent = 'Loading NFTs...';
+    fetch('/api/nfts/' + encodeURIComponent(userAddress))
+      .then(r => r.json())
+      .then(data => {
+        if (!data.nfts || data.nfts.length === 0) {
+          status.textContent = 'No NFTs found in your wallet.';
+          return;
+        }
+        status.textContent = data.nfts.length + ' NFT' + (data.nfts.length === 1 ? '' : 's') + ' found';
+        let html = '';
+        for (const nft of data.nfts) {
+          html += '<div style="cursor:pointer;position:relative" title="' + escHtml(nft.name || nft.collection + ' #' + nft.tokenId) + '">';
+          html += '<img src="' + escHtml(nft.image) + '" onclick="selectNft(this.src)" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:2px solid transparent;display:block" onmouseover="this.style.borderColor=\'#00e676\'" onmouseout="this.style.borderColor=\'transparent\'" onerror="this.parentElement.style.display=\'none\'">';
+          html += '</div>';
+        }
+        grid.innerHTML = html;
+      })
+      .catch(() => { status.textContent = 'Error loading NFTs.'; });
+  }
+
+  function selectNft(imageUrl) {
+    $('field-avatar').value = imageUrl;
+    closeNftPicker();
+    showMsg('Avatar URL set. Click Save to store it onchain.', false);
+  }
+
+  function closeNftPicker() {
+    $('nft-picker').style.display = 'none';
+  }
+
   // --- Init ---
   $('connect-btn').addEventListener('click', connectWallet);
   if (nameParam) {
@@ -1420,7 +1458,20 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
       <div class="section">
         <div class="section-title">Profile</div>
         ${fieldRow("Bio", "description", "field-description", "A short bio...")}
-        ${fieldRow("Avatar", "avatar", "field-avatar", "https://... image URL")}
+        <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem">
+          <label style="color:#6b8f6b;font-size:0.85rem;min-width:80px">Avatar</label>
+          <input id="field-avatar" type="text" placeholder="https://... image URL" style="flex:1;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif;outline:none">
+          <button onclick="saveField('avatar','field-avatar')" style="padding:0.5rem 1rem;background:#1a2e1a;color:#00e676;border:1px solid #00e676;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:'Rubik',sans-serif;white-space:nowrap">Save</button>
+          <button onclick="openNftPicker()" style="padding:0.5rem 0.75rem;background:#111;color:#6b8f6b;border:1px solid #1a2e1a;border-radius:6px;font-size:0.8rem;cursor:pointer;font-family:'Rubik',sans-serif;white-space:nowrap" title="Browse your NFTs">NFTs</button>
+        </div>
+        <div id="nft-picker" style="display:none;margin-bottom:1rem;padding:1rem;background:#0d1a0d;border:1px solid #1a2e1a;border-radius:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+            <span style="color:#6b8f6b;font-size:0.85rem">Select an NFT as your avatar</span>
+            <button onclick="closeNftPicker()" style="background:transparent;border:none;color:#6b8f6b;font-size:1.2rem;cursor:pointer;padding:0 0.25rem">&times;</button>
+          </div>
+          <div id="nft-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:0.5rem"></div>
+          <div id="nft-picker-status" style="text-align:center;color:#6b8f6b;font-size:0.8rem;margin-top:0.5rem"></div>
+        </div>
         ${fieldRow("Website", "url", "field-url", "https://...")}
       </div>
 
@@ -1575,12 +1626,19 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
 const DASHBOARD_SCRIPT = `
   const cfg = document.getElementById('hazza-config');
   const REGISTRY = cfg.dataset.registry;
+  const USDC_ADDRESS = cfg.dataset.usdc;
   const CHAIN_ID = parseInt(cfg.dataset.chainid);
 
   function escHtml(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
   const REGISTRY_ABI = [
-    "function primaryName(address wallet) view returns (bytes32)"
+    "function primaryName(address wallet) view returns (bytes32)",
+    "function renew(string name, uint256 numYears) external",
+    "function quoteName(string name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee)"
+  ];
+  const ERC20_ABI = [
+    "function approve(address spender, uint256 amount) external returns (bool)",
+    "function allowance(address owner, address spender) view returns (uint256)"
   ];
 
   let provider, signer, userAddress;
@@ -1671,23 +1729,71 @@ const DASHBOARD_SCRIPT = `
         const statusColor = n.status === 'active' ? '#00e676' : n.status === 'grace' ? '#ffab00' : n.status === 'redemption' ? '#ff5252' : '#444';
         const statusLabel = n.status === 'active' ? 'active' : n.status === 'grace' ? 'grace period' : n.status === 'redemption' ? 'redemption' : 'expired';
         const daysText = n.status === 'active' ? daysLeft + ' days left' : n.status === 'grace' ? 'grace: ' + daysLeft + 'd left' : n.status === 'redemption' ? 'redemption: ' + daysLeft + 'd left' : 'released';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem 1rem;background:#111;border:1px solid #1a2e1a;border-radius:8px;margin-bottom:0.5rem">';
+        const eName = escHtml(n.name);
+        const uName = encodeURIComponent(n.name);
+        html += '<div style="margin-bottom:0.5rem">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem 1rem;background:#111;border:1px solid #1a2e1a;border-radius:8px">';
         html += '<div>';
-        html += '<a href="https://' + escHtml(n.name) + '.hazza.name" style="color:#fff;font-weight:700;font-size:0.95rem">' + escHtml(n.name) + '<span style="color:#00e676">.hazza.name</span></a>';
+        html += '<a href="https://' + eName + '.hazza.name" style="color:#fff;font-weight:700;font-size:0.95rem">' + eName + '<span style="color:#00e676">.hazza.name</span></a>';
         html += '<div style="display:flex;gap:0.75rem;margin-top:0.25rem;font-size:0.75rem;color:#6b8f6b">';
         html += '<span style="color:' + statusColor + '">' + escHtml(statusLabel) + '</span>';
         html += '<span>' + escHtml(daysText) + '</span>';
         html += '</div></div>';
         html += '<div style="display:flex;gap:0.5rem">';
-        html += '<a href="/manage?name=' + encodeURIComponent(n.name) + '" style="color:#00e676;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">manage</a>';
-        if (n.status !== 'expired') html += '<a href="/manage?name=' + encodeURIComponent(n.name) + '&action=renew" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">renew</a>';
+        html += '<a href="/manage?name=' + uName + '" style="color:#00e676;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">manage</a>';
+        if (n.status !== 'expired') html += '<button onclick="toggleRenew(\'' + eName + '\')" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;background:transparent;cursor:pointer;font-family:\'Rubik\',sans-serif">renew</button>';
         html += '</div></div>';
+        // Inline renew panel (hidden by default)
+        if (n.status !== 'expired') {
+          html += '<div id="renew-' + eName + '" style="display:none;padding:0.75rem 1rem;background:#0d1a0d;border:1px solid #1a2e1a;border-top:none;border-radius:0 0 8px 8px">';
+          html += '<div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">';
+          html += '<select id="renew-years-' + eName + '" style="padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:\'Rubik\',sans-serif">';
+          html += '<option value="1">1 year ($2)</option><option value="2">2 years ($4)</option><option value="3">3 years ($6)</option><option value="5">5 years ($10)</option>';
+          html += '</select>';
+          html += '<button onclick="doRenew(\'' + eName + '\')" style="padding:0.4rem 1rem;background:#00e676;color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:\'Rubik\',sans-serif">Renew</button>';
+          html += '<span id="renew-status-' + eName + '" style="font-size:0.8rem;color:#6b8f6b"></span>';
+          html += '</div></div>';
+        }
+        html += '</div>';
       }
       if (data.total > 50) html += '<p style="color:#888;font-size:0.8rem;margin-top:0.5rem">showing 50 of ' + data.total + '</p>';
-      html += '<p style="color:#333;font-size:0.75rem;margin-top:2rem;text-align:center">Inline renewal, namespace management, and transfer &mdash; coming soon</p>';
+      html += '<p style="color:#333;font-size:0.75rem;margin-top:2rem;text-align:center">Namespace management and transfer &mdash; coming soon</p>';
       list.innerHTML = html;
     } catch (e) {
       list.innerHTML = '<span style="color:#ff5252;font-size:0.85rem">error loading names</span>';
+    }
+  }
+
+  function toggleRenew(name) {
+    const panel = $('renew-' + name);
+    if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  }
+
+  async function doRenew(name) {
+    const statusEl = $('renew-status-' + name);
+    const yearsEl = $('renew-years-' + name);
+    const years = parseInt(yearsEl.value) || 1;
+    try {
+      const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
+      const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
+      statusEl.style.color = '#6b8f6b';
+      statusEl.textContent = 'Getting cost...';
+      const [totalCost] = await registry.quoteName(name, userAddress, years, 0, false, false);
+      statusEl.textContent = 'Approving USDC...';
+      const allowance = await usdc.allowance(userAddress, REGISTRY);
+      if (allowance < totalCost) {
+        const approveTx = await usdc.approve(REGISTRY, totalCost);
+        await approveTx.wait();
+      }
+      statusEl.textContent = 'Renewing...';
+      const tx = await registry.renew(name, years);
+      await tx.wait();
+      statusEl.style.color = '#00e676';
+      statusEl.textContent = 'Renewed!';
+      setTimeout(() => loadNames(), 2000);
+    } catch (e) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = e.reason || e.message || 'Error';
     }
   }
 

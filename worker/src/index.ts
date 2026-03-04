@@ -11,14 +11,16 @@ import { Resvg, initWasm } from "@resvg/resvg-wasm";
 import resvgWasm from "../node_modules/@resvg/resvg-wasm/index_bg.wasm";
 
 let wasmInitialized = false;
-let cachedFont: ArrayBuffer | null = null;
+let cachedFonts: ArrayBuffer[] | null = null;
 
-async function getFont(): Promise<ArrayBuffer> {
-  if (cachedFont) return cachedFont;
-  // Fetch Inter Bold from Google Fonts CDN (permissive SIL license)
-  const resp = await fetch("https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYMZhrib2Bg-4.ttf");
-  cachedFont = await resp.arrayBuffer();
-  return cachedFont;
+async function getFonts(): Promise<ArrayBuffer[]> {
+  if (cachedFonts) return cachedFonts;
+  const [blackResp, boldResp] = await Promise.all([
+    fetch("https://fonts.gstatic.com/s/rubik/v31/iJWZBXyIfDnIV5PNhY1KTN7Z-Yh-ro-1UA.ttf"),
+    fetch("https://fonts.gstatic.com/s/rubik/v31/iJWZBXyIfDnIV5PNhY1KTN7Z-Yh-4I-1UA.ttf"),
+  ]);
+  cachedFonts = [await blackResp.arrayBuffer(), await boldResp.arrayBuffer()];
+  return cachedFonts;
 }
 
 type Bindings = Env;
@@ -348,21 +350,29 @@ app.get("/api/og/:name", async (c) => {
     });
     if (nameOwner !== "0x0000000000000000000000000000000000000000") {
       subtitle = "registered";
-      ownerText = `${(nameOwner as string).slice(0, 6)}...${(nameOwner as string).slice(-4)}`;
-      // Try to get description and member badge
-      try {
-        const textValues = await client.readContract({
+      ownerText = nameOwner as string;
+      // Try ENS reverse resolution + text records in parallel
+      const [ensResult, textResult] = await Promise.allSettled([
+        getEthMainnetClient(c.env).getEnsName({ address: nameOwner as `0x${string}` }),
+        client.readContract({
           address: addr, abi: REGISTRY_ABI, functionName: "textMany",
           args: [name, ["description", "netlibrary.member"]],
-        });
+        }),
+      ]);
+      if (ensResult.status === "fulfilled" && ensResult.value) {
+        ownerText = ensResult.value;
+      }
+      if (textResult.status === "fulfilled") {
+        const textValues = textResult.value as string[];
         if (textValues[0]) description = String(textValues[0]).slice(0, 80);
         if (textValues[1]) memberBadge = `Net Library #${textValues[1]}`;
-      } catch { /* non-critical */ }
+      }
     }
   } catch { /* name not registered or invalid */ }
 
   const displayName = name.length > 16 ? name.slice(0, 14) + "..." : name;
   const nameFontSize = displayName.length > 10 ? 56 : displayName.length > 6 ? 72 : 88;
+  const ownerFontSize = ownerText.length > 30 ? 13 : 16;
 
   // Escape for SVG
   const svgEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -373,44 +383,36 @@ app.get("/api/og/:name", async (c) => {
       <stop offset="0%" stop-color="#050a05"/>
       <stop offset="100%" stop-color="#0a1a0a"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1200" y2="0">
-      <stop offset="0%" stop-color="#00e676"/>
-      <stop offset="100%" stop-color="#00c853"/>
-    </linearGradient>
   </defs>
   <rect width="1200" height="630" fill="url(#bg)"/>
-  <rect x="0" y="0" width="1200" height="5" fill="url(#accent)"/>
-  <rect x="0" y="625" width="1200" height="5" fill="url(#accent)" opacity="0.3"/>
+  <rect x="0" y="0" width="1200" height="5" fill="#00e676"/>
 
-  <!-- Grid pattern -->
-  <g opacity="0.04">
-    ${Array.from({length: 12}, (_, i) => `<line x1="${i * 100}" y1="0" x2="${i * 100}" y2="630" stroke="#00e676" stroke-width="1"/>`).join("")}
-    ${Array.from({length: 7}, (_, i) => `<line x1="0" y1="${i * 90}" x2="1200" y2="${i * 90}" stroke="#00e676" stroke-width="1"/>`).join("")}
-  </g>
+  <!-- Logo icon (top left) -->
+  <rect x="55" y="45" width="44" height="44" rx="8" fill="#000000" stroke="#00e676" stroke-width="3"/>
+  <text x="77" y="67" font-family="Rubik, sans-serif" font-size="24" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
 
-  <!-- Logo mark -->
-  <text x="80" y="80" font-family="Inter, sans-serif" font-size="40" fill="#00e676" font-weight="900" opacity="0.8">h</text>
-  <text x="1120" y="80" font-family="Inter, sans-serif" font-size="16" fill="#333" text-anchor="end">hazza.name</text>
+  <!-- Brand (top right) -->
+  <text x="1140" y="78" font-family="Rubik, sans-serif" font-size="20" font-weight="900" text-anchor="end" fill="#ffffff">hazza<tspan fill="#00e676">.name</tspan></text>
 
   <!-- Name -->
-  <text x="600" y="${description ? "250" : "280"}" font-family="Inter, sans-serif" font-size="${nameFontSize}" fill="#ffffff" font-weight="900" text-anchor="middle">${svgEsc(displayName)}<tspan fill="${statusColor}">.hazza</tspan></text>
+  <text x="600" y="${description ? "230" : "260"}" font-family="Rubik, sans-serif" font-size="${nameFontSize}" fill="#ffffff" font-weight="900" text-anchor="middle">${svgEsc(displayName)}</text>
 
   <!-- Status pill -->
-  <rect x="${600 - (subtitle.length * 6 + 20)}" y="${description ? "268" : "298"}" width="${subtitle.length * 12 + 40}" height="30" rx="15" fill="${statusColor}" opacity="0.15"/>
-  <text x="600" y="${description ? "289" : "319"}" font-family="Inter, sans-serif" font-size="14" fill="${statusColor}" text-anchor="middle" font-weight="700" letter-spacing="2">${subtitle.toUpperCase()}</text>
+  <rect x="${600 - (subtitle.length * 6 + 20)}" y="${description ? "260" : "290"}" width="${subtitle.length * 12 + 40}" height="30" rx="15" fill="${statusColor}" opacity="0.15"/>
+  <text x="600" y="${description ? "281" : "311"}" font-family="Rubik, sans-serif" font-size="14" fill="${statusColor}" text-anchor="middle" font-weight="700" letter-spacing="2">${subtitle.toUpperCase()}</text>
 
   <!-- Owner -->
-  ${ownerText ? `<text x="600" y="${description ? "330" : "360"}" font-family="Inter, sans-serif" font-size="16" fill="#445544" text-anchor="middle">${ownerText}</text>` : ""}
+  ${ownerText ? `<text x="600" y="${description ? "330" : "365"}" font-family="Rubik, sans-serif" font-size="${ownerFontSize}" fill="#445544" text-anchor="middle" font-weight="700">${svgEsc(ownerText)}</text>` : ""}
 
   <!-- Description -->
-  ${description ? `<text x="600" y="370" font-family="Inter, sans-serif" font-size="18" fill="#6b8f6b" text-anchor="middle">${svgEsc(description)}</text>` : ""}
+  ${description ? `<text x="600" y="380" font-family="Rubik, sans-serif" font-size="18" fill="#6b8f6b" text-anchor="middle" font-weight="700">${svgEsc(description)}</text>` : ""}
 
   <!-- Member badge -->
-  ${memberBadge ? `<text x="600" y="410" font-family="Inter, sans-serif" font-size="14" fill="#4a6b4a" text-anchor="middle">${svgEsc(memberBadge)}</text>` : ""}
+  ${memberBadge ? `<text x="600" y="420" font-family="Rubik, sans-serif" font-size="14" fill="#4a6b4a" text-anchor="middle" font-weight="700">${svgEsc(memberBadge)}</text>` : ""}
 
   <!-- Footer -->
-  <text x="600" y="568" font-family="Inter, sans-serif" font-size="18" fill="#2a3a2a" text-anchor="middle">onchain names on Base</text>
-  <text x="600" y="598" font-family="Inter, sans-serif" font-size="13" fill="#1a2a1a" text-anchor="middle">powered by x402 and Net Protocol</text>
+  <text x="600" y="555" font-family="Rubik, sans-serif" font-size="22" fill="#ffffff" font-weight="900" text-anchor="middle">immediately useful names</text>
+  <text x="600" y="590" font-family="Rubik, sans-serif" font-size="14" fill="#00e676" text-anchor="middle" font-weight="700">powered by x402 and Net Protocol</text>
 </svg>`;
 
   // Try PNG conversion via resvg, fall back to SVG
@@ -419,12 +421,12 @@ app.get("/api/og/:name", async (c) => {
       await initWasm(resvgWasm);
       wasmInitialized = true;
     }
-    const fontData = await getFont();
+    const fontData = await getFonts();
     const resvg = new Resvg(svg, {
       fitTo: { mode: "width", value: 1200 },
       font: {
-        fontBuffers: [new Uint8Array(fontData)],
-        defaultFontFamily: "Inter",
+        fontBuffers: fontData.map(f => new Uint8Array(f)),
+        defaultFontFamily: "Rubik",
       },
     });
     const pngData = resvg.render();
@@ -445,6 +447,106 @@ app.get("/api/og/:name", async (c) => {
       },
     });
   }
+});
+
+// 1200x1200 icon PNG for PFP use
+app.get("/api/icon", async (c) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+  <rect width="1200" height="1200" fill="#000000"/>
+  <rect x="300" y="300" width="600" height="600" rx="64" ry="64" fill="#000000" stroke="#00e676" stroke-width="12"/>
+  <text x="600" y="600" font-family="Rubik, sans-serif" font-size="360" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
+</svg>`;
+
+  try {
+    if (!wasmInitialized) {
+      await initWasm(resvgWasm);
+      wasmInitialized = true;
+    }
+    const fontData = await getFonts();
+    const resvg = new Resvg(svg, {
+      fitTo: { mode: "width", value: 1200 },
+      font: {
+        fontBuffers: fontData.map(f => new Uint8Array(f)),
+        defaultFontFamily: "Rubik",
+      },
+    });
+    const pngData = resvg.render();
+    const pngBuffer = pngData.asPng();
+
+    return new Response(pngBuffer, {
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+  } catch {
+    return new Response(svg, {
+      headers: {
+        "Content-Type": "image/svg+xml",
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+  }
+});
+
+// NFTs owned by address (for avatar picker)
+app.get("/api/nfts/:address", async (c) => {
+  const address = c.req.param("address") as `0x${string}`;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return c.json({ error: "Invalid address" }, 400);
+
+  const mainnet = getMainnetClient(c.env);
+  const nfts: { collection: string; tokenId: string; name: string; image: string }[] = [];
+
+  const collections = [
+    { name: "Exoskeleton", address: EXOSKELETON_ADDRESS },
+  ];
+
+  const normalizeImage = (url: string): string => {
+    if (!url) return "";
+    if (url.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + url.slice(7);
+    if (url.startsWith("ar://")) return "https://arweave.net/" + url.slice(5);
+    return url;
+  };
+
+  for (const col of collections) {
+    try {
+      const bal = await mainnet.readContract({
+        address: col.address, abi: EXOSKELETON_ABI, functionName: "balanceOf", args: [address],
+      }) as bigint;
+      const count = Math.min(Number(bal), 20);
+      for (let i = 0; i < count; i++) {
+        try {
+          const tokenId = await mainnet.readContract({
+            address: col.address, abi: EXOSKELETON_ABI, functionName: "tokenOfOwnerByIndex", args: [address, BigInt(i)],
+          }) as bigint;
+          const uri = await mainnet.readContract({
+            address: col.address, abi: EXOSKELETON_ABI, functionName: "tokenURI", args: [tokenId],
+          }) as string;
+          let image = "", nftName = "";
+          if (uri && uri.startsWith("data:")) {
+            try {
+              const b64 = uri.split(",")[1];
+              const json = JSON.parse(atob(b64));
+              image = normalizeImage(json.image || "");
+              nftName = json.name || "";
+            } catch { /* skip */ }
+          } else if (uri) {
+            try {
+              const metaRes = await fetch(normalizeImage(uri));
+              if (metaRes.ok) {
+                const json = await metaRes.json() as { image?: string; name?: string };
+                image = normalizeImage(json.image || "");
+                nftName = json.name || "";
+              }
+            } catch { /* skip */ }
+          }
+          if (image) nfts.push({ collection: col.name, tokenId: tokenId.toString(), name: nftName, image });
+        } catch { /* skip token */ }
+      }
+    } catch { /* skip collection */ }
+  }
+
+  return c.json({ nfts }, 200, { "Cache-Control": "public, max-age=300" });
 });
 
 // ERC-721 metadata (served by tokenURI base URL)
