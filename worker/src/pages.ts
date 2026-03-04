@@ -1862,6 +1862,7 @@ type ProfileData = {
   netProfile?: any;
   helixaData?: any;
   exoData?: any;
+  bankrData?: any;
 };
 
 const SOCIAL_LABELS: Record<string, { label: string; urlPrefix: string }> = {
@@ -2032,6 +2033,77 @@ export function profilePage(name: string, data: ProfileData | null): string {
         }
       }
       onchainBlocks.push(`<div style="margin-bottom:1rem"><div style="color:#6b8f6b;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem">Exoskeleton</div><div class="info-grid">${exoRows.join("")}</div><div style="text-align:right;margin-top:0.35rem;font-size:0.65rem;color:#444">100% onchain &middot; <a href="https://exoagent.xyz" style="color:#666">exoagent.xyz</a></div></div>`);
+    }
+
+    // Bankr Agent Profile subsection
+    const bankr = data.bankrData;
+    if (bankr && bankr.projectName) {
+      const bRows: string[] = [];
+      bRows.push(`<div class="agent-card"><div class="agent-label">Project</div><div class="agent-value" style="font-weight:700;color:#fff">${esc(String(bankr.projectName))}</div></div>`);
+      if (bankr.description) bRows.push(`<div class="agent-card" style="grid-column:1/-1"><div class="agent-label">Description</div><div class="agent-value" style="font-size:0.85rem;line-height:1.5">${esc(String(bankr.description))}</div></div>`);
+      if (bankr.tokenSymbol) bRows.push(`<div class="agent-card"><div class="agent-label">Token</div><div class="agent-value" style="font-weight:700;color:#00e676">$${esc(String(bankr.tokenSymbol))}</div></div>`);
+      if (bankr.marketCapUsd) bRows.push(`<div class="agent-card"><div class="agent-label">Market Cap</div><div class="agent-value">$${Number(bankr.marketCapUsd).toLocaleString()}</div></div>`);
+      if (bankr.weeklyRevenueWeth) bRows.push(`<div class="agent-card"><div class="agent-label">Weekly Revenue</div><div class="agent-value">${Number(bankr.weeklyRevenueWeth).toFixed(4)} WETH</div></div>`);
+      if (bankr.website) bRows.push(`<div class="agent-card"><div class="agent-label">Website</div><div class="agent-value"><a href="${safeHref(String(bankr.website))}" target="_blank" rel="noopener">${esc(String(bankr.website).replace(/^https?:\/\//, ""))}</a></div></div>`);
+      if (bankr.twitterUsername) bRows.push(`<div class="agent-card"><div class="agent-label">Twitter</div><div class="agent-value"><a href="https://x.com/${esc(String(bankr.twitterUsername))}" target="_blank" rel="noopener">@${esc(String(bankr.twitterUsername))}</a></div></div>`);
+
+      // Products (collapsible sub-dropdown)
+      let productsHtml = "";
+      if (bankr.products && bankr.products.length > 0) {
+        const pItems = bankr.products.map((p: any) => {
+          let item = `<div style="margin-bottom:0.5rem"><span style="font-weight:700;color:#fff">${esc(String(p.name))}</span>`;
+          if (p.description) item += `<div style="font-size:0.8rem;color:#6b8f6b;margin-top:0.15rem">${esc(String(p.description))}</div>`;
+          if (p.url) item += `<div style="font-size:0.75rem;margin-top:0.15rem"><a href="${safeHref(String(p.url))}" target="_blank" rel="noopener">${esc(String(p.url).replace(/^https?:\/\//, ""))}</a></div>`;
+          item += "</div>";
+          return item;
+        }).join("");
+        productsHtml = `<details style="margin-top:0.5rem"><summary style="font-size:0.75rem;color:#6b8f6b;cursor:pointer;font-weight:700">Products (${bankr.products.length})</summary><div style="margin-top:0.35rem;padding-left:0.5rem;border-left:2px solid #1a2e1a">${pItems}</div></details>`;
+      }
+
+      // Team (collapsible sub-dropdown)
+      let teamHtml = "";
+      if (bankr.teamMembers && bankr.teamMembers.length > 0) {
+        const tItems = bankr.teamMembers.map((t: any) => {
+          let item = `<div style="margin-bottom:0.5rem"><span style="font-weight:700;color:#fff">${esc(String(t.name))}</span>`;
+          if (t.role) item += ` <span style="font-size:0.75rem;color:#6b8f6b">${esc(String(t.role))}</span>`;
+          if (t.links && t.links.length > 0) {
+            const linkHtml = t.links.map((l: any) => `<a href="${safeHref(String(l.url))}" target="_blank" rel="noopener" style="font-size:0.7rem">${esc(String(l.type))}</a>`).join(" ");
+            item += `<div style="margin-top:0.1rem">${linkHtml}</div>`;
+          }
+          item += "</div>";
+          return item;
+        }).join("");
+        teamHtml = `<details style="margin-top:0.5rem"><summary style="font-size:0.75rem;color:#6b8f6b;cursor:pointer;font-weight:700">Team (${bankr.teamMembers.length})</summary><div style="margin-top:0.35rem;padding-left:0.5rem;border-left:2px solid #1a2e1a">${tItems}</div></details>`;
+      }
+
+      // Revenue sources (collapsible sub-dropdown)
+      let revenueHtml = "";
+      if (bankr.revenueSources && bankr.revenueSources.length > 0) {
+        const rItems = bankr.revenueSources.map((r: any) => {
+          let item = `<div style="margin-bottom:0.5rem"><span style="font-weight:700;color:#fff">${esc(String(r.name))}</span>`;
+          if (r.description) item += `<div style="font-size:0.8rem;color:#6b8f6b;margin-top:0.15rem">${esc(String(r.description))}</div>`;
+          item += "</div>";
+          return item;
+        }).join("");
+        revenueHtml = `<details style="margin-top:0.5rem"><summary style="font-size:0.75rem;color:#6b8f6b;cursor:pointer;font-weight:700">Revenue Sources (${bankr.revenueSources.length})</summary><div style="margin-top:0.35rem;padding-left:0.5rem;border-left:2px solid #1a2e1a">${rItems}</div></details>`;
+      }
+
+      // Recent updates (collapsible sub-dropdown)
+      let updatesHtml = "";
+      if (bankr.updates && bankr.updates.length > 0) {
+        const uItems = bankr.updates.slice(0, 5).map((u: any) => {
+          let item = `<div style="margin-bottom:0.5rem"><span style="font-weight:700;color:#fff">${esc(String(u.title))}</span>`;
+          if (u.timestamp) item += ` <span style="font-size:0.65rem;color:#444">${new Date(u.timestamp).toLocaleDateString()}</span>`;
+          if (u.content) item += `<div style="font-size:0.8rem;color:#6b8f6b;margin-top:0.15rem">${esc(String(u.content).slice(0, 200))}</div>`;
+          item += "</div>";
+          return item;
+        }).join("");
+        updatesHtml = `<details style="margin-top:0.5rem"><summary style="font-size:0.75rem;color:#6b8f6b;cursor:pointer;font-weight:700">Updates (${bankr.updates.length})</summary><div style="margin-top:0.35rem;padding-left:0.5rem;border-left:2px solid #1a2e1a">${uItems}</div></details>`;
+      }
+
+      const bankrSlug = bankr.slug ? esc(String(bankr.slug)) : "";
+      const bankrLink = bankrSlug ? `https://bankr.bot/agent/${bankrSlug}` : "https://bankr.bot";
+      onchainBlocks.push(`<div style="margin-bottom:1rem"><div style="color:#6b8f6b;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem">Bankr Profile</div><div class="info-grid">${bRows.join("")}</div>${productsHtml}${teamHtml}${revenueHtml}${updatesHtml}<div style="text-align:right;margin-top:0.35rem;font-size:0.65rem;color:#444"><a href="${esc(bankrLink)}" style="color:#666">bankr.bot</a></div></div>`);
     }
 
     // Build the unified Onchain Profile section (collapsible)

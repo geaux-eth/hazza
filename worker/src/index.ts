@@ -493,7 +493,7 @@ app.get("/api/icon", async (c) => {
 // 1200x1200 square share image for Farcaster Mini App embed
 app.get("/api/share", async (c) => {
   // Serve from CF edge cache if available
-  const cacheKey = new Request("https://hazza.name/api/share", { method: "GET" });
+  const cacheKey = new Request("https://hazza.name/api/share?v=2", { method: "GET" });
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
   if (cached) return cached;
@@ -501,17 +501,17 @@ app.get("/api/share", async (c) => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
   <rect width="1200" height="1200" fill="#0a0a0a"/>
 
-  <!-- Icon logo centered near top -->
-  <rect x="556" y="300" width="88" height="88" rx="14" fill="#0a0a0a" stroke="#00e676" stroke-width="5"/>
-  <text x="600" y="344" font-family="Rubik, sans-serif" font-size="48" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
+  <!-- Icon logo (vertically centered with text group) -->
+  <rect x="556" y="425" width="88" height="88" rx="14" fill="#0a0a0a" stroke="#00e676" stroke-width="5"/>
+  <text x="600" y="469" font-family="Rubik, sans-serif" font-size="48" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
 
   <!-- hazza.name large centered -->
-  <text x="600" y="530" font-family="Rubik, sans-serif" font-weight="900" text-anchor="middle">
-    <tspan font-size="96" fill="#ffffff">hazza</tspan><tspan font-size="96" fill="#00e676">.name</tspan>
+  <text x="600" y="685" font-family="Rubik, sans-serif" font-weight="900" text-anchor="middle">
+    <tspan font-size="140" fill="#ffffff">hazza</tspan><tspan font-size="140" fill="#00e676">.name</tspan>
   </text>
 
   <!-- immediately useful -->
-  <text x="600" y="620" font-family="Rubik, sans-serif" font-size="42" fill="#ffffff" font-weight="700" text-anchor="middle" opacity="0.85">immediately useful</text>
+  <text x="600" y="765" font-family="Rubik, sans-serif" font-size="52" fill="#ffffff" font-weight="700" text-anchor="middle" opacity="0.85">immediately useful</text>
 </svg>`;
 
   try {
@@ -1546,7 +1546,7 @@ app.get("*", async (c) => {
       ? (netProfileKey.startsWith("http") ? netProfileKey : `https://storedon.net/net/8453/storage/load/${nameOwner}/${encodeURIComponent(netProfileKey)}`)
       : null;
 
-    const [agentMetaResult, netProfileResult, helixaResult, exoResult, ensResult] = await Promise.allSettled([
+    const [agentMetaResult, netProfileResult, helixaResult, exoResult, ensResult, bankrResult] = await Promise.allSettled([
       // ERC-8004 agent metadata (SSRF-checked)
       agentUri && isAllowedUrl(agentUri)
         ? fetch(agentUri, { headers: { Accept: "application/json" } }).then(r => r.ok ? r.json() : null)
@@ -1596,6 +1596,10 @@ app.get("*", async (c) => {
         const ensName = await ethClient.getEnsName({ address: nameOwner });
         return ensName || null;
       })(),
+      // Bankr agent profile
+      fetch(`https://api.bankr.bot/agent-profiles/${(nameOwner as string).toLowerCase()}`, {
+        headers: { Accept: "application/json" },
+      }).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
 
     const agentMeta = agentMetaResult.status === "fulfilled" ? agentMetaResult.value : null;
@@ -1603,6 +1607,7 @@ app.get("*", async (c) => {
     const helixaData = helixaResult.status === "fulfilled" ? helixaResult.value : null;
     const exoData = exoResult.status === "fulfilled" ? exoResult.value : null;
     const ownerEns = ensResult.status === "fulfilled" ? ensResult.value : null;
+    const bankrData = bankrResult.status === "fulfilled" ? bankrResult.value : null;
 
     return c.html(
       profilePage(name, {
@@ -1621,6 +1626,7 @@ app.get("*", async (c) => {
         netProfile,
         helixaData,
         exoData,
+        bankrData,
       })
     );
   } catch {
