@@ -32,6 +32,20 @@ const STYLES = `
   }
   a { color: #00e676; text-decoration: none; }
   a:hover { text-decoration: underline; }
+  @keyframes statusPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .status-pill {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    white-space: nowrap;
+    animation: statusPulse 3s ease-in-out infinite;
+  }
+  .status-pill.expired { animation: none; }
   nav {
     display: flex;
     justify-content: space-between;
@@ -214,13 +228,13 @@ const STYLES = `
   }
   .status-badge {
     display: inline-block;
-    padding: 0.2rem 0.75rem;
-    border-radius: 20px;
-    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    font-size: 0.7rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-top: 0.75rem;
+    letter-spacing: 0.03em;
+    vertical-align: middle;
   }
   .status-active { background: #00e676; color: #000; }
   .status-grace { background: #ffab00; color: #000; }
@@ -372,16 +386,21 @@ const STYLES = `
   @media (max-width: 600px) {
     nav { padding: 0.75rem 1rem 0; flex-wrap: wrap; }
     .hamburger { display: block; }
+    nav { position: relative; }
     nav .links {
       display: none;
       flex-direction: column;
-      width: 100%;
+      width: calc(100% - 2rem);
       background: #111;
       border: 1px solid #1a2e1a;
       border-radius: 8px;
       padding: 0.75rem;
-      margin-top: 0.5rem;
       gap: 0.5rem;
+      position: absolute;
+      top: 100%;
+      left: 1rem;
+      z-index: 1000;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.6);
     }
     nav .links.open { display: flex; }
     nav .links a { font-size: 0.9rem; padding: 0.4rem 0; }
@@ -398,7 +417,8 @@ const STYLES = `
     .search-box input { font-size: 16px; padding: 0.65rem 0.75rem; }
     .search-box button { padding: 0.65rem 1rem; font-size: 16px; }
     .info-row { flex-wrap: wrap; gap: 0.25rem; }
-    .info-row .value { font-size: 0.8rem; }
+    .info-row .label { min-width: 80px; }
+    .info-row .value { font-size: 0.8rem; word-break: break-word; }
     .social-link { font-size: 0.8rem; padding: 0.35rem 0.7rem; }
   }
 `;
@@ -417,19 +437,26 @@ function searchScript(explorerHost: string) { return `
   async function search() {
     const raw = input.value.trim().toLowerCase();
     const name = sanitizeName(raw);
-    if (!name) return;
+    if (!name) {
+      result.className = 'result show';
+      result.innerHTML = '<div style="text-align:center;color:#ff5252;font-size:0.85rem">your name is also your web address — only letters, numbers, and hyphens work in URLs</div>';
+      return;
+    }
     result.className = 'result show';
     result.textContent = 'Checking...';
+    // Hide feature block once user searches
+    var fb = document.getElementById('landing-features');
+    if (fb) fb.style.display = 'none';
     try {
       const avail = await fetch('/api/available/' + encodeURIComponent(name)).then(r => r.json());
       if (avail.available) {
-        result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span class="available">.hazza.name</span> is available! '
-          + '<a href="/register?name=' + encodeURIComponent(name) + '" style="display:inline-block;padding:0.3rem 1rem;background:#00e676;color:#000;border-radius:6px;font-weight:700;font-size:0.85rem;vertical-align:middle;margin-left:0.5rem;text-decoration:none">Register</a>';
+        result.innerHTML = '<div style="text-align:center"><span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span class="available">.hazza.name</span><br><span style="color:#00e676;font-size:0.85rem">is available</span></div>'
+          + '<div style="text-align:center;margin-top:1.25rem"><a href="/register?name=' + encodeURIComponent(name) + '" style="display:inline-block;padding:0.6rem 2rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;font-size:1rem;text-decoration:none">Register</a></div>';
       } else {
         const res = await fetch('/api/resolve/' + encodeURIComponent(name)).then(r => r.json());
-        result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span class="taken">.hazza.name</span> is taken. '
-          + 'Owner: <a href="https://${explorerHost}/address/' + escHtml(res.owner) + '">'
-          + escHtml(res.owner.slice(0, 6) + '...' + res.owner.slice(-4)) + '</a>';
+        result.innerHTML = '<div style="text-align:center"><span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span class="taken">.hazza.name</span><br><span style="color:#ff5252;font-size:0.85rem">is taken</span></div>'
+          + '<div style="text-align:center;margin-top:0.5rem;color:#6b8f6b;font-size:0.85rem">Owner: <a href="https://${explorerHost}/address/' + escHtml(res.owner) + '" style="color:#6b8f6b">'
+          + escHtml(res.owner.slice(0, 6) + '...' + res.owner.slice(-4)) + '</a></div>';
       }
     } catch (e) {
       result.textContent = 'Error checking name. Try again.';
@@ -461,56 +488,117 @@ const NAV_SCRIPT = `
     var hamburger = document.getElementById('hamburger-btn');
     var navLinks = document.getElementById('nav-links');
     if (hamburger && navLinks) {
-      hamburger.addEventListener('click', function() {
+      hamburger.addEventListener('click', function(e) {
+        e.stopPropagation();
         navLinks.classList.toggle('open');
+      });
+      // Close menu when tapping outside
+      document.addEventListener('click', function(e) {
+        if (navLinks.classList.contains('open') && !navLinks.contains(e.target)) {
+          navLinks.classList.remove('open');
+        }
+      });
+      // Close menu when clicking a nav link
+      navLinks.querySelectorAll('a').forEach(function(link) {
+        link.addEventListener('click', function() {
+          navLinks.classList.remove('open');
+        });
       });
     }
 
-    // Wallet connect
+    // Global wallet state — pages read this instead of relying on events alone
+    window.__hazza_wallet = null;
+
+    // Wallet connect (single source of truth for the entire app)
     var connectBtn = document.getElementById('nav-connect-btn');
     if (!connectBtn) return;
 
     function truncAddr(a) { return a.slice(0, 6) + '...' + a.slice(-4); }
 
     function setConnected(addr) {
+      window.__hazza_wallet = addr;
       connectBtn.textContent = truncAddr(addr);
       connectBtn.classList.add('connected');
       try { sessionStorage.setItem('hazza_wallet', addr); } catch(e) {}
     }
 
+    function doDisconnect() {
+      window.__hazza_wallet = null;
+      connectBtn.textContent = 'connect';
+      connectBtn.classList.remove('connected');
+      try { sessionStorage.removeItem('hazza_wallet'); } catch(e) {}
+      // Revoke wallet permission if wallet supports it
+      if (window.ethereum && window.ethereum.request) {
+        window.ethereum.request({
+          method: 'wallet_revokePermissions',
+          params: [{ eth_accounts: {} }]
+        }).catch(function() {});
+      }
+      window.dispatchEvent(new CustomEvent('hazza_wallet_disconnected'));
+    }
+
+    function doConnect() {
+      if (!window.ethereum) { alert('No wallet detected. Install MetaMask or open in a wallet browser.'); return; }
+      window.ethereum.request({ method: 'eth_requestAccounts' })
+        .then(function(accounts) {
+          if (accounts && accounts[0]) {
+            setConnected(accounts[0]);
+            window.dispatchEvent(new CustomEvent('hazza_wallet_connected', { detail: { address: accounts[0] } }));
+          }
+        })
+        .catch(function() {});
+    }
+
+    connectBtn.addEventListener('click', function() {
+      if (connectBtn.classList.contains('connected')) {
+        doDisconnect();
+      } else {
+        doConnect();
+      }
+    });
+
     // Check for existing connection
-    if (typeof window.ethereum !== 'undefined') {
+    function initWallet() {
+      if (typeof window.ethereum === 'undefined') return false;
       var saved = null;
       try { saved = sessionStorage.getItem('hazza_wallet'); } catch(e) {}
       if (saved) {
         setConnected(saved);
+        // Verify the wallet still has this account
+        window.ethereum.request({ method: 'eth_accounts' }).then(function(accounts) {
+          if (accounts && accounts[0]) {
+            setConnected(accounts[0]);
+          }
+        }).catch(function() {});
+        return true;
       } else if (window.ethereum.selectedAddress) {
         setConnected(window.ethereum.selectedAddress);
+        return true;
       }
+      return false;
+    }
 
-      connectBtn.addEventListener('click', function() {
-        if (connectBtn.classList.contains('connected')) return;
-        window.ethereum.request({ method: 'eth_requestAccounts' })
-          .then(function(accounts) {
-            if (accounts && accounts[0]) setConnected(accounts[0]);
-          })
-          .catch(function() {});
-      });
+    // Try immediately, retry for late ethereum injection
+    if (!initWallet()) {
+      setTimeout(initWallet, 500);
+      setTimeout(initWallet, 1500);
+    }
 
-      // Listen for account changes
+    // Listen for EIP-6963 provider announcements (modern MetaMask)
+    window.addEventListener('eip6963:announceProvider', function() {
+      if (!connectBtn.classList.contains('connected')) setTimeout(initWallet, 100);
+    });
+
+    // Listen for account changes from wallet
+    if (typeof window.ethereum !== 'undefined') {
       window.ethereum.on && window.ethereum.on('accountsChanged', function(accounts) {
         if (accounts && accounts[0]) {
           setConnected(accounts[0]);
+          window.dispatchEvent(new CustomEvent('hazza_wallet_connected', { detail: { address: accounts[0] } }));
         } else {
-          connectBtn.textContent = 'connect';
-          connectBtn.classList.remove('connected');
-          try { sessionStorage.removeItem('hazza_wallet'); } catch(e) {}
+          doDisconnect();
         }
       });
-    } else {
-      connectBtn.textContent = 'no wallet';
-      connectBtn.style.opacity = '0.5';
-      connectBtn.style.cursor = 'default';
     }
   })();
 `;
@@ -525,7 +613,7 @@ function profileShell(name: string, title: string, description: string, body: st
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(title)}</title>
   <meta name="description" content="${esc(description)}">
   <meta property="og:title" content="${esc(title)}">
@@ -552,7 +640,8 @@ function profileShell(name: string, title: string, description: string, body: st
   <div class="container">
     ${body}
     <div class="footer">
-      <p>Powered by <a href="https://x402.org">x402</a> and <a href="https://netprotocol.app">Net Protocol</a> on <a href="https://base.org">Base</a></p>
+      <p>Built on <a href="https://base.org">Base</a></p>
+      <p>Powered by <a href="https://x402.org">x402</a> and <a href="https://netprotocol.app">Net Protocol</a></p>
     </div>
   </div>
   ${externals}
@@ -568,7 +657,7 @@ function shell(title: string, description: string, body: string, script?: string
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(title)}</title>
   <meta name="description" content="${esc(description)}">
   <meta property="og:title" content="${esc(title)}">
@@ -588,7 +677,8 @@ function shell(title: string, description: string, body: string, script?: string
   <div class="container">
     ${body}
     <div class="footer">
-      <p>Powered by <a href="https://x402.org">x402</a> and <a href="https://netprotocol.app">Net Protocol</a> on <a href="https://base.org">Base</a></p>
+      <p>Built on <a href="https://base.org">Base</a></p>
+      <p>Powered by <a href="https://x402.org">x402</a> and <a href="https://netprotocol.app">Net Protocol</a></p>
     </div>
   </div>
   ${externals}
@@ -606,8 +696,8 @@ function shell(title: string, description: string, body: string, script?: string
 export function landingPage(chainId?: string): string {
   const explorerHost = chainId === "84532" ? "sepolia.basescan.org" : "basescan.org";
   return shell(
-    "hazza \u2014 Your Onchain Name",
-    "One x402 payment. Your name, your website, your agent, your DNS \u2014 all onchain on Base, instantly.",
+    "hazza \u2014 immediately useful names",
+    "Online meets onchain. A name, a website, a verified onchain identity, and agent registration \u2014 built on Base with Net Protocol.",
     `
     <div class="header">
       <h1>hazza<span>.name</span></h1>
@@ -620,7 +710,7 @@ export function landingPage(chainId?: string): string {
     </div>
     <div class="result" id="result"></div>
 
-    <div class="feature-block" style="margin-top:1.5rem">
+    <div id="landing-features" class="feature-block" style="margin-top:1.5rem">
       <div style="display:grid;gap:1rem">
         <div>
           <div class="feature-title">Profile</div>
@@ -632,7 +722,7 @@ export function landingPage(chainId?: string): string {
         </div>
         <div>
           <div class="feature-title">API</div>
-          <p>Register from any HTTP client via <a href="https://x402.org" style="font-weight:700">x402</a>. Pay USDC, get a name. No wallet extension needed.</p>
+          <p>Register from any HTTP client via the <a href="/docs#x402" style="font-weight:700">registration API</a>. Pay USDC, get a name. No wallet extension needed.</p>
         </div>
       </div>
     </div>`,
@@ -678,24 +768,49 @@ const REGISTER_SCRIPT = `
     el.style.display = 'block';
   }
 
+  function showSuccess(name) {
+    // Hide everything above the success section
+    $('checkout-steps').style.display = 'none';
+    $('checkout-btn').style.display = 'none';
+    $('status').style.display = 'none';
+    var nameEl = $('reg-name'); if (nameEl) nameEl.style.display = 'none';
+    var fcb = $('free-claim-banner'); if (fcb) fcb.style.display = 'none';
+    var ens = $('ens-suggestion'); if (ens) ens.style.display = 'none';
+    var qd = $('quote-details'); if (qd) qd.style.display = 'none';
+    var qt = $('quote-total'); if (qt) qt.parentElement.style.display = 'none';
+    // Show success
+    $('success-section').style.display = 'block';
+    $('success-name').textContent = name + '.hazza.name';
+    $('success-link').href = 'https://' + name + '.hazza.name';
+    $('success-link').textContent = 'view ' + name + '.hazza.name';
+  }
+
   // --- Search on the register page ---
   async function regSearch() {
     const raw = $('reg-search-input').value.trim().toLowerCase();
     const name = sanitizeName(raw);
-    if (!name) return;
+    if (!name) {
+      const result = $('reg-search-result');
+      result.className = 'result show';
+      result.innerHTML = '<div style="text-align:center;color:#ff5252;font-size:0.85rem">your name is also your web address — only letters, numbers, and hyphens work in URLs</div>';
+      return;
+    }
     const result = $('reg-search-result');
     result.className = 'result show';
     result.textContent = 'Checking...';
     try {
       const avail = await fetch('/api/available/' + encodeURIComponent(name)).then(r => r.json());
+      // Hide pricing info after search
+      var pricingInfo = $('reg-pricing-info');
+      if (pricingInfo) pricingInfo.style.display = 'none';
       if (avail.available) {
-        result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span style="color:#00e676">.hazza.name</span> is available! '
-          + '<a href="/register?name=' + encodeURIComponent(name) + '" style="display:inline-block;padding:0.3rem 1rem;background:#00e676;color:#000;border-radius:6px;font-weight:700;font-size:0.85rem;vertical-align:middle;margin-left:0.5rem;text-decoration:none">Register</a>';
+        result.innerHTML = '<div style="text-align:center"><span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span style="color:#00e676">.hazza.name</span><br><span style="color:#00e676;font-size:0.85rem">is available</span></div>'
+          + '<div style="text-align:center;margin-top:1.25rem"><a href="/register?name=' + encodeURIComponent(name) + '" style="display:inline-block;padding:0.6rem 2rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;font-size:1rem;text-decoration:none">Register</a></div>';
       } else {
         const res = await fetch('/api/resolve/' + encodeURIComponent(name)).then(r => r.json());
-        result.innerHTML = '<span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span style="color:#ff5252">.hazza.name</span> is taken. '
-          + 'Owner: <a href="https://' + (CHAIN_ID === 84532 ? 'sepolia.basescan.org' : 'basescan.org') + '/address/' + escHtml(res.owner) + '">'
-          + escHtml(res.owner.slice(0, 6) + '...' + res.owner.slice(-4)) + '</a>';
+        result.innerHTML = '<div style="text-align:center"><span style="color:#fff;font-weight:700">' + escHtml(name) + '</span><span style="color:#ff5252">.hazza.name</span><br><span style="color:#ff5252;font-size:0.85rem">is taken</span></div>'
+          + '<div style="text-align:center;margin-top:0.5rem;color:#6b8f6b;font-size:0.85rem">Owner: <a href="https://' + (CHAIN_ID === 84532 ? 'sepolia.basescan.org' : 'basescan.org') + '/address/' + escHtml(res.owner) + '" style="color:#6b8f6b">'
+          + escHtml(res.owner.slice(0, 6) + '...' + res.owner.slice(-4)) + '</a></div>';
       }
     } catch (e) {
       result.textContent = 'Error checking name. Try again.';
@@ -719,8 +834,6 @@ const REGISTER_SCRIPT = `
         $('reg-checkout-section').innerHTML = '<p style="color:#ff5252;text-align:center">' + escHtml(nameParam) + '.hazza.name is already taken. <a href="/register">Try another name</a></p>';
         return;
       }
-      $('reg-price').textContent = 'from FREE';
-      $('reg-renewal').textContent = '1st name free + gas, then $5';
       $('connect-section').style.display = 'block';
     } catch (e) {
       showStatus('Error loading name info. Try again.', true);
@@ -750,36 +863,33 @@ const REGISTER_SCRIPT = `
           provider = new ethers.BrowserProvider(window.ethereum);
           signer = await provider.getSigner();
         } catch (switchErr) {
-          if (switchErr.code === 4902) {
-            try {
-              await window.ethereum.request({
-                method: 'wallet_addEthereumChain',
-                params: [{
-                  chainId: '0x' + CHAIN_ID.toString(16),
-                  chainName: CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base',
-                  nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
-                  rpcUrls: [CHAIN_ID === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
-                  blockExplorerUrls: [CHAIN_ID === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
-                }],
-              });
-              provider = new ethers.BrowserProvider(window.ethereum);
-              signer = await provider.getSigner();
-            } catch (addErr) {
-              showStatus('Could not add the chain. Please add Base Sepolia manually.', true);
-              return;
-            }
-          } else {
-            showStatus('Please switch to ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' in your wallet.', true);
+          // Try adding the chain (works for 4902 and other wallet-specific error codes)
+          try {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: '0x' + CHAIN_ID.toString(16),
+                chainName: CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base',
+                nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                rpcUrls: [CHAIN_ID === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
+                blockExplorerUrls: [CHAIN_ID === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
+              }],
+            });
+            provider = new ethers.BrowserProvider(window.ethereum);
+            signer = await provider.getSigner();
+          } catch (addErr) {
+            showStatus('Please add ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' to your wallet and try again.', true);
             return;
           }
         }
       }
 
-      $('wallet-addr').textContent = userAddress.slice(0, 6) + '...' + userAddress.slice(-4);
-      $('wallet-addr').style.display = 'inline';
-      $('connect-btn').textContent = 'Connected';
-      $('connect-btn').disabled = true;
-      $('connect-btn').style.opacity = '0.6';
+      try { sessionStorage.setItem('hazza_wallet', userAddress); } catch(e) {}
+
+      // Hide connect section and pre-connect info entirely
+      $('connect-section').style.display = 'none';
+      var pci = $('pre-connect-info');
+      if (pci) pci.style.display = 'none';
 
       // Check ENS name suggestions (non-blocking)
       fetch('/api/ens-names/' + userAddress).then(r => r.json()).then(function(data) {
@@ -896,17 +1006,7 @@ const REGISTER_SCRIPT = `
         if (!regRes.ok) {
           throw new Error(regData.error || regData.detail || 'Registration failed');
         }
-        setStep(2, 'done');
-        setStep(3, 'done');
-        showStatus('', false);
-        $('checkout-steps').style.display = 'none';
-        $('success-section').style.display = 'block';
-        $('success-name').textContent = nameParam + '.hazza.name';
-        $('success-link').href = 'https://' + nameParam + '.hazza.name';
-        $('success-link').textContent = 'view ' + nameParam + '.hazza.name';
-        $('success-manage').href = '/manage?name=' + encodeURIComponent(nameParam);
-        if ($('success-sell')) $('success-sell').href = '/marketplace?sell=' + encodeURIComponent(nameParam);
-        $('checkout-btn').style.display = 'none';
+        showSuccess(nameParam);
         return;
       }
 
@@ -959,16 +1059,7 @@ const REGISTER_SCRIPT = `
       setStep(2, 'done');
 
       // Step 3: Done
-      setStep(3, 'done');
-      showStatus('', false);
-      $('checkout-steps').style.display = 'none';
-      $('success-section').style.display = 'block';
-      $('success-name').textContent = nameParam + '.hazza.name';
-      $('success-link').href = 'https://' + nameParam + '.hazza.name';
-      $('success-link').textContent = 'view ' + nameParam + '.hazza.name';
-      $('success-manage').href = '/manage?name=' + encodeURIComponent(nameParam);
-      if ($('success-sell')) $('success-sell').href = '/marketplace?sell=' + encodeURIComponent(nameParam);
-      $('checkout-btn').style.display = 'none';
+      showSuccess(nameParam);
 
     } catch (e) {
       const msg = e.reason || e.message || 'Transaction failed';
@@ -978,19 +1069,62 @@ const REGISTER_SCRIPT = `
   }
 
   // --- Init ---
-  $('connect-btn')?.addEventListener('click', connectWallet);
   $('checkout-btn')?.addEventListener('click', checkout);
   const regSearchBtn = $('reg-search-btn');
   const regSearchInput = $('reg-search-input');
   if (regSearchBtn) regSearchBtn.addEventListener('click', regSearch);
   if (regSearchInput) regSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') regSearch(); });
   loadName();
+
+  // Listen for wallet connections from nav bar
+  window.addEventListener('hazza_wallet_connected', function(e) {
+    if (e.detail && e.detail.address && !userAddress) {
+      connectWallet();
+    }
+  });
+
+  // Listen for disconnects
+  window.addEventListener('hazza_wallet_disconnected', function() {
+    userAddress = null; signer = null; provider = null;
+    $('connect-section').style.display = 'block';
+    $('checkout-section').style.display = 'none';
+    var pci = $('pre-connect-info');
+    if (pci) pci.style.display = '';
+  });
+
+  // Auto-reconnect: check nav global first, then sessionStorage
+  function tryAutoReconnect() {
+    // Check if nav already connected (handles race where event fired before listener)
+    if (window.__hazza_wallet && !userAddress) {
+      connectWallet();
+      return true;
+    }
+    if (!window.ethereum) return false;
+    var saved = null;
+    try { saved = sessionStorage.getItem('hazza_wallet'); } catch(e) {}
+    if (saved && !userAddress) {
+      connectWallet();
+      return true;
+    }
+    return false;
+  }
+  if (!tryAutoReconnect()) {
+    setTimeout(function() {
+      if (!tryAutoReconnect()) {
+        setTimeout(function() { tryAutoReconnect(); }, 1500);
+      }
+    }, 500);
+  }
+  // EIP-6963 support
+  window.addEventListener('eip6963:announceProvider', function() {
+    if (!userAddress) tryAutoReconnect();
+  });
 `;
 
 export function registerPage(registryAddress: string, usdcAddress: string, chainId: string): string {
   return shell(
-    "hazza \u2014 Register",
-    "Register a hazza name. Connect your wallet, pay with USDC, and get your onchain name instantly.",
+    "hazza \u2014 immediately useful names",
+    "Register a name. Get an onchain website, agent endpoint, and more \u2014 first name free.",
     `<div id="hazza-config" data-registry="${registryAddress}" data-usdc="${usdcAddress}" data-chainid="${chainId}" style="display:none"></div>
 
     <div class="header">
@@ -1013,9 +1147,10 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
         <button id="reg-search-btn">Search</button>
       </div>
       <div class="result" id="reg-search-result"></div>
-      <div style="margin-top:1.5rem;color:#6b8f6b;font-size:0.9rem;line-height:1.7;text-align:center">
-        <p><strong style="color:#00e676">1st name free</strong> + gas. additional names <strong style="color:#fff">$5</strong>. 1 year included.</p>
-        <p style="margin-top:0.5rem">renew for $2/yr after that. pay with USDC on Base.</p>
+      <div id="reg-pricing-info" style="margin-top:1.5rem;color:#6b8f6b;font-size:0.9rem;line-height:1.8;text-align:center">
+        <p style="margin:0"><strong style="color:#00e676">your first name is <span style="color:#fff">free</span></strong></p>
+        <p style="margin:0.25rem 0 0 0">just pay gas — 1 year included</p>
+        <p style="margin:0.75rem 0 0 0;color:#fff;font-size:0.8rem">additional names $5</p>
       </div>
     </div>
 
@@ -1025,14 +1160,13 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
       <h2 id="reg-name" style="font-weight:900;color:#fff;font-size:1.5rem;word-break:break-word"></h2>
     </div>
 
-    <div style="text-align:center;margin-bottom:1.5rem">
-      <span id="reg-price" style="font-size:2rem;font-weight:900;color:#fff"></span>
-      <span id="reg-renewal" style="color:#6b8f6b;font-size:0.9rem;margin-left:0.5rem"></span>
+    <div id="pre-connect-info" style="text-align:center;margin-bottom:1.5rem">
+      <p style="color:#6b8f6b;font-size:0.9rem;margin:0 0 0.25rem 0">your first name is free — just pay gas</p>
+      <p style="color:#fff;font-size:0.8rem;margin:0">additional names $5</p>
     </div>
 
     <div id="connect-section" style="display:none;text-align:center;margin-bottom:1.5rem">
-      <button id="connect-btn" style="padding:0.75rem 2rem;background:#00e676;color:#000;border:none;border-radius:8px;font-weight:700;font-size:1rem;cursor:pointer;font-family:'Rubik',sans-serif">Connect Wallet</button>
-      <span id="wallet-addr" style="display:none;color:#6b8f6b;font-size:0.85rem;margin-left:1rem"></span>
+      <p style="color:#444;font-size:0.85rem">tap <strong style="color:#00e676">connect</strong> in the menu to continue</p>
     </div>
 
     <div id="checkout-section" style="display:none">
@@ -1068,11 +1202,12 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
       <div id="success-section" style="display:none;text-align:center;margin-top:2rem;padding:1.5rem;background:#0d1a0d;border:1px solid #00e676;border-radius:12px">
         <p style="color:#00e676;font-weight:900;font-size:1.4rem;margin-bottom:0.5rem">registered!</p>
         <p id="success-name" style="color:#fff;font-weight:700;font-size:1.1rem;margin-bottom:1rem"></p>
-        <a id="success-link" href="#" style="display:inline-block;padding:0.75rem 2rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;text-decoration:none;margin-bottom:0.5rem">view your page</a>
-        <div style="display:flex;justify-content:center;gap:1.5rem;margin-top:0.75rem">
-          <a id="success-manage" href="#" style="color:#6b8f6b;font-size:0.85rem">manage &rarr;</a>
-          <a id="success-sell" href="/marketplace" style="color:#6b8f6b;font-size:0.85rem">list on marketplace &rarr;</a>
-          <a href="/dashboard" style="color:#6b8f6b;font-size:0.85rem">dashboard &rarr;</a>
+        <a id="success-link" href="#" style="display:inline-block;padding:0.75rem 2rem;background:#00e676;color:#000;border-radius:8px;font-weight:700;text-decoration:none;margin-bottom:0.75rem">view your page</a>
+        <div style="margin-top:0.75rem">
+          <a href="/dashboard" style="color:#6b8f6b;font-size:0.85rem">go to dashboard &rarr;</a>
+        </div>
+        <div style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid #1a2e1a">
+          <a href="/register" style="display:inline-block;padding:0.6rem 1.5rem;background:transparent;color:#00e676;border:1px solid #00e676;border-radius:8px;font-weight:700;text-decoration:none;font-size:0.9rem">register another name</a>
         </div>
       </div>
     </div>
@@ -1139,7 +1274,6 @@ const MANAGE_SCRIPT = `
         $('manage-body').innerHTML = '<p style="color:#ff5252;text-align:center">' + escHtml(nameParam) + '.hazza.name is not registered. <a href="/register?name=' + encodeURIComponent(nameParam) + '">Register it</a></p>';
         return;
       }
-      $('connect-section').style.display = 'block';
 
       // Fill current values
       const t = profileData.texts || {};
@@ -1168,6 +1302,13 @@ const MANAGE_SCRIPT = `
           ? 'Your name is in the grace period. Renew at normal price.'
           : 'Your name is in redemption. Renew with a $10 penalty.';
       }
+
+      // If wallet is already connected (from nav or session), auto-connect now that profile is loaded
+      if (!userAddress && (window.__hazza_wallet || sessionStorage.getItem('hazza_wallet'))) {
+        connectWallet();
+      } else if (!userAddress) {
+        $('connect-section').style.display = 'block';
+      }
     } catch (e) {
       showMsg('Error loading profile.', true);
     }
@@ -1194,30 +1335,34 @@ const MANAGE_SCRIPT = `
           });
           provider = new ethers.BrowserProvider(window.ethereum);
           signer = await provider.getSigner();
-        } catch (e) {
-          if (e.code === 4902) {
-            try {
-              await window.ethereum.request({
-                method: 'wallet_addEthereumChain',
-                params: [{
-                  chainId: '0x' + CHAIN_ID.toString(16),
-                  chainName: CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base',
-                  nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
-                  rpcUrls: [CHAIN_ID === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
-                  blockExplorerUrls: [CHAIN_ID === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
-                }],
-              });
-              provider = new ethers.BrowserProvider(window.ethereum);
-              signer = await provider.getSigner();
-            } catch (addErr) {
-              showMsg('Could not add the chain. Please add it manually.', true);
-              return;
-            }
-          } else {
-            showMsg('Please switch to ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' in your wallet.', true);
+        } catch (switchErr) {
+          try {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: '0x' + CHAIN_ID.toString(16),
+                chainName: CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base',
+                nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                rpcUrls: [CHAIN_ID === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
+                blockExplorerUrls: [CHAIN_ID === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
+              }],
+            });
+            provider = new ethers.BrowserProvider(window.ethereum);
+            signer = await provider.getSigner();
+          } catch (addErr) {
+            showMsg('Please add ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' to your wallet and try again.', true);
             return;
           }
         }
+      }
+
+      try { sessionStorage.setItem('hazza_wallet', userAddress); } catch(e) {}
+
+      // Wait for profile data if not loaded yet
+      if (!profileData || !profileData.owner) {
+        $('connect-section').style.display = 'none';
+        showMsg('Loading profile...', false);
+        return;
       }
 
       // Check if connected wallet is owner or operator
@@ -1228,17 +1373,16 @@ const MANAGE_SCRIPT = `
         return;
       }
 
-      $('wallet-addr').textContent = userAddress.slice(0, 6) + '...' + userAddress.slice(-4);
-      $('wallet-addr').style.display = 'inline';
-      $('connect-btn').textContent = 'Connected';
-      $('connect-btn').disabled = true;
-      $('connect-btn').style.opacity = '0.6';
+      // Hide connect button, show edit sections
+      $('connect-section').style.display = 'none';
       $('edit-section').style.display = 'block';
       $('actions-section').style.display = 'block';
 
       // Only owner can transfer (not operators)
       if (isOwner) {
         $('transfer-section').style.display = 'block';
+        // Load offers for this name
+        loadNameOffers();
       }
 
       // Load My Names
@@ -1390,6 +1534,37 @@ const MANAGE_SCRIPT = `
     }
   }
 
+  // --- Load offers for this name ---
+  async function loadNameOffers() {
+    const offersSection = $('offers-section');
+    const offersList = $('name-offers-list');
+    if (!offersSection || !offersList) return;
+    try {
+      const res = await fetch('/api/marketplace/offers/' + encodeURIComponent(nameParam));
+      const data = await res.json();
+      const offers = data.offers || [];
+      offersSection.style.display = 'block';
+      if (offers.length === 0) {
+        offersList.innerHTML = '<p style="color:#444;font-size:0.85rem">No offers on this name yet.</p>';
+        return;
+      }
+      let html = '';
+      offers.forEach(function(o) {
+        const brokerTag = o.broker ? ' <span style="font-size:0.65rem;background:#1a2e1a;color:#00e676;padding:0.1rem 0.3rem;border-radius:4px">brokered</span>' : '';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid #1a2e1a">'
+          + '<div>'
+          + '<span style="font-weight:700;color:#00e676">' + escHtml(String(o.price)) + ' ' + escHtml(o.currency || 'ETH') + '</span>' + brokerTag
+          + '<div style="font-size:0.75rem;color:#6b8f6b">From: ' + (o.offerer ? escHtml(o.offerer.slice(0,6) + '...' + o.offerer.slice(-4)) : '?') + ' · Expires: ' + (o.expiresAt ? new Date(o.expiresAt * 1000).toLocaleDateString() : '—') + '</div>'
+          + '</div>'
+          + '<a href="/marketplace?tab=offers" style="padding:0.4rem 1rem;background:#00e676;color:#000;border-radius:6px;font-weight:700;font-size:0.8rem;text-decoration:none">View</a>'
+          + '</div>';
+      });
+      offersList.innerHTML = html;
+    } catch(e) {
+      offersList.innerHTML = '<p style="color:#ff5252;font-size:0.85rem">Failed to load offers</p>';
+    }
+  }
+
   // --- Register agent ---
   async function registerAgent() {
     const uri = $('field-agent-uri').value.trim();
@@ -1461,7 +1636,7 @@ const MANAGE_SCRIPT = `
         let html = '';
         for (const nft of data.nfts) {
           html += '<div style="cursor:pointer;position:relative" title="' + escHtml(nft.name || nft.collection + ' #' + nft.tokenId) + '">';
-          html += '<img src="' + escHtml(nft.image) + '" onclick="selectNft(this.src)" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:2px solid transparent;display:block" onmouseover="this.style.borderColor=\'#00e676\'" onmouseout="this.style.borderColor=\'transparent\'" onerror="this.parentElement.style.display=\'none\'">';
+          html += '<img src="' + escHtml(nft.image) + '" onclick="selectNft(this.src)" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:2px solid transparent;display:block" onmouseover="this.style.borderColor=\\x27#00e676\\x27" onmouseout="this.style.borderColor=\\x27transparent\\x27" onerror="this.parentElement.style.display=\\x27none\\x27">';
           html += '</div>';
         }
         grid.innerHTML = html;
@@ -1480,25 +1655,65 @@ const MANAGE_SCRIPT = `
   }
 
   // --- Init ---
-  $('connect-btn').addEventListener('click', connectWallet);
   if (nameParam) {
     const pl = $('profile-link');
     if (pl) { pl.href = 'https://' + nameParam + '.hazza.name'; }
   }
   loadProfile();
+
+  // Listen for wallet connections from nav bar
+  window.addEventListener('hazza_wallet_connected', function(e) {
+    if (e.detail && e.detail.address && !userAddress) {
+      connectWallet();
+    }
+  });
+
+  // Listen for disconnects
+  window.addEventListener('hazza_wallet_disconnected', function() {
+    userAddress = null; signer = null; provider = null;
+    $('connect-section').style.display = 'block';
+    $('my-names').style.display = 'none';
+    $('text-records').style.display = 'none';
+  });
+
+  // Auto-reconnect: check nav global first, then sessionStorage
+  function tryAutoReconnect() {
+    if (window.__hazza_wallet && !userAddress) {
+      connectWallet();
+      return true;
+    }
+    if (!window.ethereum) return false;
+    var saved = null;
+    try { saved = sessionStorage.getItem('hazza_wallet'); } catch(e) {}
+    if (saved && !userAddress) {
+      connectWallet();
+      return true;
+    }
+    return false;
+  }
+  if (!tryAutoReconnect()) {
+    setTimeout(function() {
+      if (!tryAutoReconnect()) {
+        setTimeout(function() { tryAutoReconnect(); }, 1500);
+      }
+    }, 500);
+  }
+  window.addEventListener('eip6963:announceProvider', function() {
+    if (!userAddress) tryAutoReconnect();
+  });
 `;
 
 export function managePage(registryAddress: string, usdcAddress: string, chainId: string): string {
   const fieldRow = (label: string, key: string, inputId: string, placeholder: string) => `
-    <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem">
+    <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;flex-wrap:wrap">
       <label style="color:#6b8f6b;font-size:0.85rem;min-width:80px">${label}</label>
-      <input id="${inputId}" type="text" placeholder="${placeholder}" style="flex:1;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif;outline:none">
+      <input id="${inputId}" type="text" placeholder="${placeholder}" style="flex:1;min-width:150px;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif;outline:none">
       <button onclick="saveField('${key}','${inputId}')" style="padding:0.5rem 1rem;background:#1a2e1a;color:#00e676;border:1px solid #00e676;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:'Rubik',sans-serif;white-space:nowrap">Save</button>
     </div>`;
 
   return shell(
-    "hazza — Manage",
-    "Manage your hazza name. Edit profile, set text records, renew, and configure your onchain identity.",
+    "hazza \u2014 immediately useful names",
+    "Manage your name. Edit your profile, set text records, renew your name, and configure your onchain identity.",
     `<div id="hazza-config" data-registry="${registryAddress}" data-usdc="${usdcAddress}" data-chainid="${chainId}" style="display:none"></div>
     <div id="manage-body">
     <div class="header">
@@ -1512,8 +1727,8 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
     </div>
 
     <div id="connect-section" style="display:none;text-align:center;margin-bottom:1.5rem">
-      <button id="connect-btn" style="padding:0.75rem 2rem;background:#00e676;color:#000;border:none;border-radius:8px;font-weight:700;font-size:1rem;cursor:pointer;font-family:'Rubik',sans-serif">Connect Wallet</button>
-      <span id="wallet-addr" style="display:none;color:#6b8f6b;font-size:0.85rem;margin-left:1rem"></span>
+      <p style="color:#6b8f6b">connect your wallet to manage this name</p>
+      <p style="color:#444;font-size:0.85rem">tap <strong style="color:#00e676">connect</strong> in the menu above</p>
     </div>
 
     <div id="manage-status" style="display:none;text-align:center;padding:0.75rem;font-size:0.9rem;margin-bottom:1rem"></div>
@@ -1532,9 +1747,9 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
       <div class="section">
         <div class="section-title">Profile</div>
         ${fieldRow("Bio", "description", "field-description", "A short bio...")}
-        <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem">
+        <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;flex-wrap:wrap">
           <label style="color:#6b8f6b;font-size:0.85rem;min-width:80px">Avatar</label>
-          <input id="field-avatar" type="text" placeholder="https://... image URL" style="flex:1;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif;outline:none">
+          <input id="field-avatar" type="text" placeholder="https://... image URL" style="flex:1;min-width:150px;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif;outline:none">
           <button onclick="saveField('avatar','field-avatar')" style="padding:0.5rem 1rem;background:#1a2e1a;color:#00e676;border:1px solid #00e676;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:'Rubik',sans-serif;white-space:nowrap">Save</button>
           <button onclick="openNftPicker()" style="padding:0.5rem 0.75rem;background:#111;color:#6b8f6b;border:1px solid #1a2e1a;border-radius:6px;font-size:0.8rem;cursor:pointer;font-family:'Rubik',sans-serif;white-space:nowrap" title="Browse your NFTs">NFTs</button>
         </div>
@@ -1639,7 +1854,7 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
           <input id="field-net-profile" type="text" placeholder="storedon.net URL or key" style="flex:1;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif;outline:none">
           <button onclick="saveField('net.profile','field-net-profile')" style="padding:0.5rem 0.75rem;background:#1a2e1a;color:#00e676;border:1px solid #00e676;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:'Rubik',sans-serif">Save</button>
         </div>
-        <p style="color:#555;font-size:0.75rem;margin-top:0.5rem">Exoskeleton ownership is auto-detected from your wallet. Unlimited Pass badge appears automatically once the contract is live.</p>
+        <p style="color:#555;font-size:0.75rem;margin-top:0.5rem">Exoskeleton ownership is auto-detected from your wallet. Unlimited Pass badge appears automatically.</p>
       </div>
 
       <hr class="divider">
@@ -1679,6 +1894,14 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
             </select>
             <button onclick="renewName()" style="padding:0.5rem 1.5rem;background:#ffab00;color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.85rem;font-family:'Rubik',sans-serif">Renew</button>
           </div>
+        </div>
+        <hr class="divider">
+      </div>
+
+      <div id="offers-section" style="display:none">
+        <div class="section">
+          <div class="section-title">Offers</div>
+          <div id="name-offers-list" style="color:#6b8f6b;font-size:0.85rem">Loading offers...</div>
         </div>
         <hr class="divider">
       </div>
@@ -1723,7 +1946,11 @@ const DASHBOARD_SCRIPT = `
     "function renew(string name, uint256 numYears) external",
     "function quoteName(string name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee)",
     "function transferFrom(address from, address to, uint256 tokenId) external",
-    "function resolve(string name) view returns (address owner, uint256 tokenId, uint256 registeredAt, uint256 expiresAt, address operator, uint256 agentId, address agentWallet)"
+    "function resolve(string name) view returns (address owner, uint256 tokenId, uint256 registeredAt, uint256 expiresAt, address operator, uint256 agentId, address agentWallet)",
+    "function registerNamespace(string name) external",
+    "function issueSubname(string namespace, string subname, address subnameOwner) external",
+    "function setText(string name, string key, string value) external",
+    "function setPrimaryName(string name) external"
   ];
   const ERC20_ABI = [
     "function approve(address spender, uint256 amount) external returns (bool)",
@@ -1731,6 +1958,7 @@ const DASHBOARD_SCRIPT = `
   ];
 
   let provider, signer, userAddress;
+  var signerAvailable = false;
   const $ = id => document.getElementById(id);
 
   function showStatus(msg, isError) {
@@ -1761,34 +1989,29 @@ const DASHBOARD_SCRIPT = `
           provider = new ethers.BrowserProvider(window.ethereum);
           signer = await provider.getSigner();
         } catch (switchErr) {
-          if (switchErr.code === 4902) {
-            try {
-              await window.ethereum.request({
-                method: 'wallet_addEthereumChain',
-                params: [{
-                  chainId: '0x' + CHAIN_ID.toString(16),
-                  chainName: CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base',
-                  nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
-                  rpcUrls: [CHAIN_ID === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
-                  blockExplorerUrls: [CHAIN_ID === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
-                }],
-              });
-              provider = new ethers.BrowserProvider(window.ethereum);
-              signer = await provider.getSigner();
-            } catch (addErr) {
-              showStatus('Could not add the chain. Please add it manually.', true);
-              return;
-            }
-          } else {
-            showStatus('Please switch to ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' in your wallet.', true);
+          try {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: '0x' + CHAIN_ID.toString(16),
+                chainName: CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base',
+                nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                rpcUrls: [CHAIN_ID === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
+                blockExplorerUrls: [CHAIN_ID === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
+              }],
+            });
+            provider = new ethers.BrowserProvider(window.ethereum);
+            signer = await provider.getSigner();
+          } catch (addErr) {
+            showStatus('Please add ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' to your wallet and try again.', true);
             return;
           }
         }
       }
 
+      signerAvailable = true;
+      try { sessionStorage.setItem('hazza_wallet', userAddress); } catch(e) {}
       $('connect-section').style.display = 'none';
-      $('dash-wallet').textContent = userAddress.slice(0, 6) + '...' + userAddress.slice(-4);
-      $('dash-wallet').style.display = 'inline';
       $('dash-content').style.display = 'block';
       loadNames();
     } catch (e) {
@@ -1820,42 +2043,94 @@ const DASHBOARD_SCRIPT = `
         const daysText = n.status === 'active' ? daysLeft + ' days left' : n.status === 'grace' ? 'grace: ' + daysLeft + 'd left' : n.status === 'redemption' ? 'redemption: ' + daysLeft + 'd left' : 'released';
         const eName = escHtml(n.name);
         const uName = encodeURIComponent(n.name);
-        html += '<div style="margin-bottom:0.5rem">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem 1rem;background:#111;border:1px solid #1a2e1a;border-radius:8px">';
-        html += '<div>';
-        html += '<a href="https://' + eName + '.hazza.name" style="color:#fff;font-weight:700;font-size:0.95rem">' + eName + '<span style="color:#00e676">.hazza.name</span></a>';
-        html += '<div style="display:flex;gap:0.75rem;margin-top:0.25rem;font-size:0.75rem;color:#6b8f6b">';
-        html += '<span style="color:' + statusColor + '">' + escHtml(statusLabel) + '</span>';
+        var pillBg = n.status === 'active' ? 'rgba(0,230,118,0.15)' : n.status === 'grace' ? 'rgba(255,171,0,0.15)' : n.status === 'redemption' ? 'rgba(255,82,82,0.15)' : 'rgba(68,68,68,0.15)';
+        var pillClass = 'status-pill' + (n.status === 'expired' ? ' expired' : '');
+        html += '<div class="name-card" data-name="' + eName + '" style="margin-bottom:0.5rem">';
+        // Collapsed card header — tappable
+        html += '<div class="name-card-header" onclick="toggleCard(\\x27' + eName + '\\x27)" style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem 1rem;background:#111;border:1px solid #1a2e1a;border-radius:8px;cursor:pointer;transition:border-radius 0.2s">';
+        html += '<div style="min-width:0">';
+        html += '<span style="color:#fff;font-weight:700;font-size:0.95rem">' + eName + '<span style="color:#00e676">.hazza.name</span></span>';
+        if (n.isNamespace) html += ' <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;background:#00e676;color:#000;font-size:0.65rem;font-weight:900;border-radius:4px;vertical-align:middle;margin-left:0.25rem" title="Namespace">N</span>';
+        html += '</div>';
+        html += '<span class="' + pillClass + '" style="color:' + statusColor + ';background:' + pillBg + '">' + escHtml(statusLabel) + '</span>';
+        html += '</div>';
+        // Expanded detail panel — hidden by default
+        html += '<div id="card-detail-' + eName + '" class="name-card-detail" style="display:none;padding:0.75rem 1rem;background:#0a150a;border:1px solid #1a2e1a;border-top:none;border-radius:0 0 8px 8px">';
+        // Info row
+        html += '<div style="display:flex;gap:1.5rem;font-size:0.75rem;color:#6b8f6b;margin-bottom:0.75rem;flex-wrap:wrap">';
         html += '<span>' + escHtml(daysText) + '</span>';
-        html += '</div></div>';
-        html += '<div style="display:flex;gap:0.5rem">';
-        html += '<a href="/manage?name=' + uName + '" style="color:#00e676;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">manage</a>';
-        html += '<button onclick="toggleTransfer(\'' + eName + '\', ' + n.tokenId + ')" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;background:transparent;cursor:pointer;font-family:\'Rubik\',sans-serif">transfer</button>';
-        html += '<a href="/marketplace?sell=' + uName + '" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;text-decoration:none">sell</a>';
-        if (n.status !== 'expired') html += '<button onclick="toggleRenew(\'' + eName + '\')" style="color:#6b8f6b;font-size:0.8rem;border:1px solid #1a2e1a;padding:0.3rem 0.75rem;border-radius:6px;background:transparent;cursor:pointer;font-family:\'Rubik\',sans-serif">renew</button>';
-        html += '</div></div>';
-        // Inline transfer panel (hidden by default)
-        html += '<div id="transfer-' + eName + '" style="display:none;padding:0.75rem 1rem;background:#0d1a0d;border:1px solid #1a2e1a;border-top:none;border-radius:0 0 8px 8px">';
-        html += '<div style="font-size:0.8rem;color:#6b8f6b;margin-bottom:0.5rem">Transfer <strong style="color:#fff">' + eName + '.hazza.name</strong> to another wallet</div>';
+        html += '<span>expires ' + expires.toLocaleDateString() + '</span>';
+        html += '<a href="https://' + eName + '.hazza.name" style="color:#00e676;text-decoration:none">view profile ↗</a>';
+        html += '</div>';
+        // Action buttons
+        html += '<div style="display:flex;gap:0.4rem;flex-wrap:wrap">';
+        if (signerAvailable) {
+          html += '<button onclick="event.stopPropagation();toggleEdit(\\x27' + eName + '\\x27)" style="color:#00e676;font-size:0.75rem;border:1px solid #00e676;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">edit profile</button>';
+          html += '<button onclick="event.stopPropagation();toggleTransfer(\\x27' + eName + '\\x27, ' + escHtml(String(n.tokenId)) + ')" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">transfer</button>';
+          html += '<a href="/marketplace?sell=' + uName + '" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;text-decoration:none" onclick="event.stopPropagation()">sell</a>';
+          if (n.status !== 'expired') html += '<button onclick="event.stopPropagation();toggleRenew(\\x27' + eName + '\\x27)" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">renew</button>';
+          if (!n.isNamespace && n.status === 'active') html += '<button onclick="event.stopPropagation();toggleNamespace(\\x27' + eName + '\\x27)" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">namespace</button>';
+        }
+        html += '<button onclick="event.stopPropagation();shareName(\\x27' + eName + '\\x27)" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">share</button>';
+        html += '</div>';
+        // Inline edit profile panel
+        html += '<div id="edit-' + eName + '" style="display:none;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #1a2e1a">';
+        html += '<div style="font-size:0.75rem;color:#444;margin-bottom:0.5rem">Changes are onchain (Base gas ~$0.01 each)</div>';
+        var fields = [
+          ['Bio', 'description', 'A short bio...'],
+          ['Avatar', 'avatar', 'https://... image URL'],
+          ['Website', 'url', 'https://...'],
+          ['Twitter', 'com.twitter', '@handle'],
+          ['Farcaster', 'xyz.farcaster', '@handle'],
+          ['GitHub', 'com.github', 'username']
+        ];
+        for (var fi = 0; fi < fields.length; fi++) {
+          var f = fields[fi];
+          var fid = 'edit-' + eName + '-' + f[1].replace(/\\./g, '-');
+          html += '<div style="display:flex;gap:0.4rem;align-items:center;margin-bottom:0.4rem;flex-wrap:wrap">';
+          html += '<label style="color:#6b8f6b;font-size:0.75rem;min-width:65px">' + f[0] + '</label>';
+          html += '<input id="' + fid + '" type="text" placeholder="' + f[2] + '" style="flex:1;min-width:120px;padding:0.3rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.8rem;font-family:Rubik,sans-serif;outline:none" onclick="event.stopPropagation()">';
+          html += '<button onclick="event.stopPropagation();saveField(\\x27' + eName + '\\x27,\\x27' + f[1] + '\\x27,\\x27' + fid + '\\x27)" style="padding:0.3rem 0.6rem;background:#1a2e1a;color:#00e676;border:1px solid #00e676;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.7rem;font-family:Rubik,sans-serif">Save</button>';
+          html += '</div>';
+        }
+        html += '<div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.5rem">';
+        html += '<button onclick="event.stopPropagation();setPrimary(\\x27' + eName + '\\x27)" style="padding:0.3rem 0.6rem;background:transparent;color:#6b8f6b;border:1px solid #1a2e1a;border-radius:6px;font-size:0.7rem;cursor:pointer;font-family:Rubik,sans-serif">set as primary name</button>';
+        html += '<a href="/manage?name=' + uName + '" style="color:#444;font-size:0.7rem;text-decoration:none;margin-left:auto" onclick="event.stopPropagation()">advanced settings →</a>';
+        html += '</div>';
+        html += '<span id="edit-status-' + eName + '" style="font-size:0.75rem;color:#6b8f6b;display:block;margin-top:0.35rem"></span>';
+        html += '</div>';
+        // Inline transfer panel
+        html += '<div id="transfer-' + eName + '" style="display:none;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #1a2e1a">';
+        html += '<div style="font-size:0.8rem;color:#6b8f6b;margin-bottom:0.5rem">Transfer <strong style="color:#fff">' + eName + '.hazza.name</strong></div>';
         html += '<div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">';
-        html += '<input id="transfer-to-' + eName + '" type="text" placeholder="0x... recipient address" style="flex:1;min-width:200px;padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:\'Rubik\',sans-serif">';
-        html += '<button onclick="doTransfer(\'' + eName + '\', ' + n.tokenId + ')" style="padding:0.4rem 1rem;background:#ff5252;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:\'Rubik\',sans-serif">Transfer</button>';
+        html += '<input id="transfer-to-' + eName + '" type="text" placeholder="0x... recipient address" style="flex:1;min-width:200px;padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:Rubik,sans-serif" onclick="event.stopPropagation()">';
+        html += '<button onclick="event.stopPropagation();doTransfer(\\x27' + eName + '\\x27, ' + escHtml(String(n.tokenId)) + ')" style="padding:0.4rem 1rem;background:#ff5252;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:Rubik,sans-serif">Transfer</button>';
         html += '</div>';
         html += '<span id="transfer-status-' + eName + '" style="font-size:0.8rem;color:#6b8f6b;display:block;margin-top:0.35rem"></span>';
-        html += '<div style="font-size:0.7rem;color:#444;margin-top:0.35rem">This transfers full ownership. The recipient controls the name, records, and renewal.</div>';
         html += '</div>';
-        // Inline renew panel (hidden by default)
+        // Inline namespace upgrade panel
+        if (!n.isNamespace && n.status === 'active') {
+          html += '<div id="namespace-' + eName + '" style="display:none;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #1a2e1a">';
+          html += '<div style="font-size:0.8rem;color:#6b8f6b;margin-bottom:0.5rem">Enable namespaces on <strong style="color:#fff">' + eName + '</strong></div>';
+          html += '<div style="font-size:0.75rem;color:#444;margin-bottom:0.5rem">Create subnames like alice.' + eName + ', bot.' + eName + ', etc. Each subname costs $1. This is a permanent change and cannot be undone.</div>';
+          html += '<div style="display:flex;gap:0.5rem;align-items:center">';
+          html += '<button onclick="event.stopPropagation();doNamespace(\\x27' + eName + '\\x27)" style="padding:0.4rem 1rem;background:#00e676;color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:Rubik,sans-serif">Enable Namespaces</button>';
+          html += '<span id="namespace-status-' + eName + '" style="font-size:0.8rem;color:#6b8f6b"></span>';
+          html += '</div></div>';
+        }
+        // Inline renew panel
         if (n.status !== 'expired') {
-          html += '<div id="renew-' + eName + '" style="display:none;padding:0.75rem 1rem;background:#0d1a0d;border:1px solid #1a2e1a;border-top:none;border-radius:0 0 8px 8px">';
+          html += '<div id="renew-' + eName + '" style="display:none;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #1a2e1a">';
           html += '<div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">';
-          html += '<select id="renew-years-' + eName + '" style="padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:\'Rubik\',sans-serif">';
+          html += '<select id="renew-years-' + eName + '" style="padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:Rubik,sans-serif" onclick="event.stopPropagation()">';
           html += '<option value="1">1 year ($2)</option><option value="2">2 years ($4)</option><option value="3">3 years ($6)</option><option value="5">5 years ($10)</option>';
           html += '</select>';
-          html += '<button onclick="doRenew(\'' + eName + '\')" style="padding:0.4rem 1rem;background:#00e676;color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:\'Rubik\',sans-serif">Renew</button>';
+          html += '<button onclick="event.stopPropagation();doRenew(\\x27' + eName + '\\x27)" style="padding:0.4rem 1rem;background:#00e676;color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:Rubik,sans-serif">Renew</button>';
           html += '<span id="renew-status-' + eName + '" style="font-size:0.8rem;color:#6b8f6b"></span>';
           html += '</div></div>';
         }
-        html += '</div>';
+        html += '</div>'; // close name-card-detail
+        html += '</div>'; // close name-card
       }
       if (data.total > 50) html += '<p style="color:#888;font-size:0.8rem;margin-top:0.5rem">showing 50 of ' + data.total + '</p>';
       list.innerHTML = html;
@@ -1864,20 +2139,157 @@ const DASHBOARD_SCRIPT = `
     }
   }
 
+  var openCardName = null;
+  function toggleCard(name) {
+    var detail = $('card-detail-' + name);
+    if (!detail) return;
+    if (openCardName && openCardName !== name) {
+      // Close previously open card
+      var prev = $('card-detail-' + openCardName);
+      if (prev) {
+        prev.style.display = 'none';
+        prev.previousElementSibling.style.borderRadius = '8px';
+      }
+    }
+    if (detail.style.display === 'none') {
+      detail.style.display = 'block';
+      detail.previousElementSibling.style.borderRadius = '8px 8px 0 0';
+      openCardName = name;
+    } else {
+      detail.style.display = 'none';
+      detail.previousElementSibling.style.borderRadius = '8px';
+      openCardName = null;
+    }
+  }
+
+  // Close expanded card when clicking outside
+  document.addEventListener('click', function(e) {
+    if (!openCardName) return;
+    var card = e.target.closest('.name-card');
+    if (!card || card.getAttribute('data-name') !== openCardName) {
+      var detail = $('card-detail-' + openCardName);
+      if (detail) {
+        detail.style.display = 'none';
+        detail.previousElementSibling.style.borderRadius = '8px';
+      }
+      openCardName = null;
+    }
+  });
+
+  function closeAllPanels(name) {
+    ['edit-','transfer-','renew-','namespace-'].forEach(function(p) {
+      var el = $(p + name); if (el) el.style.display = 'none';
+    });
+  }
+
+  function toggleEdit(name) {
+    var panel = $('edit-' + name);
+    if (!panel) return;
+    var wasOpen = panel.style.display !== 'none';
+    closeAllPanels(name);
+    if (!wasOpen) {
+      panel.style.display = 'block';
+      // Pre-populate fields from profile API
+      fetch('/api/profile/' + name).then(function(r){return r.json()}).then(function(d) {
+        if (!d || !d.texts) return;
+        var map = {};
+        d.texts.forEach(function(t){ map[t.key] = t.value; });
+        var fields = ['description','avatar','url','com.twitter','xyz.farcaster','com.github'];
+        fields.forEach(function(key) {
+          var el = $('edit-' + name + '-' + key.replace(/\\./g, '-'));
+          if (el && map[key]) el.value = map[key];
+        });
+      }).catch(function(){});
+    }
+  }
+
+  async function saveField(name, key, inputId) {
+    var statusEl = $('edit-status-' + name);
+    var input = $(inputId);
+    if (!input) return;
+    var value = input.value.trim();
+    if (!signer) { statusEl.style.color='#ff5252'; statusEl.textContent='Connect wallet first'; return; }
+    try {
+      var registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
+      statusEl.style.color = '#6b8f6b';
+      statusEl.textContent = 'Setting ' + key + '...';
+      var tx = await registry.setText(name, key, value);
+      statusEl.textContent = 'Confirming...';
+      await tx.wait();
+      statusEl.style.color = '#00e676';
+      statusEl.textContent = key + ' updated!';
+      setTimeout(function(){ statusEl.textContent = ''; }, 3000);
+    } catch(e) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = e.reason || e.message || 'Failed to save';
+    }
+  }
+
+  async function setPrimary(name) {
+    var statusEl = $('edit-status-' + name);
+    if (!signer) { statusEl.style.color='#ff5252'; statusEl.textContent='Connect wallet first'; return; }
+    try {
+      var registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
+      statusEl.style.color = '#6b8f6b';
+      statusEl.textContent = 'Setting primary name...';
+      var tx = await registry.setPrimaryName(name);
+      statusEl.textContent = 'Confirming...';
+      await tx.wait();
+      statusEl.style.color = '#00e676';
+      statusEl.textContent = name + ' is now your primary name!';
+    } catch(e) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = e.reason || e.message || 'Failed';
+    }
+  }
+
   function toggleRenew(name) {
-    const panel = $('renew-' + name);
-    if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-    // Close transfer panel if open
-    const tp = $('transfer-' + name);
-    if (tp) tp.style.display = 'none';
+    var panel = $('renew-' + name);
+    var wasOpen = panel && panel.style.display !== 'none';
+    closeAllPanels(name);
+    if (!wasOpen && panel) panel.style.display = 'block';
+  }
+
+  function shareName(name) {
+    var url = 'https://' + name + '.hazza.name';
+    var text = 'Check out ' + name + '.hazza.name';
+    // Remove any existing share modal
+    var existing = $('share-modal');
+    if (existing) existing.remove();
+    var overlay = document.createElement('div');
+    overlay.id = 'share-modal';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    var box = document.createElement('div');
+    box.style.cssText = 'background:#111;border:1px solid #1a2e1a;border-radius:12px;padding:1.5rem;max-width:320px;width:90%;text-align:center';
+    box.innerHTML = '<div style="font-size:1rem;color:#fff;margin-bottom:1rem;font-family:Rubik,sans-serif">Share <strong style="color:#00e676">' + name + '.hazza.name</strong></div>'
+      + '<div style="display:flex;gap:1rem;justify-content:center;margin-bottom:1rem">'
+      + '<a href="https://twitter.com/intent/tweet?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(url) + '" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;text-decoration:none;gap:0.3rem">'
+      + '<svg width="32" height="32" viewBox="0 0 24 24" fill="#fff"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>'
+      + '<span style="color:#888;font-size:0.7rem;font-family:Rubik,sans-serif">Twitter</span></a>'
+      + '<a href="https://warpcast.com/~/compose?text=' + encodeURIComponent(text + ' ' + url) + '" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;text-decoration:none;gap:0.3rem">'
+      + '<svg width="32" height="32" viewBox="0 0 24 24" fill="#8a63d2"><path d="M3.77 2h16.46C21.21 2 22 2.79 22 3.77v16.46c0 .98-.79 1.77-1.77 1.77H3.77C2.79 22 2 21.21 2 20.23V3.77C2 2.79 2.79 2 3.77 2zm3.48 4.3L5.6 12.26h2.18l.89 5.44h2.07l1.26-7.4 1.26 7.4h2.07l.89-5.44h2.18L16.75 6.3h-2.82l-.93 5.5-.93-5.5H8.07z"/></svg>'
+      + '<span style="color:#888;font-size:0.7rem;font-family:Rubik,sans-serif">Farcaster</span></a>'
+      + '</div>'
+      + '<button id="share-copy-btn" style="width:100%;padding:0.6rem;background:#1a2e1a;color:#00e676;border:1px solid #00e676;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.85rem;font-family:Rubik,sans-serif">Copy URL</button>';
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    $('share-copy-btn').onclick = function(e) {
+      e.stopPropagation();
+      navigator.clipboard.writeText(url).then(function() {
+        $('share-copy-btn').textContent = 'Copied!';
+        $('share-copy-btn').style.background = '#00e676';
+        $('share-copy-btn').style.color = '#000';
+        setTimeout(function(){ overlay.remove(); }, 1200);
+      });
+    };
   }
 
   function toggleTransfer(name, tokenId) {
-    const panel = $('transfer-' + name);
-    if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-    // Close renew panel if open
-    const rp = $('renew-' + name);
-    if (rp) rp.style.display = 'none';
+    var panel = $('transfer-' + name);
+    var wasOpen = panel && panel.style.display !== 'none';
+    closeAllPanels(name);
+    if (!wasOpen && panel) panel.style.display = 'block';
   }
 
   async function doTransfer(name, tokenId) {
@@ -1939,23 +2351,115 @@ const DASHBOARD_SCRIPT = `
     }
   }
 
-  $('connect-btn').addEventListener('click', connectWallet);
+  function toggleNamespace(name) {
+    var panel = $('namespace-' + name);
+    var wasOpen = panel && panel.style.display !== 'none';
+    closeAllPanels(name);
+    if (!wasOpen && panel) panel.style.display = 'block';
+  }
+
+  async function doNamespace(name) {
+    const statusEl = $('namespace-status-' + name);
+    if (!confirm('Enable namespaces on ' + name + '? This is permanent and cannot be undone. Each subname you create will cost $1.')) return;
+    try {
+      const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
+      statusEl.style.color = '#6b8f6b';
+      statusEl.textContent = 'Enabling namespaces...';
+      const tx = await registry.registerNamespace(name);
+      await tx.wait();
+      statusEl.style.color = '#00e676';
+      statusEl.textContent = 'Namespace created!';
+      setTimeout(() => loadNames(), 2000);
+    } catch (e) {
+      statusEl.style.color = '#ff5252';
+      statusEl.textContent = e.reason || e.message || 'Error';
+    }
+  }
+
+  // Listen for wallet connections from nav bar
+  window.addEventListener('hazza_wallet_connected', function(e) {
+    if (e.detail && e.detail.address && !userAddress) {
+      initFromAddress(e.detail.address);
+    }
+  });
+
+  // Listen for disconnects
+  window.addEventListener('hazza_wallet_disconnected', function() {
+    userAddress = null; signer = null; provider = null; signerAvailable = false;
+    $('connect-section').style.display = 'block';
+    $('dash-content').style.display = 'none';
+  });
+
+  // Initialize dashboard from a known address (no extra eth_requestAccounts call)
+  function initFromAddress(addr) {
+    userAddress = addr;
+    $('connect-section').style.display = 'none';
+    $('dash-content').style.display = 'block';
+    if (window.ethereum) {
+      provider = new ethers.BrowserProvider(window.ethereum);
+      provider.getSigner().then(function(s) {
+        signer = s;
+        provider.getNetwork().then(function(net) {
+          if (Number(net.chainId) !== CHAIN_ID) {
+            showStatus('Connected to wrong network. Switch to ' + (CHAIN_ID === 84532 ? 'Base Sepolia' : 'Base') + ' for full functionality.', true);
+          } else {
+            signerAvailable = true;
+          }
+        });
+      }).catch(function() {});
+    }
+    loadNames();
+  }
+
+  // Check if nav already connected (handles race where nav event fired before this listener)
+  function tryInitFromNav() {
+    if (window.__hazza_wallet && !userAddress) {
+      initFromAddress(window.__hazza_wallet);
+      return true;
+    }
+    return false;
+  }
+
+  // Auto-reconnect with retry for late ethereum injection (MetaMask mobile)
+  function tryAutoReconnect() {
+    // First check if nav already has the wallet
+    if (tryInitFromNav()) return true;
+    if (!window.ethereum) return false;
+    var saved = null;
+    try { saved = sessionStorage.getItem('hazza_wallet'); } catch(e) {}
+    if (saved) {
+      initFromAddress(saved);
+      return true;
+    }
+    return false;
+  }
+
+  // Try immediately, then retry after delays for late ethereum injection
+  if (!tryAutoReconnect()) {
+    setTimeout(function() { if (!userAddress) tryAutoReconnect(); }, 500);
+    setTimeout(function() { if (!userAddress) tryAutoReconnect(); }, 1500);
+  }
+
+  // Also listen for MetaMask's own EIP-6963 provider announcement
+  window.addEventListener('eip6963:announceProvider', function() {
+    if (!userAddress) setTimeout(tryAutoReconnect, 100);
+  });
 `;
 
 export function dashboardPage(registryAddress: string, usdcAddress: string, chainId: string): string {
   return shell(
-    "hazza \u2014 Dashboard",
-    "View and manage all your hazza names from one place.",
+    "hazza \u2014 immediately useful names",
+    "View and manage all your names from one place.",
     `<div id="hazza-config" data-registry="${registryAddress}" data-usdc="${usdcAddress}" data-chainid="${chainId}" style="display:none"></div>
 
     <div class="header">
       <h1>dashboard</h1>
-      <p>your names <span id="dash-wallet" style="display:none;color:#6b8f6b;font-size:0.85rem"></span></p>
+      <p>your names</p>
     </div>
 
     <div id="connect-section" style="text-align:center;margin:2rem 0">
-      <p style="color:#6b8f6b;margin-bottom:1rem">connect your wallet to see your names</p>
-      <button id="connect-btn" style="padding:0.75rem 2rem;background:#00e676;color:#000;border:none;border-radius:8px;font-weight:700;font-size:1rem;cursor:pointer;font-family:'Rubik',sans-serif">connect wallet</button>
+      <p style="color:#6b8f6b;margin-bottom:0.5rem">connect your wallet to see your names</p>
+      <p style="color:#444;font-size:0.85rem">tap <strong style="color:#00e676">connect</strong> in the menu above</p>
     </div>
 
     <div id="dash-status" style="display:none;text-align:center;padding:0.75rem;font-size:0.9rem;margin-bottom:1rem"></div>
@@ -2332,7 +2836,7 @@ export function profilePage(name: string, data: ProfileData | null, chainId?: st
   return profileShell(
     name,
     title,
-    data ? `${name}.hazza.name \u2014 owned by ${data.owner}` : `${name}.hazza.name is available on hazza`,
+    data ? `${name}.hazza.name \u2014 owned by ${data.ownerEns || data.owner}` : `${name}.hazza.name is available on hazza`,
     content
   );
 }
@@ -2343,8 +2847,8 @@ export function profilePage(name: string, data: ProfileData | null, chainId?: st
 
 export function aboutPage(): string {
   return shell(
-    "hazza \u2014 About",
-    "hazza is an onchain domain registry on Base. One x402 payment gives you a name, website, agent, and DNS.",
+    "hazza \u2014 immediately useful names",
+    "Learn more about hazza and the tech that makes these names immediately useful.",
     `
     <div class="header">
       <h1>about</h1>
@@ -2368,7 +2872,7 @@ export function aboutPage(): string {
         <div class="info-row"><span class="label">Agent</span><span class="value">ERC-8004 AI agent registration</span></div>
         <div class="info-row"><span class="label">DNS</span><span class="value">Custom domain linking</span></div>
         <div class="info-row"><span class="label">Addresses</span><span class="value">Multi-chain via API (ENSIP-9/11)</span></div>
-        <div class="info-row"><span class="label">Subnames</span><span class="value">$20 add-on &mdash; namespace delegation for teams</span></div>
+        <div class="info-row"><span class="label">Subnames</span><span class="value">Free to enable &mdash; $1 per subname</span></div>
         <div class="info-row"><span class="label">Unicode</span><span class="value">ENSIP-15 emoji &amp; unicode support</span></div>
         <div class="info-row"><span class="label">API</span><span class="value">Programmatic access to everything</span></div>
       </div>
@@ -2380,12 +2884,24 @@ export function aboutPage(): string {
         <strong style="color:#fff">For humans:</strong> Connect your wallet on the <a href="/register">register page</a>, pay USDC, and your name is minted as an NFT. Your profile page goes live immediately.
       </p>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        <strong style="color:#fff">For agents &amp; CLIs:</strong> Use the <a href="/docs#x402" style="font-weight:700">x402 API</a> &mdash; send an HTTP request, get a price quote, pay USDC onchain, retry with proof. No wallet extension needed.
+        <strong style="color:#fff">For agents &amp; CLIs:</strong> Use the <a href="/docs#x402" style="font-weight:700">x402 API</a> to register programmatically &mdash; send an HTTP request, pay USDC, and receive a registered name. No wallet extension needed.
       </p>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
         Content hosting is powered by <a href="https://netprotocol.app" style="font-weight:700">Net Protocol</a>.
         Set text records, link socials, point to content, or register an AI agent &mdash; all through onchain transactions.
       </p>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Need help?</div>
+      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
+        <strong style="color:#fff">Cheryl</strong> is an AI agent from <a href="https://netlibrary.app">Net Library</a> who can help with hazza names.
+        She can check availability, explain pricing, walk you through registration, and answer questions about text records, agents, or anything else.
+      </p>
+      <div class="info-grid">
+        <div class="info-row"><span class="label">XMTP</span><span class="value"><a href="http://xmtp.chat/production/dm/0x08160267ca94b6682ab9044545998479dc9c0408">Message Cheryl</a></span></div>
+        <div class="info-row"><span class="label">Farcaster</span><span class="value"><a href="https://warpcast.com/cherylfromnet">@cherylfromnet</a></span></div>
+      </div>
     </div>
 
     <div class="section">
@@ -2410,24 +2926,22 @@ export function aboutPage(): string {
 
 export function pricingPage(): string {
   return shell(
-    "hazza \u2014 Pricing",
-    "hazza name pricing, anti-squatting protections, discounts, and everything you need to know before registering.",
+    "hazza \u2014 immediately useful names",
+    "First name free, additional names $5 \u2014 pricing, perks, renewals, and protections.",
     `
     <div class="header">
       <h1>pricing</h1>
     </div>
 
-    <div style="text-align:center;margin:2rem 0">
-      <div class="price-card" style="display:inline-block;min-width:200px;margin-right:1rem">
-        <div class="chars">first name</div>
-        <div class="amount" style="color:#00e676">FREE</div>
-        <div class="unit">just pay gas</div>
-      </div>
-      <div class="price-card" style="display:inline-block;min-width:200px">
-        <div class="chars">additional names</div>
-        <div class="amount">$5</div>
-        <div class="unit">1 year included</div>
-      </div>
+    <div style="text-align:center;margin:2rem 0 1.5rem;padding:1.25rem 1rem;border:2px solid #00e676;border-radius:12px;background:#0d1a0d">
+      <div style="color:#00e676;font-weight:700;font-size:1.1rem;letter-spacing:-0.02em">your first name</div>
+      <div style="color:#fff;font-weight:900;font-size:1.8rem;letter-spacing:-0.02em">FREE</div>
+      <div style="color:#6b8f6b;font-size:0.95rem;margin-top:0.25rem">just pay gas &mdash; 1 per wallet</div>
+    </div>
+
+    <div style="text-align:center;margin-bottom:2rem">
+      <div style="color:#fff;font-weight:700;font-size:1.2rem">additional names $5</div>
+      <div style="color:#6b8f6b;font-size:0.85rem;margin-top:0.25rem">1 year included</div>
     </div>
 
     <hr class="divider">
@@ -2450,6 +2964,25 @@ export function pricingPage(): string {
         <div class="info-row"><span class="label">Grace period</span><span class="value">30 days at normal price</span></div>
         <div class="info-row"><span class="label">Redemption</span><span class="value">30 more days + $10 penalty</span></div>
       </div>
+    </div>
+
+    <hr class="divider">
+
+    <div class="section">
+      <div class="section-title">Progressive pricing</div>
+      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
+        Registering multiple names gets <strong style="color:#fff">progressively more expensive</strong>.
+        The contract tracks how many names each wallet registers within a 90-day window and applies multipliers:
+      </p>
+      <div class="info-grid">
+        <div class="info-row"><span class="label">Names 1&ndash;3</span><span class="value">1x ($5 each)</span></div>
+        <div class="info-row"><span class="label">Names 4&ndash;5</span><span class="value">2.5x ($12.50 each)</span></div>
+        <div class="info-row"><span class="label">Names 6&ndash;7</span><span class="value">5x ($25 each)</span></div>
+        <div class="info-row"><span class="label">Names 8+</span><span class="value">10x ($50 each)</span></div>
+      </div>
+      <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
+        Your first name is free. Progressive pricing applies starting from your second name. The 90-day window resets automatically.
+      </p>
     </div>
 
     <hr class="divider">
@@ -2479,8 +3012,8 @@ export function pricingPage(): string {
         Useful for teams, organizations, or agent networks &mdash; e.g. <strong style="color:#fff">alice.yourname</strong>, <strong style="color:#fff">bot.yourname</strong>.
       </p>
       <div class="info-grid">
-        <div class="info-row"><span class="label">Create namespace</span><span class="value">$20 (one-time)</span></div>
-        <div class="info-row"><span class="label">Issue subname</span><span class="value">Free</span></div>
+        <div class="info-row"><span class="label">Enable namespaces</span><span class="value">Free (permanent, cannot be undone)</span></div>
+        <div class="info-row"><span class="label">Issue subname</span><span class="value">$1 each</span></div>
       </div>
       <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
         Each subname is its own full hazza name with a profile, agent, and DNS.
@@ -2493,7 +3026,7 @@ export function pricingPage(): string {
       <div class="section-title">Learn more</div>
       <div class="info-grid">
         <div class="info-row"><span class="label"><a href="/pricing/protections">Protections</a></span><span class="value">Anti-squatting, rate limits, and name rights</span></div>
-        <div class="info-row"><span class="label"><a href="/pricing/details">Details</a></span><span class="value">Renewal, expiry, front-running protection, and payment</span></div>
+        <div class="info-row"><span class="label"><a href="/pricing/details">Fine print</a></span><span class="value">Payment, ownership, name rules, and contract</span></div>
       </div>
     </div>
 
@@ -2509,8 +3042,8 @@ export function pricingPage(): string {
 
 export function pricingProtectionsPage(): string {
   return shell(
-    "hazza \u2014 Protections",
-    "Anti-squatting, rate limits, and name rights for hazza name registrations.",
+    "hazza \u2014 immediately useful names",
+    "Anti-squatting, front-running, rate limits, and name rights for hazza registrations.",
     `
     <div class="header">
       <h1>protections</h1>
@@ -2518,18 +3051,8 @@ export function pricingProtectionsPage(): string {
 
     <div class="section">
       <div class="section-title">Progressive pricing</div>
-      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        Registering multiple names gets <strong style="color:#fff">progressively more expensive</strong>.
-        The contract tracks how many names each wallet registers within a 90-day window and applies multipliers:
-      </p>
-      <div class="info-grid">
-        <div class="info-row"><span class="label">Names 1&ndash;3</span><span class="value">1x ($5 each)</span></div>
-        <div class="info-row"><span class="label">Names 4&ndash;5</span><span class="value">2.5x ($12.50 each)</span></div>
-        <div class="info-row"><span class="label">Names 6&ndash;7</span><span class="value">5x ($25 each)</span></div>
-        <div class="info-row"><span class="label">Names 8+</span><span class="value">10x ($50 each)</span></div>
-      </div>
-      <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
-        The window resets after 90 days.
+      <p style="color:#aaa;line-height:1.7">
+        Bulk registration is deterred by progressively increasing prices. See the full breakdown on the <a href="/pricing">pricing page</a>.
       </p>
     </div>
 
@@ -2568,6 +3091,19 @@ export function pricingProtectionsPage(): string {
       </div>
     </div>
 
+    <hr class="divider">
+
+    <div class="section">
+      <div class="section-title">Front-running protection</div>
+      <p style="color:#aaa;line-height:1.7">
+        The contract supports a <strong style="color:#fff">commit-reveal</strong> scheme for front-running protection.<br>
+        A user commits a hash of their desired name (hidden from others),
+        waits at least 60 seconds, then reveals and pays.<br>
+        The default registration flow uses a relayer that handles this automatically.
+        Commits expire after 24 hours.
+      </p>
+    </div>
+
     <div style="text-align:center;margin:2rem 0">
       <a href="/pricing" style="display:inline-block;padding:0.6rem 1.5rem;border:1px solid #00e676;color:#00e676;border-radius:8px;font-weight:700;font-size:0.9rem">&larr; Back to Pricing</a>
     </div>`
@@ -2580,48 +3116,57 @@ export function pricingProtectionsPage(): string {
 
 export function pricingDetailsPage(): string {
   return shell(
-    "hazza \u2014 Details",
-    "Renewal, expiry, front-running protection, and payment details for hazza names.",
+    "hazza \u2014 immediately useful names",
+    "Fine print \u2014 payment, ownership, and technical details for hazza names.",
     `
     <div class="header">
-      <h1>details</h1>
+      <h1>fine print</h1>
     </div>
 
     <div class="section">
-      <div class="section-title">Renewal &amp; expiry</div>
-      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        Names are active for one year.<br>
-        After expiry, two recovery windows protect you before the name is released.
-      </p>
+      <div class="section-title">Payment</div>
       <div class="info-grid">
-        <div class="info-row"><span class="label">Annual renewal</span><span class="value">$2 / year</span></div>
-        <div class="info-row"><span class="label">Grace period</span><span class="value">30 days &mdash; renew at normal price</span></div>
-        <div class="info-row"><span class="label">Redemption period</span><span class="value">30 more days &mdash; $10 penalty + renewal</span></div>
-        <div class="info-row"><span class="label">After 60 days</span><span class="value">Name released for anyone to register</span></div>
+        <div class="info-row"><span class="label">Currency</span><span class="value">USDC on Base</span></div>
+        <div class="info-row"><span class="label">Gas</span><span class="value">Paid in ETH on Base (~$0.01 per tx)</span></div>
+        <div class="info-row"><span class="label">Agents &amp; CLIs</span><span class="value"><a href="/docs#x402">x402 API</a> for programmatic registration</span></div>
       </div>
     </div>
 
     <hr class="divider">
 
     <div class="section">
-      <div class="section-title">Front-running protection</div>
-      <p style="color:#aaa;line-height:1.7">
-        Registration uses a <strong style="color:#fff">commit-reveal</strong> scheme.<br>
-        You first commit a hash of your desired name (hidden from others),
-        wait at least 60 seconds, then reveal and pay.<br>
-        This prevents bots from sniping names they see in the mempool.
-        Commits expire after 24 hours.
-      </p>
+      <div class="section-title">Ownership</div>
+      <div class="info-grid">
+        <div class="info-row"><span class="label">Standard</span><span class="value">ERC-721 NFT on Base</span></div>
+        <div class="info-row"><span class="label">Transfer</span><span class="value">Names are transferable via the dashboard</span></div>
+        <div class="info-row"><span class="label">Marketplace</span><span class="value">Buy and sell via <a href="/marketplace">Seaport</a></span></div>
+        <div class="info-row"><span class="label">Operator</span><span class="value">Grant write access to another address</span></div>
+      </div>
     </div>
 
     <hr class="divider">
 
     <div class="section">
-      <div class="section-title">Payment</div>
-      <p style="color:#aaa;line-height:1.7">
-        All payments in <strong style="color:#fff">USDC</strong> on Base via <a href="https://x402.org">x402</a>.<br>
-        Click, pay, done &mdash; no manual token approvals needed.
+      <div class="section-title">Name rules</div>
+      <div class="info-grid">
+        <div class="info-row"><span class="label">Characters</span><span class="value">Lowercase a&ndash;z, 0&ndash;9, hyphens</span></div>
+        <div class="info-row"><span class="label">Length</span><span class="value">1&ndash;64 characters</span></div>
+        <div class="info-row"><span class="label">Unicode</span><span class="value">ENSIP-15 emoji &amp; international support</span></div>
+        <div class="info-row"><span class="label">First-come</span><span class="value">No challenge or dispute system</span></div>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div class="section">
+      <div class="section-title">Contract</div>
+      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
+        The hazza registry is a non-upgradeable smart contract on Base. All name data, ownership, and text records live onchain.
       </p>
+      <div class="info-grid">
+        <div class="info-row"><span class="label">Network</span><span class="value">Base (Sepolia testnet)</span></div>
+        <div class="info-row"><span class="label">Source</span><span class="value"><a href="https://github.com/geaux-eth/hazza">GitHub</a></span></div>
+      </div>
     </div>
 
     <div style="text-align:center;margin:2rem 0">
@@ -2636,8 +3181,8 @@ export function pricingDetailsPage(): string {
 
 export function docsPage(): string {
   return shell(
-    "hazza \u2014 Docs",
-    "hazza documentation. Registration flow, API endpoints, contract reference, and text record keys.",
+    "hazza \u2014 immediately useful names",
+    "CLI, registration flow, API endpoints, contract references, text record keys \u2014 all the hazza documentation needed to be online and onchain.",
     `
     <div class="header">
       <h1>docs</h1>
@@ -2900,10 +3445,11 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
       <div class="section-title">Contract</div>
       <div class="info-grid">
         <div class="info-row"><span class="label">Network</span><span class="value">Base Sepolia (testnet)</span></div>
-        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0x126453000d57Ec2952F6c863874ce21d23a7F402</span></div>
+        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0x2ab93c016F534C49e85c8E9E3E9aA8D45867ed7A</span></div>
         <div class="info-row"><span class="label">USDC</span><span class="value" style="font-size:0.75rem">0x06A096A051906dEDd05Ef22dCF61ca1199bb038c</span></div>
         <div class="info-row"><span class="label">Source</span><span class="value"><a href="https://github.com/geaux-eth/hazza">github.com/geaux-eth/hazza</a></span></div>
       </div>
+      <p style="color:#ffab00;font-size:0.8rem">(Currently on Base Sepolia testnet. Addresses will change at mainnet launch.)</p>
     </div>`
   );
 }
@@ -2914,8 +3460,8 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
 
 export function domainsPage(): string {
   return shell(
-    "hazza \u2014 Custom Domains",
-    "Link your own domain to your hazza name. Route any .com, .xyz, or .io to your onchain profile.",
+    "hazza \u2014 immediately useful names",
+    "Link your domain to your hazza name. Whether it\u2019s a .com, .xyz, .io \u2014 route your DNS to your onchain profile.",
     `
     <div class="header">
       <h1>custom domains</h1>
@@ -3104,8 +3650,8 @@ const DNS_MANAGE_SCRIPT = `
 
 export function domainsManagePage(): string {
   return shell(
-    "hazza \u2014 Manage DNS",
-    "Manage DNS records, nameservers, and routing for your hazza domain.",
+    "hazza \u2014 immediately useful names",
+    "Manage DNS records, nameservers, and routing for your hazza name.",
     `
     <div class="header">
       <h1>manage dns</h1>
@@ -3167,7 +3713,7 @@ const MARKETPLACE_STYLES = `
     padding: 0.75rem 1.25rem;
     background: none;
     border: none;
-    color: #6b8f6b;
+    color: #fff;
     font-family: 'Rubik', sans-serif;
     font-size: 0.9rem;
     font-weight: 500;
@@ -3446,7 +3992,7 @@ const MARKETPLACE_STYLES = `
   }
 `;
 
-export function marketplacePage(registryAddress: string, usdcAddress: string, chainId: string, seaportAddress: string, bazaarAddress: string): string {
+export function marketplacePage(registryAddress: string, usdcAddress: string, chainId: string, seaportAddress: string, bazaarAddress: string, batchExecutorAddress: string, treasuryAddress: string, marketplaceFeeBps: string, wethAddress: string): string {
   const SEAPORT_ABI_SNIPPET = JSON.stringify([
     { name: "fulfillOrder", type: "function", stateMutability: "payable",
       inputs: [{ name: "order", type: "tuple", components: [
@@ -3483,6 +4029,9 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
   const ERC20_ABI = JSON.stringify([
     { name: "approve", type: "function", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
     { name: "allowance", type: "function", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] },
+    { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
+    { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+    { name: "decimals", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
   ]);
 
   const script = `
@@ -3491,6 +4040,33 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
     var CHAIN_ID = '${esc(chainId)}';
     var SEAPORT = '${esc(seaportAddress)}';
     var BAZAAR = '${esc(bazaarAddress)}';
+    var BATCH_EXECUTOR = '${esc(batchExecutorAddress)}';
+    var TREASURY = '${esc(treasuryAddress)}';
+    var FEE_BPS = ${parseInt(marketplaceFeeBps) || 200};
+    var WETH = '${esc(wethAddress)}';
+    var BATCH_EXECUTOR_ABI = [
+      { name: 'executeBatch', type: 'function', stateMutability: 'payable',
+        inputs: [
+          { name: 'tokens', type: 'tuple[]', components: [
+            { name: 'token', type: 'address' }, { name: 'amount', type: 'uint256' }, { name: 'spender', type: 'address' }
+          ]},
+          { name: 'calls', type: 'tuple[]', components: [
+            { name: 'target', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'data', type: 'bytes' }
+          ]}
+        ],
+        outputs: [{ name: 'results', type: 'tuple[]', components: [
+          { name: 'success', type: 'bool' }, { name: 'returnData', type: 'bytes' }
+        ]}]
+      },
+      { name: 'executeBatchSimple', type: 'function', stateMutability: 'payable',
+        inputs: [{ name: 'calls', type: 'tuple[]', components: [
+          { name: 'target', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'data', type: 'bytes' }
+        ]}],
+        outputs: [{ name: 'results', type: 'tuple[]', components: [
+          { name: 'success', type: 'bool' }, { name: 'returnData', type: 'bytes' }
+        ]}]
+      }
+    ];
     var SEAPORT_ABI = ${SEAPORT_ABI_SNIPPET};
     var ERC721_ABI = ${ERC721_APPROVE_ABI};
     var ERC20_ABI = ${ERC20_ABI};
@@ -3567,7 +4143,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
             + '<div class="cart-item-name">' + escHtml(item.name) + '</div>'
             + '<div class="cart-item-price">' + item.price + ' ' + item.currency + '</div>'
             + '</div>'
-            + '<button class="cart-item-remove" onclick="removeFromCart(\\''+item.id+'\\')">✕</button>'
+            + '<button class="cart-item-remove" onclick="removeFromCart(\\x27'+item.id+'\\x27)">✕</button>'
             + '</div>';
           if (item.currency === 'ETH') ethTotal += parseFloat(item.price) || 0;
           else usdcTotal += parseFloat(item.price) || 0;
@@ -3590,7 +4166,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
             + '<div class="cart-item-name">' + escHtml(w.name) + '</div>'
             + '<div class="cart-item-price">' + w.price + ' ' + w.currency + '</div>'
             + '</div>'
-            + '<button class="btn-buy" style="flex:0;padding:0.4rem 0.6rem;font-size:0.75rem" onclick="addToCart({id:\\'buy-'+w.orderHash+'\\',type:\\'Buy\\',name:\\''+escHtml(w.name)+'\\',price:\\''+w.price+'\\',currency:\\''+w.currency+'\\',orderHash:\\''+w.orderHash+'\\'})">+ cart</button>'
+            + '<button class="btn-buy" style="flex:0;padding:0.4rem 0.6rem;font-size:0.75rem" onclick="addToCart({id:\\x27buy-'+w.orderHash+'\\x27,type:\\x27Buy\\x27,name:\\x27'+escHtml(w.name)+'\\x27,price:\\x27'+w.price+'\\x27,currency:\\x27'+w.currency+'\\x27,orderHash:\\x27'+w.orderHash+'\\x27})">+ cart</button>'
             + '</div>';
         });
         savedContainer.innerHTML = shtml;
@@ -3627,7 +4203,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
             try {
               await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x' + targetChainId.toString(16) }] });
             } catch(switchErr) {
-              if (switchErr.code === 4902) {
+              try {
                 await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{
                   chainId: '0x' + targetChainId.toString(16),
                   chainName: targetChainId === 84532 ? 'Base Sepolia' : 'Base',
@@ -3635,13 +4211,14 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
                   rpcUrls: [targetChainId === 84532 ? 'https://sepolia.base.org' : 'https://mainnet.base.org'],
                   blockExplorerUrls: [targetChainId === 84532 ? 'https://sepolia.basescan.org' : 'https://basescan.org'],
                 }]});
-              } else { alert('Please switch to ' + (targetChainId === 84532 ? 'Base Sepolia' : 'Base') + ' in your wallet.'); return; }
+              } catch(addErr) { alert('Please add ' + (targetChainId === 84532 ? 'Base Sepolia' : 'Base') + ' to your wallet.'); return; }
             }
             provider = new ethers.BrowserProvider(window.ethereum);
           }
           signer = await provider.getSigner();
-          $('mp-connect-btn').textContent = truncAddr(wallet);
-          $('mp-connect-btn').classList.add('connected');
+          try { sessionStorage.setItem('hazza_wallet', wallet); } catch(e) {}
+          var wd = $('mp-wallet-display');
+          if (wd) wd.textContent = truncAddr(wallet);
           // Report watchlist to server
           watchlist.forEach(function(w) {
             fetch('/api/marketplace/watch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({orderHash: w.orderHash, address: wallet}) }).catch(function(){});
@@ -3652,6 +4229,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
 
     // --- Browse Listings ---
     var listingsData = [];
+    var offersData = [];
     async function loadListings() {
       $('listings-container').innerHTML = '<p style="color:#6b8f6b;text-align:center">Loading listings...</p>';
       try {
@@ -3667,21 +4245,50 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
     function renderListings() {
       var container = $('listings-container');
       if (listingsData.length === 0) {
-        container.innerHTML = '<div class="empty-state"><p>No names listed yet.</p><p><a href="/dashboard">List yours from the dashboard</a></p></div>';
+        container.innerHTML = '<div class="empty-state"><p>No names listed yet.</p><p><a href="#" onclick="event.preventDefault();switchTab(\\x27mynames\\x27)">list a name</a></p></div>';
         return;
       }
+
+      // Apply filters
+      var search = ($('mp-search') ? $('mp-search').value : '').toLowerCase().trim();
+      var sortBy = $('mp-sort') ? $('mp-sort').value : 'newest';
+      var typeFilter = $('mp-type') ? $('mp-type').value : 'all';
+
+      var filtered = listingsData.filter(function(l) {
+        if (search && l.name.toLowerCase().indexOf(search) === -1) return false;
+        if (typeFilter === 'namespace' && !l.isNamespace) return false;
+        if (typeFilter === 'regular' && l.isNamespace) return false;
+        return true;
+      });
+
+      // Sort
+      filtered.sort(function(a, b) {
+        if (sortBy === 'price-low') return (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0);
+        if (sortBy === 'price-high') return (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0);
+        if (sortBy === 'name-az') return a.name.localeCompare(b.name);
+        if (sortBy === 'expiry-soon') return (a.expiresAt || 0) - (b.expiresAt || 0);
+        return 0; // newest = default API order
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>No names match your filters.</p></div>';
+        return;
+      }
+
       var html = '<div class="listing-grid">';
-      listingsData.forEach(function(l) {
+      filtered.forEach(function(l) {
         var badgeClass = l.currency === 'USDC' ? 'badge-usdc' : 'badge-eth';
         var watched = isWatched(l.orderHash);
+        var nsBadgeHtml = l.isNamespace ? ' <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;background:#00e676;color:#000;font-size:0.6rem;font-weight:900;border-radius:3px;vertical-align:middle;margin-left:0.2rem" title="Namespace">N</span>' : '';
         html += '<div class="listing-card">'
-          + '<div class="listing-name"><a href="' + escHtml(l.profileUrl) + '">' + escHtml(l.name) + '<span style="color:#00e676">.hazza.name</span></a></div>'
+          + '<div class="listing-name"><a href="' + escHtml(l.profileUrl) + '">' + escHtml(l.name) + '<span style="color:#00e676">.hazza.name</span></a>' + nsBadgeHtml + '</div>'
           + '<div class="listing-meta">Seller: ' + truncAddr(l.seller) + ' &middot; Expires: ' + formatDate(l.listingExpiry) + '</div>'
           + '<div class="listing-price">' + l.price + '<span class="currency-badge ' + badgeClass + '">' + l.currency + '</span></div>'
           + '<div class="listing-actions">'
-          + '<button class="btn-buy" onclick="buyListing(\\'' + l.orderHash + '\\')">Buy</button>'
-          + '<button class="btn-buy" style="background:transparent;border:1px solid #1a2e1a;color:#6b8f6b;flex:0;padding:0.6rem 0.75rem" onclick="addToCart({id:\\'buy-'+l.orderHash+'\\',type:\\'Buy\\',name:\\''+escHtml(l.name)+'\\',price:\\''+l.price+'\\',currency:\\''+l.currency+'\\',orderHash:\\''+l.orderHash+'\\'})">+</button>'
-          + '<button class="btn-watch' + (watched ? ' saved' : '') + '" onclick="toggleWatch(\\'' + l.orderHash + '\\',\\'' + escHtml(l.name) + '\\',\\'' + l.price + '\\',\\'' + l.currency + '\\')">' + (watched ? '★' : '☆') + '</button>'
+          + '<button class="btn-buy" onclick="buyListing(\\x27' + l.orderHash + '\\x27)">Buy</button>'
+          + '<button class="btn-buy" style="background:transparent;border:1px solid #1a2e1a;color:#00e676;flex:0;padding:0.6rem 0.75rem;font-size:0.75rem" onclick="showOfferForm(\\x27' + escHtml(l.name) + '\\x27)">Offer</button>'
+          + '<button class="btn-buy" style="background:transparent;border:1px solid #1a2e1a;color:#6b8f6b;flex:0;padding:0.6rem 0.75rem" onclick="addToCart({id:\\x27buy-'+l.orderHash+'\\x27,type:\\x27Buy\\x27,name:\\x27'+escHtml(l.name)+'\\x27,price:\\x27'+l.price+'\\x27,currency:\\x27'+l.currency+'\\x27,orderHash:\\x27'+l.orderHash+'\\x27})">+</button>'
+          + '<button class="btn-watch' + (watched ? ' saved' : '') + '" onclick="toggleWatch(\\x27' + l.orderHash + '\\x27,\\x27' + escHtml(l.name) + '\\x27,\\x27' + l.price + '\\x27,\\x27' + l.currency + '\\x27)">' + (watched ? '★' : '☆') + '</button>'
           + '</div>';
 
         // Watchlist count
@@ -3720,24 +4327,6 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
         { name: 'signature', type: 'bytes' }
       ]}], outputs: []
     }];
-    var SEAPORT_FULFILL_ABI = [{
-      name: 'fulfillOrder', type: 'function', stateMutability: 'payable',
-      inputs: [
-        { name: 'order', type: 'tuple', components: [
-          { name: 'parameters', type: 'tuple', components: [
-            { name: 'offerer', type: 'address' }, { name: 'zone', type: 'address' },
-            { name: 'offer', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }] },
-            { name: 'consideration', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }, { name: 'recipient', type: 'address' }] },
-            { name: 'orderType', type: 'uint8' }, { name: 'startTime', type: 'uint256' }, { name: 'endTime', type: 'uint256' },
-            { name: 'zoneHash', type: 'bytes32' }, { name: 'salt', type: 'uint256' }, { name: 'conduitKey', type: 'bytes32' }, { name: 'totalOriginalConsiderationItems', type: 'uint256' }
-          ]},
-          { name: 'signature', type: 'bytes' }
-        ]},
-        { name: 'fulfillerConduitKey', type: 'bytes32' }
-      ],
-      outputs: [{ name: 'fulfilled', type: 'bool' }]
-    }];
-
     // EIP-712 types for Seaport OrderComponents
     var SEAPORT_EIP712_TYPES = {
       OrderComponents: [
@@ -3779,96 +4368,53 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
     async function buyListing(orderHash) {
       var listing = listingsData.find(function(l) { return l.orderHash === orderHash; });
       if (!listing) return alert('Listing not found');
-      if (!listing.orderComponents) return alert('Listing data incomplete — cannot fulfill');
       if (!wallet) { await connectWallet(); if (!wallet) return; }
 
       try {
-        var oc = listing.orderComponents;
+        // Ask server to prepare the fulfillment tx via Bazaar SDK
+        var statusEl = $('buy-status');
+        if (statusEl) { statusEl.textContent = 'Preparing transaction...'; statusEl.style.display = 'block'; }
 
-        // For USDC listings, approve USDC to Seaport first
-        if (listing.currency === 'USDC') {
-          var erc20 = new ethers.Contract(USDC, ERC20_ABI, signer);
-          var totalUsdc = 0n;
-          oc.consideration.forEach(function(c) {
-            if (c.itemType === 1) totalUsdc += BigInt(c.startAmount);
-          });
-          var allowance = await erc20.allowance(wallet, SEAPORT);
-          if (allowance < totalUsdc) {
-            var appTx = await erc20.approve(SEAPORT, totalUsdc);
+        var res = await fetch('/api/marketplace/fulfill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderHash: orderHash, buyerAddress: wallet })
+        });
+        var data = await res.json();
+        if (data.error) return alert('Cannot buy: ' + data.error);
+
+        // Execute approval transactions (e.g. USDC approve to Seaport)
+        if (data.approvals && data.approvals.length > 0) {
+          if (statusEl) statusEl.textContent = 'Approving tokens...';
+          for (var i = 0; i < data.approvals.length; i++) {
+            var appTx = await signer.sendTransaction({
+              to: data.approvals[i].to,
+              data: data.approvals[i].data,
+              value: BigInt(data.approvals[i].value || '0')
+            });
             await appTx.wait();
           }
         }
 
-        // Build order parameters for fulfillOrder
-        var orderParams = {
-          offerer: oc.offerer,
-          zone: oc.zone,
-          offer: oc.offer.map(function(o) {
-            return [o.itemType, o.token, BigInt(o.identifierOrCriteria), BigInt(o.startAmount), BigInt(o.endAmount)];
-          }),
-          consideration: oc.consideration.map(function(c) {
-            return [c.itemType, c.token, BigInt(c.identifierOrCriteria), BigInt(c.startAmount), BigInt(c.endAmount), c.recipient];
-          }),
-          orderType: oc.orderType,
-          startTime: BigInt(oc.startTime),
-          endTime: BigInt(oc.endTime),
-          zoneHash: oc.zoneHash,
-          salt: BigInt(oc.salt),
-          conduitKey: oc.conduitKey,
-          totalOriginalConsiderationItems: BigInt(oc.totalOriginalConsiderationItems)
-        };
-
-        // Calculate ETH value (sum of NATIVE consideration items)
-        var ethValue = 0n;
-        oc.consideration.forEach(function(c) {
-          if (c.itemType === 0) ethValue += BigInt(c.startAmount);
+        // Execute the fulfillment transaction
+        if (statusEl) statusEl.textContent = 'Confirming purchase...';
+        var tx = await signer.sendTransaction({
+          to: data.fulfillment.to,
+          data: data.fulfillment.data,
+          value: BigInt(data.fulfillment.value || '0')
         });
-
-        // Call Seaport fulfillOrder
-        var seaport = new ethers.Contract(SEAPORT, SEAPORT_FULFILL_ABI, signer);
-
-        // Reconstruct the signature from messageData or use a known approach
-        // The listing should include the seller's signature in messageData
-        var sig = '0x'; // placeholder — we need the seller signature
-        if (listing.messageData) {
-          // The messageData is the ABI-encoded Seaport submission containing the signature
-          try {
-            var abiCoder = ethers.AbiCoder.defaultAbiCoder();
-            var decoded = abiCoder.decode(
-              ['((address,address,(uint8,address,uint256,uint256,uint256)[],(uint8,address,uint256,uint256,uint256,address)[],uint8,uint256,uint256,bytes32,uint256,bytes32,uint256),uint256,bytes)'],
-              listing.messageData
-            );
-            sig = decoded[0][2]; // signature is the 3rd element
-          } catch(decErr) {
-            console.error('Failed to decode messageData', decErr);
-          }
-        }
-
-        if (sig === '0x' || sig.length < 10) {
-          return alert('Could not extract seller signature from listing data. This listing may need to be re-indexed.');
-        }
-
-        var order = {
-          parameters: [
-            orderParams.offerer, orderParams.zone,
-            orderParams.offer, orderParams.consideration,
-            orderParams.orderType, orderParams.startTime, orderParams.endTime,
-            orderParams.zoneHash, orderParams.salt, orderParams.conduitKey,
-            orderParams.totalOriginalConsiderationItems
-          ],
-          signature: sig
-        };
-
-        var tx = await seaport.fulfillOrder(order, ZERO_BYTES32, { value: ethValue });
         var receipt = await tx.wait();
 
+        if (statusEl) statusEl.style.display = 'none';
+
         if (receipt.status === 1) {
-          alert('Purchase successful! ' + listing.name + '.hazza.name is now yours.\\n\\nTx: ' + tx.hash);
-          loadListings(); // Refresh
+          alert('Purchase successful! ' + (listing.name || '') + '.hazza.name is now yours.\\n\\nTx: ' + tx.hash);
+          loadListings();
         } else {
           alert('Transaction reverted. Check the block explorer for details.');
         }
       } catch(e) {
+        if (statusEl) statusEl.style.display = 'none';
         alert('Buy failed: ' + (e.shortMessage || e.message || e));
       }
     }
@@ -3877,7 +4423,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
     async function loadMyNames() {
       var container = $('mynames-container');
       if (!wallet) {
-        container.innerHTML = '<div class="empty-state"><p>Connect your wallet to see your names</p><button class="btn-buy" onclick="connectWallet()" style="display:inline-block;width:auto;padding:0.6rem 1.5rem">connect wallet</button></div>';
+        container.innerHTML = '<div class="empty-state"><p style="color:#6b8f6b">connect your wallet to see your names</p><p style="color:#444;font-size:0.85rem">tap <strong style="color:#00e676">connect</strong> in the menu above</p></div>';
         return;
       }
       container.innerHTML = '<p style="color:#6b8f6b;text-align:center">Loading your names...</p>';
@@ -3886,22 +4432,24 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
         var data = await res.json();
         var names = data.names || [];
         if (names.length === 0) {
-          container.innerHTML = '<div class="empty-state"><p>You don\\'t own any hazza names yet.</p><a href="/register" class="btn-buy" style="display:inline-block;width:auto;padding:0.6rem 1.5rem;text-decoration:none">register your first name — it\\'s free!</a></div>';
+          container.innerHTML = '<div class="empty-state"><p>You don\\x27t own any hazza names yet.</p><a href="/register" class="btn-buy" style="display:inline-block;width:auto;padding:0.6rem 1.5rem;text-decoration:none">register your first name — it\\x27s free!</a></div>';
           return;
         }
         var html = '';
         names.forEach(function(n) {
-          var statusClass = 'status-' + n.status;
+          var statusClass = 'status-' + escHtml(n.status);
           html += '<div class="name-card">'
             + '<div class="name-card-info">'
             + '<div class="name-card-name">' + escHtml(n.name) + '<span style="color:#00e676">.hazza.name</span>'
-            + ' <span class="status-badge ' + statusClass + '">' + n.status + '</span></div>'
-            + '<div class="name-card-detail">Token #' + n.tokenId + ' &middot; Expires ' + formatDate(n.expiresAt) + '</div>'
+            + ' <span class="status-badge ' + statusClass + '">' + escHtml(n.status) + '</span></div>'
+            + '<div class="name-card-detail">Token #' + escHtml(String(n.tokenId)) + '</div>'
+            + '<div class="name-card-detail">Expires ' + formatDate(n.expiresAt) + '</div>'
             + '</div>'
             + '<div class="name-card-actions">'
             + '<a href="https://' + encodeURIComponent(n.name) + '.hazza.name">view</a>'
             + '<a href="/manage?name=' + encodeURIComponent(n.name) + '">manage</a>'
-            + '<button onclick="showSellForm(\\'' + escHtml(n.name) + '\\', \\'' + n.tokenId + '\\')">sell</button>'
+            + '<button onclick="showSellForm(\\x27' + escHtml(n.name) + '\\x27, \\x27' + escHtml(String(n.tokenId)) + '\\x27)">list</button>'
+            + '<button onclick="shareName(\\x27' + escHtml(n.name) + '\\x27)">share</button>'
             + '</div>'
             + '</div>'
             + '<div id="sell-form-' + escHtml(n.name) + '" style="display:none"></div>';
@@ -3912,19 +4460,54 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
       }
     }
 
+    function shareName(name) {
+      var url = 'https://' + name + '.hazza.name';
+      var text = 'Check out ' + name + '.hazza.name';
+      var existing = document.getElementById('share-modal');
+      if (existing) existing.remove();
+      var overlay = document.createElement('div');
+      overlay.id = 'share-modal';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+      overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+      var box = document.createElement('div');
+      box.style.cssText = 'background:#111;border:1px solid #1a2e1a;border-radius:12px;padding:1.5rem;max-width:320px;width:90%;text-align:center';
+      box.innerHTML = '<div style="font-size:1rem;color:#fff;margin-bottom:1rem;font-family:Rubik,sans-serif">Share <strong style="color:#00e676">' + name + '.hazza.name</strong></div>'
+        + '<div style="display:flex;gap:1rem;justify-content:center;margin-bottom:1rem">'
+        + '<a href="https://twitter.com/intent/tweet?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(url) + '" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;text-decoration:none;gap:0.3rem">'
+        + '<svg width="32" height="32" viewBox="0 0 24 24" fill="#fff"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>'
+        + '<span style="color:#888;font-size:0.7rem;font-family:Rubik,sans-serif">Twitter</span></a>'
+        + '<a href="https://warpcast.com/~/compose?text=' + encodeURIComponent(text + ' ' + url) + '" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;text-decoration:none;gap:0.3rem">'
+        + '<svg width="32" height="32" viewBox="0 0 24 24" fill="#8a63d2"><path d="M3.77 2h16.46C21.21 2 22 2.79 22 3.77v16.46c0 .98-.79 1.77-1.77 1.77H3.77C2.79 22 2 21.21 2 20.23V3.77C2 2.79 2.79 2 3.77 2zm3.48 4.3L5.6 12.26h2.18l.89 5.44h2.07l1.26-7.4 1.26 7.4h2.07l.89-5.44h2.18L16.75 6.3h-2.82l-.93 5.5-.93-5.5H8.07z"/></svg>'
+        + '<span style="color:#888;font-size:0.7rem;font-family:Rubik,sans-serif">Farcaster</span></a>'
+        + '</div>'
+        + '<button id="share-copy-btn" style="width:100%;padding:0.6rem;background:#1a2e1a;color:#00e676;border:1px solid #00e676;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.85rem;font-family:Rubik,sans-serif">Copy URL</button>';
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      document.getElementById('share-copy-btn').onclick = function(e) {
+        e.stopPropagation();
+        navigator.clipboard.writeText(url).then(function() {
+          var btn = document.getElementById('share-copy-btn');
+          btn.textContent = 'Copied!';
+          btn.style.background = '#00e676';
+          btn.style.color = '#000';
+          setTimeout(function(){ overlay.remove(); }, 1200);
+        });
+      };
+    }
+
     function showSellForm(name, tokenId) {
+      if (!tokenId || tokenId === 'undefined') {
+        alert('Token ID not found. Please select a name from My Names first.');
+        return;
+      }
       var el = $('sell-form-' + name);
       if (!el) return;
       if (el.style.display === 'block') { el.style.display = 'none'; return; }
       el.style.display = 'block';
       el.innerHTML = '<div class="sell-form">'
-        + '<label>Price</label>'
+        + '<label>Price (ETH)</label>'
         + '<input type="number" id="sell-price-' + name + '" placeholder="0.01" step="any" min="0">'
-        + '<label>Currency</label>'
-        + '<select id="sell-currency-' + name + '">'
-        + '<option value="ETH">ETH</option>'
-        + '<option value="USDC">USDC</option>'
-        + '</select>'
+        + '<div style="font-size:11px;color:#888;margin:-4px 0 8px">2% marketplace fee deducted from sale</div>'
         + '<label>Duration</label>'
         + '<select id="sell-duration-' + name + '">'
         + '<option value="604800">7 days</option>'
@@ -3932,14 +4515,13 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
         + '<option value="7776000">90 days</option>'
         + '<option value="0">No expiry</option>'
         + '</select>'
-        + '<button class="btn-sell" onclick="createListing(\\'' + name + '\\', \\'' + tokenId + '\\')">List for Sale</button>'
+        + '<button class="btn-sell" onclick="createListing(\\x27' + name + '\\x27, \\x27' + tokenId + '\\x27)">List for Sale</button>'
         + '</div>';
     }
 
     async function createListing(name, tokenId) {
       if (!wallet) { await connectWallet(); if (!wallet) return; }
       var price = $('sell-price-' + name).value;
-      var currency = $('sell-currency-' + name).value;
       var duration = $('sell-duration-' + name).value;
       if (!price || parseFloat(price) <= 0) return alert('Enter a valid price');
 
@@ -3956,14 +4538,10 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
         var seaportRead = new ethers.Contract(SEAPORT, SEAPORT_GET_COUNTER_ABI, provider);
         var counter = await seaportRead.getCounter(wallet);
 
-        // Step 3: Build order components
-        var isUsdc = (currency === 'USDC');
-        var priceWei;
-        if (isUsdc) {
-          priceWei = ethers.parseUnits(price, 6); // USDC = 6 decimals
-        } else {
-          priceWei = ethers.parseEther(price);
-        }
+        // Step 3: Build order components with 2% marketplace fee
+        var priceWei = ethers.parseEther(price);
+        var feeAmount = (priceWei * BigInt(FEE_BPS)) / 10000n;
+        var sellerAmount = priceWei - feeAmount;
 
         var endTime = (duration === '0')
           ? BigInt('115792089237316195423570985008687907853269984665640564039457584007913129639935') // max uint256 = no expiry
@@ -3978,15 +4556,25 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
           endAmount: 1n
         }];
 
-        // Consideration: seller receives payment (Base has 0% fee)
+        // Consideration: seller receives (price - fee), treasury receives fee
         var consideration = [{
-          itemType: isUsdc ? 1 : 0, // 0=NATIVE(ETH), 1=ERC20(USDC)
-          token: isUsdc ? USDC : '0x0000000000000000000000000000000000000000',
+          itemType: 0, // NATIVE (ETH)
+          token: '0x0000000000000000000000000000000000000000',
           identifierOrCriteria: 0n,
-          startAmount: priceWei,
-          endAmount: priceWei,
+          startAmount: sellerAmount,
+          endAmount: sellerAmount,
           recipient: wallet
         }];
+        if (feeAmount > 0n) {
+          consideration.push({
+            itemType: 0,
+            token: '0x0000000000000000000000000000000000000000',
+            identifierOrCriteria: 0n,
+            startAmount: feeAmount,
+            endAmount: feeAmount,
+            recipient: TREASURY
+          });
+        }
 
         var orderParameters = {
           offerer: wallet,
@@ -4052,7 +4640,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
         var receipt = await tx.wait();
 
         if (receipt.status === 1) {
-          alert('Listed! ' + name + '.hazza.name is now for sale at ' + price + ' ' + currency + '.\\n\\nTx: ' + tx.hash + '\\n\\nThis listing appears on hazza.name/marketplace and netprotocol.app/bazaar.');
+          alert('Listed! ' + name + '.hazza.name is now for sale at ' + price + ' ETH (2% fee).\\n\\nTx: ' + tx.hash + '\\n\\nThis listing appears on hazza.name/marketplace and netprotocol.app/bazaar.');
           showSellForm(name, tokenId); // Close the form
           loadListings(); // Refresh browse tab
         } else {
@@ -4063,32 +4651,438 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
       }
     }
 
+    // --- Make Offer on a Name ---
+    function showOfferForm(name) {
+      // Create modal overlay
+      var existing = document.getElementById('offer-modal');
+      if (existing) existing.remove();
+      var overlay = document.createElement('div');
+      overlay.id = 'offer-modal';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+      overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+      var box = document.createElement('div');
+      box.style.cssText = 'background:#111;border:1px solid #1a2e1a;border-radius:12px;padding:1.5rem;max-width:360px;width:90%';
+      box.innerHTML = '<div style="font-size:1rem;color:#fff;margin-bottom:1rem;font-weight:700;font-family:Rubik,sans-serif">Make Offer for <span style="color:#00e676">' + escHtml(name) + '.hazza.name</span></div>'
+        + '<label style="display:block;font-size:0.8rem;color:#6b8f6b;margin-bottom:0.25rem">Offer Amount (WETH)</label>'
+        + '<input type="number" id="offer-price" placeholder="0.01" step="any" min="0" style="width:100%;padding:0.5rem;background:#0a0a0a;border:1px solid #1a2e1a;border-radius:6px;color:#fff;font-size:0.9rem;font-family:Rubik,sans-serif;margin-bottom:0.75rem">'
+        + '<div style="font-size:0.7rem;color:#444;margin-bottom:0.75rem">Offers use WETH (wrapped ETH). You must have WETH in your wallet.</div>'
+        + '<label style="display:block;font-size:0.8rem;color:#6b8f6b;margin-bottom:0.25rem">Expires</label>'
+        + '<select id="offer-duration" style="width:100%;padding:0.5rem;background:#0a0a0a;border:1px solid #1a2e1a;border-radius:6px;color:#fff;font-size:0.85rem;font-family:Rubik,sans-serif;margin-bottom:0.75rem">'
+        + '<option value="86400">1 day</option>'
+        + '<option value="259200">3 days</option>'
+        + '<option value="604800" selected>7 days</option>'
+        + '<option value="2592000">30 days</option>'
+        + '</select>'
+        + '<div style="font-size:0.75rem;color:#444;margin-bottom:1rem">2% marketplace fee (included in offer). Seller receives 98% in WETH.</div>'
+        + '<button id="offer-submit-btn" style="width:100%;padding:0.6rem;background:#00e676;color:#000;border:none;border-radius:8px;font-weight:700;font-size:0.9rem;cursor:pointer;font-family:Rubik,sans-serif" onclick="makeOffer(\\x27' + escHtml(name) + '\\x27)">Sign & Submit Offer</button>'
+        + '<div id="offer-status" style="display:none;margin-top:0.75rem;font-size:0.85rem;text-align:center"></div>';
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+    }
+
+    async function makeOffer(name) {
+      if (!wallet) { await connectWallet(); if (!wallet) return; }
+      var priceStr = document.getElementById('offer-price').value;
+      var duration = document.getElementById('offer-duration').value;
+      var statusEl = document.getElementById('offer-status');
+      var submitBtn = document.getElementById('offer-submit-btn');
+      if (!priceStr || parseFloat(priceStr) <= 0) { alert('Enter a valid offer amount'); return; }
+      var dur = parseInt(duration);
+      if (isNaN(dur) || dur <= 0) { alert('Invalid duration'); return; }
+
+      statusEl.style.display = 'block';
+      statusEl.style.color = '#6b8f6b';
+      statusEl.textContent = 'Looking up name...';
+      submitBtn.disabled = true;
+
+      try {
+        // Get tokenId for this name
+        var resolveRes = await fetch('/api/resolve/' + encodeURIComponent(name));
+        var resolveData = await resolveRes.json();
+        if (!resolveData.tokenId) throw new Error('Name not found');
+        var tokenId = resolveData.tokenId;
+        var nameOwner = resolveData.owner;
+
+        // Build Seaport offer order: buyer offers WETH, wants specific ERC721
+        // Seaport cannot escrow native ETH from offerer — must use WETH (ERC20)
+        var priceWei = ethers.parseEther(priceStr);
+        var feeAmount = (priceWei * BigInt(FEE_BPS)) / 10000n;
+        var sellerAmount = priceWei - feeAmount;
+
+        var now = Math.floor(Date.now() / 1000);
+        var endTime = BigInt(now + dur);
+
+        // Check WETH balance
+        statusEl.textContent = 'Checking WETH balance...';
+        var wethContract = new ethers.Contract(WETH, ERC20_ABI, signer);
+        var wethBal = BigInt(await wethContract.balanceOf(wallet));
+        if (wethBal < priceWei) {
+          var needed = ethers.formatEther(priceWei);
+          var have = ethers.formatEther(wethBal);
+          throw new Error('Insufficient WETH: need ' + needed + ', have ' + have + '. Wrap ETH to WETH first.');
+        }
+
+        // Approve WETH to Seaport if needed
+        statusEl.textContent = 'Checking WETH approval...';
+        var currentAllowance = BigInt(await wethContract.allowance(wallet, SEAPORT));
+        if (currentAllowance < priceWei) {
+          statusEl.textContent = 'Approve WETH for Seaport...';
+          var appTx = await wethContract.approve(SEAPORT, priceWei);
+          await appTx.wait();
+        }
+
+        // Get counter from Seaport
+        statusEl.textContent = 'Preparing order...';
+        var seaportRead = new ethers.Contract(SEAPORT, SEAPORT_GET_COUNTER_ABI, provider);
+        var counter = await seaportRead.getCounter(wallet);
+
+        // Offer: buyer offers WETH (ERC20, itemType 1)
+        var offer = [{
+          itemType: 1, // ERC20 (WETH)
+          token: WETH,
+          identifierOrCriteria: 0n,
+          startAmount: priceWei,
+          endAmount: priceWei
+        }];
+
+        // Consideration: buyer gets NFT, seller gets WETH payment, treasury gets fee
+        var consideration = [
+          {
+            itemType: 2, // ERC721
+            token: REGISTRY,
+            identifierOrCriteria: BigInt(tokenId),
+            startAmount: 1n,
+            endAmount: 1n,
+            recipient: wallet // buyer receives the NFT
+          },
+          {
+            itemType: 1, // ERC20 (WETH to seller)
+            token: WETH,
+            identifierOrCriteria: 0n,
+            startAmount: sellerAmount,
+            endAmount: sellerAmount,
+            recipient: nameOwner // seller gets paid
+          }
+        ];
+        // Add treasury fee if non-zero
+        if (feeAmount > 0n) {
+          consideration.push({
+            itemType: 1, // ERC20 (WETH fee to treasury)
+            token: WETH,
+            identifierOrCriteria: 0n,
+            startAmount: feeAmount,
+            endAmount: feeAmount,
+            recipient: TREASURY
+          });
+        }
+
+        var orderParameters = {
+          offerer: wallet,
+          zone: '0x0000000000000000000000000000000000000000',
+          offer: offer,
+          consideration: consideration,
+          orderType: 0, // FULL_OPEN — no zone restrictions
+          startTime: BigInt(now),
+          endTime: endTime,
+          zoneHash: ZERO_BYTES32,
+          salt: BigInt(generateSalt()),
+          conduitKey: ZERO_BYTES32,
+          totalOriginalConsiderationItems: BigInt(consideration.length)
+        };
+
+        // EIP-712 sign
+        statusEl.textContent = 'Sign the offer in your wallet...';
+        var domain = {
+          name: 'Seaport',
+          version: '1.6',
+          chainId: parseInt(CHAIN_ID),
+          verifyingContract: SEAPORT
+        };
+        var message = {
+          offerer: orderParameters.offerer,
+          zone: orderParameters.zone,
+          offer: offer,
+          consideration: consideration,
+          orderType: orderParameters.orderType,
+          startTime: orderParameters.startTime,
+          endTime: orderParameters.endTime,
+          zoneHash: orderParameters.zoneHash,
+          salt: orderParameters.salt,
+          conduitKey: orderParameters.conduitKey,
+          counter: counter
+        };
+        var signature = await signer.signTypedData(domain, SEAPORT_EIP712_TYPES, message);
+
+        // Submit to our API
+        statusEl.textContent = 'Submitting offer...';
+        var orderComponentsData = {
+          offerer: wallet,
+          zone: '0x0000000000000000000000000000000000000000',
+          offer: offer.map(function(o) { return { itemType: o.itemType, token: o.token, identifierOrCriteria: o.identifierOrCriteria.toString(), startAmount: o.startAmount.toString(), endAmount: o.endAmount.toString() }; }),
+          consideration: consideration.map(function(c) { return { itemType: c.itemType, token: c.token, identifierOrCriteria: c.identifierOrCriteria.toString(), startAmount: c.startAmount.toString(), endAmount: c.endAmount.toString(), recipient: c.recipient }; }),
+          orderType: 0,
+          startTime: orderParameters.startTime.toString(),
+          endTime: orderParameters.endTime.toString(),
+          zoneHash: ZERO_BYTES32,
+          salt: orderParameters.salt.toString(),
+          conduitKey: ZERO_BYTES32,
+          counter: counter.toString(),
+          totalOriginalConsiderationItems: consideration.length.toString()
+        };
+
+        var res = await fetch('/api/marketplace/offer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: name,
+            offerer: wallet,
+            price: priceStr,
+            currency: 'WETH',
+            signature: signature,
+            orderComponents: orderComponentsData,
+            expiresAt: now + dur,
+            sellerAmount: sellerAmount.toString(),
+            feeAmount: feeAmount.toString(),
+            tokenId: tokenId
+          })
+        });
+        var result = await res.json();
+        if (result.error) throw new Error(result.error);
+
+        statusEl.style.color = '#00e676';
+        statusEl.textContent = 'Offer submitted! The owner will be notified.';
+        setTimeout(function() {
+          var modal = document.getElementById('offer-modal');
+          if (modal) modal.remove();
+        }, 2000);
+      } catch(e) {
+        statusEl.style.color = '#ff5252';
+        statusEl.textContent = 'Error: ' + (e.shortMessage || e.message || e);
+        submitBtn.disabled = false;
+      }
+    }
+
+    // --- Accept an OTC Offer ---
+    async function acceptNameOffer(name, offererAddr) {
+      if (!wallet) { await connectWallet(); if (!wallet) return; }
+
+      try {
+        // Fetch the offer
+        var res = await fetch('/api/marketplace/offers/' + encodeURIComponent(name));
+        var data = await res.json();
+        var offer = (data.offers || []).find(function(o) { return o.offerer === offererAddr.toLowerCase(); });
+        if (!offer) return alert('Offer no longer available');
+        if (!confirm('Accept offer of ' + offer.price + ' ETH for ' + name + '.hazza.name? This transfers your name to the buyer.')) return;
+
+        // Reconstruct the Seaport order for fulfillment
+        var oc = offer.orderComponents;
+        if (!oc || !offer.signature) return alert('Invalid offer data — missing order components');
+
+        // Seller needs to approve NFT to Seaport
+        var nft = new ethers.Contract(REGISTRY, ERC721_ABI, signer);
+        var approved = await nft.isApprovedForAll(wallet, SEAPORT);
+        if (!approved) {
+          var appTx = await nft.setApprovalForAll(SEAPORT, true);
+          await appTx.wait();
+        }
+
+        // Build the full order for Seaport fulfillOrder
+        var order = {
+          parameters: {
+            offerer: oc.offerer,
+            zone: oc.zone,
+            offer: oc.offer.map(function(o) { return { itemType: o.itemType, token: o.token, identifierOrCriteria: BigInt(o.identifierOrCriteria), startAmount: BigInt(o.startAmount), endAmount: BigInt(o.endAmount) }; }),
+            consideration: oc.consideration.map(function(c) { return { itemType: c.itemType, token: c.token, identifierOrCriteria: BigInt(c.identifierOrCriteria), startAmount: BigInt(c.startAmount), endAmount: BigInt(c.endAmount), recipient: c.recipient }; }),
+            orderType: oc.orderType,
+            startTime: BigInt(oc.startTime),
+            endTime: BigInt(oc.endTime),
+            zoneHash: oc.zoneHash,
+            salt: BigInt(oc.salt),
+            conduitKey: oc.conduitKey,
+            totalOriginalConsiderationItems: BigInt(oc.totalOriginalConsiderationItems)
+          },
+          signature: offer.signature
+        };
+
+        var seaport = new ethers.Contract(SEAPORT, SEAPORT_ABI, signer);
+        var tx = await seaport.fulfillOrder(order, ZERO_BYTES32);
+        var receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          // Remove the accepted offer from KV (best-effort, non-critical)
+          // The owner signs the cancellation on behalf — but we need the offerer's sig
+          // Since the offer was fulfilled onchain, it's now invalid anyway. Leave it to expire.
+          // Future improvement: add an "accepted" endpoint that marks offers as fulfilled.
+          alert('Sale complete! ' + name + '.hazza.name transferred for ' + offer.price + ' ETH.\\nTx: ' + tx.hash);
+          loadOffers();
+        } else {
+          alert('Transaction reverted. The offer may have expired or the buyer may not have enough ETH.');
+        }
+      } catch(e) {
+        alert('Accept failed: ' + (e.shortMessage || e.message || e));
+      }
+    }
+
     // --- Offers ---
     async function loadOffers() {
       $('offers-container').innerHTML = '<p style="color:#6b8f6b;text-align:center">Loading offers...</p>';
       try {
-        var res = await fetch('/api/marketplace/offers');
-        var data = await res.json();
-        var offers = data.offers || [];
-        if (offers.length === 0) {
-          $('offers-container').innerHTML = '<div class="empty-state"><p>No collection offers yet.</p></div>';
+        // Fetch both collection offers (Bazaar) and individual name offers (our KV) in parallel
+        var [collRes, indivRes] = await Promise.all([
+          fetch('/api/marketplace/offers').then(function(r) { return r.json(); }).catch(function() { return { offers: [] }; }),
+          fetch('/api/marketplace/all-offers').then(function(r) { return r.json(); }).catch(function() { return { offers: [] }; })
+        ]);
+        var collectionOffers = collRes.offers || [];
+        var individualOffers = indivRes.offers || [];
+
+        var html = '';
+
+        // Individual name offers section
+        if (individualOffers.length > 0) {
+          html += '<div style="margin-bottom:1.25rem">'
+            + '<div style="font-size:0.9rem;font-weight:700;color:#fff;margin-bottom:0.75rem">Name Offers</div>';
+          individualOffers.forEach(function(o) {
+            var isOwner = wallet && o.owner === wallet.toLowerCase();
+            var brokerBadge = o.broker ? ' <span style="font-size:0.65rem;background:#1a2e1a;color:#00e676;padding:0.1rem 0.3rem;border-radius:4px;vertical-align:middle">brokered</span>' : '';
+            html += '<div class="offer-card">'
+              + '<div style="flex:1">'
+              + '<div style="font-weight:700;color:#fff">' + escHtml(o.name) + '<span style="color:#00e676">.hazza.name</span>' + brokerBadge + '</div>'
+              + '<div style="font-size:0.95rem;color:#00e676;font-weight:700;margin-top:0.2rem">' + escHtml(String(o.price)) + ' ' + escHtml(o.currency || 'ETH') + '</div>'
+              + '<div style="font-size:0.8rem;color:#6b8f6b">From: ' + truncAddr(o.offerer) + ' &middot; Expires: ' + formatDate(o.expiresAt) + '</div>'
+              + '</div>';
+            if (isOwner) {
+              html += '<button class="btn-buy" style="flex:0;white-space:nowrap;padding:0.5rem 1rem;font-size:0.8rem" onclick="acceptNameOffer(\\x27' + escHtml(o.name) + '\\x27,\\x27' + escHtml(o.offerer) + '\\x27)">Accept</button>';
+            } else if (wallet && o.offerer === wallet.toLowerCase()) {
+              html += '<button class="btn-buy" style="flex:0;white-space:nowrap;padding:0.5rem 1rem;font-size:0.8rem;background:#333;color:#ff5252" onclick="cancelMyOffer(\\x27' + escHtml(o.name) + '\\x27)">Cancel</button>';
+            }
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+
+        // Collection offers section (from Bazaar)
+        html += '<div style="margin-bottom:1rem;padding:0.75rem 1rem;background:#0d1a0d;border:1px solid #1a2e1a;border-radius:8px;font-size:0.85rem;color:#6b8f6b">'
+          + '<p style="margin:0 0 0.25rem 0">Collection offers apply to <strong style="color:#fff">any</strong> hazza name. If you own a name, you can accept an offer to sell it instantly.</p>'
+          + '<p style="margin:0;color:#444;font-size:0.8rem">Collection offers are made via Seaport on <a href="https://netprotocol.app/bazaar" style="color:#00e676" target="_blank">Net Protocol Bazaar</a>.</p>'
+          + '</div>';
+
+        if (collectionOffers.length === 0 && individualOffers.length === 0) {
+          $('offers-container').innerHTML = html + '<div class="empty-state"><p>No offers yet. Click <strong style="color:#00e676">Offer</strong> on any listing to make one.</p></div>';
           return;
         }
-        var html = '';
-        offers.forEach(function(o) {
+        offersData = collectionOffers;
+        collectionOffers.forEach(function(o, idx) {
           html += '<div class="offer-card">'
             + '<div>'
-            + '<div style="font-weight:700;color:#fff">' + o.price + ' ' + (o.currency || 'ETH') + '</div>'
+            + '<div style="font-weight:700;color:#fff">' + escHtml(String(o.price)) + ' ' + escHtml(o.currency || 'ETH') + ' <span style="font-size:0.65rem;background:#1a2e1a;color:#6b8f6b;padding:0.1rem 0.3rem;border-radius:4px;vertical-align:middle">collection</span></div>'
             + '<div style="font-size:0.8rem;color:#6b8f6b">From: ' + truncAddr(o.offerer) + ' &middot; Expires: ' + formatDate(o.expirationDate) + '</div>'
             + '</div>';
           if (wallet) {
-            html += '<button class="btn-buy" style="flex:0;white-space:nowrap;padding:0.5rem 1rem;font-size:0.8rem">Accept</button>';
+            html += '<button class="btn-buy" style="flex:0;white-space:nowrap;padding:0.5rem 1rem;font-size:0.8rem" onclick="showAcceptOffer(\\x27' + escHtml(o.orderHash) + '\\x27)">Accept</button>';
           }
+          html += '<div id="accept-panel-' + escHtml(o.orderHash.slice(0,10)) + '" style="display:none;width:100%;margin-top:0.5rem"></div>';
           html += '</div>';
         });
         $('offers-container').innerHTML = html;
       } catch(e) {
         $('offers-container').innerHTML = '<div class="empty-state"><p>Failed to load offers</p></div>';
+      }
+    }
+
+    async function cancelMyOffer(name) {
+      if (!wallet) return;
+      if (!signer) { await connectWallet(); if (!signer) return; }
+      if (!confirm('Cancel your offer on ' + name + '.hazza.name?')) return;
+      try {
+        // Sign a message proving we own this address
+        var timestamp = Math.floor(Date.now() / 1000);
+        var message = 'cancel-offer:' + name.toLowerCase() + ':' + wallet.toLowerCase() + ':' + timestamp;
+        var signature = await signer.signMessage(message);
+        var res = await fetch('/api/marketplace/offer', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name, offerer: wallet, signature: signature, timestamp: timestamp })
+        });
+        var data = await res.json();
+        if (data.error) throw new Error(data.error);
+        loadOffers();
+      } catch(e) {
+        alert('Failed to cancel: ' + (e.shortMessage || e.message || e));
+      }
+    }
+
+    // Show accept-offer panel — user selects which name to sell into the offer
+    async function showAcceptOffer(orderHash) {
+      if (!wallet) { await connectWallet(); if (!wallet) return; }
+      var panelId = 'accept-panel-' + orderHash.slice(0,10);
+      var panel = $(panelId);
+      if (!panel) return;
+      if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
+      panel.style.display = 'block';
+      panel.innerHTML = '<p style="color:#6b8f6b;font-size:0.8rem">Loading your names...</p>';
+      try {
+        var res = await fetch('/api/names/' + wallet);
+        var data = await res.json();
+        var names = (data.names || []).filter(function(n) { return n.status === 'active'; });
+        if (names.length === 0) {
+          panel.innerHTML = '<p style="color:#888;font-size:0.8rem">You don\\x27t own any active names to sell.</p>';
+          return;
+        }
+        var html = '<div style="font-size:0.8rem;color:#6b8f6b;margin-bottom:0.4rem">Select a name to sell:</div>';
+        names.forEach(function(n) {
+          html += '<button style="display:block;width:100%;text-align:left;padding:0.4rem 0.6rem;margin-bottom:0.3rem;background:#111;border:1px solid #1a2e1a;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer;font-family:Rubik,sans-serif" onclick="acceptOffer(\\x27' + escHtml(orderHash) + '\\x27,\\x27' + escHtml(n.name) + '\\x27,\\x27' + escHtml(String(n.tokenId)) + '\\x27)">' + escHtml(n.name) + '<span style="color:#00e676">.hazza.name</span> <span style="color:#444;font-size:0.7rem">#' + escHtml(String(n.tokenId)) + '</span></button>';
+        });
+        panel.innerHTML = html;
+      } catch(e) {
+        panel.innerHTML = '<p style="color:#ff5252;font-size:0.8rem">Failed to load names</p>';
+      }
+    }
+
+    async function acceptOffer(orderHash, name, tokenId) {
+      if (!wallet) { await connectWallet(); if (!wallet) return; }
+      if (!confirm('Sell ' + name + '.hazza.name into this offer? This transfers ownership immediately.')) return;
+      var panelId = 'accept-panel-' + orderHash.slice(0,10);
+      var panel = $(panelId);
+      try {
+        if (panel) panel.innerHTML = '<p style="color:#6b8f6b;font-size:0.8rem">Preparing transaction...</p>';
+
+        var res = await fetch('/api/marketplace/fulfill-offer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderHash: orderHash, tokenId: tokenId, sellerAddress: wallet })
+        });
+        var data = await res.json();
+        if (data.error) { if (panel) panel.innerHTML = '<p style="color:#ff5252;font-size:0.8rem">' + escHtml(data.error) + '</p>'; return; }
+
+        // Execute approval txs (NFT approval to Seaport)
+        if (data.approvals && data.approvals.length > 0) {
+          if (panel) panel.innerHTML = '<p style="color:#6b8f6b;font-size:0.8rem">Approving NFT transfer...</p>';
+          for (var i = 0; i < data.approvals.length; i++) {
+            var appTx = await signer.sendTransaction({
+              to: data.approvals[i].to, data: data.approvals[i].data,
+              value: BigInt(data.approvals[i].value || '0')
+            });
+            await appTx.wait();
+          }
+        }
+
+        // Execute fulfillment
+        if (panel) panel.innerHTML = '<p style="color:#6b8f6b;font-size:0.8rem">Confirming sale...</p>';
+        var tx = await signer.sendTransaction({
+          to: data.fulfillment.to, data: data.fulfillment.data,
+          value: BigInt(data.fulfillment.value || '0')
+        });
+        var receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          if (panel) panel.innerHTML = '<p style="color:#00e676;font-size:0.85rem;font-weight:700">Sold! ' + name + '.hazza.name transferred.</p>';
+          alert('Sale complete! ' + name + '.hazza.name has been sold.\\n\\nTx: ' + tx.hash);
+          loadOffers();
+        } else {
+          if (panel) panel.innerHTML = '<p style="color:#ff5252;font-size:0.8rem">Transaction reverted.</p>';
+        }
+      } catch(e) {
+        if (panel) panel.innerHTML = '<p style="color:#ff5252;font-size:0.8rem">Failed: ' + escHtml(e.shortMessage || e.message || String(e)) + '</p>';
       }
     }
 
@@ -4103,7 +5097,34 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
           $('sales-container').innerHTML = '<div class="empty-state"><p>No sales recorded yet.</p></div>';
           return;
         }
-        var html = '<table class="sales-table"><thead><tr><th>Name</th><th>Price</th><th>Buyer</th><th>Seller</th><th>Date</th></tr></thead><tbody>';
+        // Price history chart (last 20 sales, reversed to chronological)
+        var chartSales = sales.slice(0, 20).reverse();
+        var maxPrice = 0;
+        chartSales.forEach(function(s) { if (s.price > maxPrice) maxPrice = s.price; });
+        if (maxPrice === 0) maxPrice = 1;
+        var html = '<div style="margin-bottom:1.25rem">';
+        html += '<div style="font-size:0.8rem;color:#6b8f6b;margin-bottom:0.5rem">Price History (last ' + chartSales.length + ' sales)</div>';
+        html += '<div style="display:flex;align-items:flex-end;gap:3px;height:100px;padding:0.25rem 0;border-bottom:1px solid #1a2e1a">';
+        chartSales.forEach(function(s) {
+          var pct = Math.max(4, (s.price / maxPrice) * 100);
+          var color = s.currency === 'USDC' ? '#2775ca' : '#00e676';
+          html += '<div title="' + escHtml(s.name) + ': ' + s.price + ' ' + s.currency + '" style="flex:1;min-width:8px;max-width:32px;height:' + pct + '%;background:' + color + ';border-radius:3px 3px 0 0;cursor:pointer;transition:opacity 0.15s" onmouseover="this.style.opacity=0.7" onmouseout="this.style.opacity=1"></div>';
+        });
+        html += '</div>';
+        html += '<div style="display:flex;justify-content:space-between;font-size:0.65rem;color:#444;margin-top:0.2rem">';
+        if (chartSales.length > 0) {
+          html += '<span>' + formatDate(chartSales[0].timestamp) + '</span>';
+          html += '<span>' + formatDate(chartSales[chartSales.length - 1].timestamp) + '</span>';
+        }
+        html += '</div>';
+        html += '<div style="display:flex;gap:0.75rem;margin-top:0.35rem;font-size:0.7rem">';
+        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#00e676;border-radius:2px;vertical-align:middle"></span> ETH</span>';
+        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#2775ca;border-radius:2px;vertical-align:middle"></span> USDC</span>';
+        html += '</div>';
+        html += '</div>';
+
+        // Sales table
+        html += '<table class="sales-table"><thead><tr><th>Name</th><th>Price</th><th>Buyer</th><th>Seller</th><th>Date</th></tr></thead><tbody>';
         sales.forEach(function(s) {
           html += '<tr>'
             + '<td><a href="https://' + encodeURIComponent(s.name) + '.hazza.name">' + escHtml(s.name) + '</a></td>'
@@ -4129,34 +5150,207 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
       progress.innerHTML = '';
       $('btn-execute-all').disabled = true;
 
-      // Sort: listings first, then buys, then registrations
+      // Separate by type: listings require individual signing, buys can be batched
       var listings = cart.filter(function(c) { return c.type === 'List'; });
       var buys = cart.filter(function(c) { return c.type === 'Buy'; });
-      var regs = cart.filter(function(c) { return c.type === 'Register'; });
-      var all = listings.concat(buys).concat(regs);
 
-      for (var i = 0; i < all.length; i++) {
-        var item = all[i];
+      // Execute listings sequentially (each needs EIP-712 signing)
+      for (var i = 0; i < listings.length; i++) {
+        var item = listings[i];
         var stepEl = document.createElement('div');
         stepEl.className = 'progress-step active';
-        stepEl.textContent = item.type + ': ' + item.name + '...';
+        stepEl.textContent = 'List: ' + item.name + '...';
         progress.appendChild(stepEl);
-
         try {
-          if (item.type === 'Buy') {
-            await buyListing(item.orderHash);
-          } else if (item.type === 'List') {
-            await createListing(item.name, item.tokenId);
-          }
+          await createListing(item.name, item.tokenId);
           stepEl.className = 'progress-step done';
-          stepEl.textContent = '✓ ' + item.type + ': ' + item.name;
+          stepEl.textContent = '✓ Listed: ' + item.name;
           removeFromCart(item.id);
         } catch(e) {
           stepEl.className = 'progress-step error';
-          stepEl.textContent = '✗ ' + item.type + ': ' + item.name + ' — ' + (e.message || 'failed');
+          stepEl.textContent = '✗ List: ' + item.name + ' — ' + (e.message || 'failed');
         }
       }
+
+      // Process buys
+      if (buys.length > 0) {
+        var batchStep = document.createElement('div');
+        batchStep.className = 'progress-step active';
+        batchStep.textContent = 'Preparing ' + buys.length + ' purchase' + (buys.length > 1 ? 's' : '') + '...';
+        progress.appendChild(batchStep);
+
+        try {
+          // Fetch all fulfillment txs in parallel
+          var fulfillResults = await Promise.all(buys.map(function(b) {
+            return fetch('/api/marketplace/fulfill', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ orderHash: b.orderHash, buyerAddress: wallet })
+            }).then(function(r) { return r.json(); });
+          }));
+
+          // Collect fulfillment data and token requirements
+          var fulfillmentCalls = [];
+          var validBuys = [];
+          // Track ERC20 token needs: { "tokenAddr:spender": { token, spender, amount } }
+          var tokenNeeds = {};
+          var totalEthValue = BigInt(0);
+
+          for (var j = 0; j < fulfillResults.length; j++) {
+            var fr = fulfillResults[j];
+            if (fr.error) {
+              var errEl = document.createElement('div');
+              errEl.className = 'progress-step error';
+              errEl.textContent = '\\u2717 ' + buys[j].name + ': ' + fr.error;
+              progress.appendChild(errEl);
+              continue;
+            }
+            // Aggregate token needs from structured approval data
+            if (fr.approvals) fr.approvals.forEach(function(a) {
+              if (a.spender && a.amount && a.amount !== '0') {
+                var key = a.to.toLowerCase() + ':' + a.spender.toLowerCase();
+                if (!tokenNeeds[key]) {
+                  tokenNeeds[key] = { token: a.to, spender: a.spender, amount: BigInt(0) };
+                }
+                tokenNeeds[key].amount += BigInt(a.amount);
+              }
+            });
+            var fValue = BigInt(fr.fulfillment.value || '0');
+            totalEthValue += fValue;
+            fulfillmentCalls.push({ target: fr.fulfillment.to, value: fValue, data: fr.fulfillment.data });
+            validBuys.push(buys[j]);
+          }
+
+          if (validBuys.length > 0) {
+            // Pre-flight balance check — verify user has enough of each token + ETH
+            batchStep.textContent = 'Checking balances...';
+            var insufficientFunds = [];
+            // Check ETH
+            if (totalEthValue > BigInt(0)) {
+              var ethBal = BigInt(await provider.getBalance(wallet));
+              if (ethBal < totalEthValue) {
+                var needed = ethers.formatEther(totalEthValue);
+                var have = ethers.formatEther(ethBal);
+                insufficientFunds.push('ETH: need ' + needed + ', have ' + have);
+              }
+            }
+            // Check each ERC20 token
+            var tokenPullsList = Object.values(tokenNeeds);
+            for (var ci = 0; ci < tokenPullsList.length; ci++) {
+              var tn = tokenPullsList[ci];
+              try {
+                var tc = new ethers.Contract(tn.token, ERC20_ABI, provider);
+                var bal = BigInt(await tc.balanceOf(wallet));
+                if (bal < tn.amount) {
+                  var sym = 'token';
+                  var dec = 18;
+                  try { sym = await tc.symbol(); } catch(e) {}
+                  try { dec = Number(await tc.decimals()); } catch(e) {}
+                  var neededAmt = ethers.formatUnits(tn.amount, dec);
+                  var haveAmt = ethers.formatUnits(bal, dec);
+                  insufficientFunds.push(sym + ': need ' + neededAmt + ', have ' + haveAmt);
+                }
+              } catch(e) {
+                // Can\\u2019t check balance — proceed and let tx fail naturally
+              }
+            }
+            if (insufficientFunds.length > 0) {
+              batchStep.className = 'progress-step error';
+              batchStep.innerHTML = '\\u2717 Insufficient funds:<br>' + insufficientFunds.join('<br>');
+              $('btn-execute-all').disabled = false;
+              return;
+            }
+
+            // Use HazzaBatchExecutor if deployed and multiple buys
+            if (BATCH_EXECUTOR && validBuys.length > 1) {
+              // Build TokenPull array for executor
+              var tokenPulls = Object.values(tokenNeeds);
+
+              // Step 1: User approves batch executor for each token
+              if (tokenPulls.length > 0) {
+                batchStep.textContent = 'Approving tokens for batch...';
+                for (var ti = 0; ti < tokenPulls.length; ti++) {
+                  var tp = tokenPulls[ti];
+                  try {
+                    var tokenContract = new ethers.Contract(tp.token, ERC20_ABI, signer);
+                    var currentAllowance = await tokenContract.allowance(wallet, BATCH_EXECUTOR);
+                    if (BigInt(currentAllowance) < tp.amount) {
+                      var appTx = await tokenContract.approve(BATCH_EXECUTOR, tp.amount);
+                      await appTx.wait();
+                    }
+                  } catch(appErr) {
+                    // Continue — approval might already exist
+                  }
+                }
+              }
+
+              batchStep.textContent = 'Confirm batch purchase (' + validBuys.length + ' names)...';
+
+              // Step 2: Build args for executeBatch(TokenPull[], Call[])
+              var batchTokens = tokenPulls.map(function(tp) {
+                return { token: tp.token, amount: tp.amount, spender: tp.spender };
+              });
+              var batchCalls = fulfillmentCalls.map(function(fc) {
+                return { target: fc.target, value: fc.value, data: fc.data };
+              });
+
+              var executorContract = new ethers.Contract(BATCH_EXECUTOR, BATCH_EXECUTOR_ABI, signer);
+              var tx = await executorContract.executeBatch(batchTokens, batchCalls, { value: totalEthValue });
+              var receipt = await tx.wait();
+
+              // Try to get per-item results via staticCall replay
+              var decoded = null;
+              try {
+                decoded = await executorContract.executeBatch.staticCall(batchTokens, batchCalls, { value: totalEthValue, from: wallet });
+              } catch(e) {
+                decoded = null;
+              }
+
+              batchStep.className = 'progress-step done';
+              batchStep.textContent = '\\u2713 Batch transaction confirmed';
+
+              for (var bi = 0; bi < validBuys.length; bi++) {
+                var resultEl = document.createElement('div');
+                var succeeded = decoded ? decoded[bi].success : true;
+                if (succeeded) {
+                  resultEl.className = 'progress-step done';
+                  resultEl.textContent = '\\u2713 Bought: ' + validBuys[bi].name;
+                  removeFromCart(validBuys[bi].id);
+                } else {
+                  resultEl.className = 'progress-step error';
+                  resultEl.textContent = '\\u2717 Failed: ' + validBuys[bi].name + ' (refunded)';
+                }
+                progress.appendChild(resultEl);
+              }
+            } else {
+              // Single buy or no batch executor — execute directly
+              batchStep.style.display = 'none';
+              for (var k = 0; k < validBuys.length; k++) {
+                var buyItem = validBuys[k];
+                var buyStep = document.createElement('div');
+                buyStep.className = 'progress-step active';
+                buyStep.textContent = 'Buy: ' + buyItem.name + '...';
+                progress.appendChild(buyStep);
+                try {
+                  await buyListing(buyItem.orderHash);
+                  buyStep.className = 'progress-step done';
+                  buyStep.textContent = '\\u2713 Bought: ' + buyItem.name;
+                  removeFromCart(buyItem.id);
+                } catch(e) {
+                  buyStep.className = 'progress-step error';
+                  buyStep.textContent = '\\u2717 Buy: ' + buyItem.name + ' \\u2014 ' + (e.message || 'failed');
+                }
+              }
+            }
+          }
+        } catch(e) {
+          batchStep.className = 'progress-step error';
+          batchStep.textContent = '\\u2717 Batch prepare failed: ' + (e.message || 'error');
+        }
+      }
+
       $('btn-execute-all').disabled = false;
+      loadListings();
     }
 
     // --- Init ---
@@ -4178,23 +5372,55 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
 
       updateCartUI();
 
-      // Auto-connect if wallet was saved
-      if (typeof window.ethereum !== 'undefined') {
+      // Listen for wallet connections from nav bar
+      window.addEventListener('hazza_wallet_connected', function(e) {
+        if (e.detail && e.detail.address && !wallet) {
+          connectWallet();
+        }
+      });
+
+      // Listen for disconnects
+      window.addEventListener('hazza_wallet_disconnected', function() {
+        wallet = null; signer = null; provider = null;
+        var wd = $('mp-wallet-display');
+        if (wd) wd.textContent = '';
+      });
+
+      // Auto-connect: check nav global first, then sessionStorage
+      function tryAutoReconnect() {
+        if (window.__hazza_wallet && !wallet) {
+          wallet = window.__hazza_wallet;
+          var wd = $('mp-wallet-display');
+          if (wd) wd.textContent = truncAddr(wallet);
+          if (window.ethereum) {
+            provider = new ethers.BrowserProvider(window.ethereum);
+            provider.getSigner().then(function(s) { signer = s; }).catch(function(){});
+          }
+          return true;
+        }
+        if (!window.ethereum) return false;
         var saved = null;
         try { saved = sessionStorage.getItem('hazza_wallet'); } catch(e) {}
-        if (saved) {
+        if (saved && !wallet) {
           wallet = saved;
-          $('mp-connect-btn').textContent = truncAddr(wallet);
-          $('mp-connect-btn').classList.add('connected');
-          window.ethereum.request({ method: 'eth_accounts' }).then(function(accts) {
-            if (accts && accts[0]) {
-              wallet = accts[0];
-              provider = new ethers.BrowserProvider(window.ethereum);
-              provider.getSigner().then(function(s) { signer = s; });
-            }
-          }).catch(function(){});
+          var wd2 = $('mp-wallet-display');
+          if (wd2) wd2.textContent = truncAddr(wallet);
+          provider = new ethers.BrowserProvider(window.ethereum);
+          provider.getSigner().then(function(s) { signer = s; }).catch(function(){});
+          return true;
         }
+        return false;
       }
+      if (!tryAutoReconnect()) {
+        setTimeout(function() {
+          if (!tryAutoReconnect()) {
+            setTimeout(function() { tryAutoReconnect(); }, 1500);
+          }
+        }, 500);
+      }
+      window.addEventListener('eip6963:announceProvider', function() {
+        if (!wallet) tryAutoReconnect();
+      });
 
       // Farcaster Mini App ready
       if (window.farcaster || (window.parent !== window)) {
@@ -4208,16 +5434,16 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
   `;
 
   return shell(
-    "hazza marketplace — buy and sell names",
-    "Buy, sell, and trade onchain names on Base. Powered by Seaport, x402, and Net Protocol.",
+    "hazza \u2014 immediately useful names",
+    "Buy, sell and trade hazza names. Powered by Seaport on Base.",
     `
     <style>${MARKETPLACE_STYLES}</style>
 
     <div class="header">
       <h1>hazza <span>marketplace</span></h1>
       <p>buy and sell onchain names</p>
-      <div style="margin-top:0.75rem">
-        <button id="mp-connect-btn" class="nav-wallet-btn" onclick="connectWallet()">connect wallet</button>
+      <div id="mp-connect-status" style="margin-top:0.75rem;font-size:0.85rem;color:#444">
+        <span id="mp-wallet-display"></span>
       </div>
     </div>
 
@@ -4229,6 +5455,22 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
     </div>
 
     <div id="panel-browse" class="tab-panel active">
+      <div id="mp-filters" style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;align-items:center">
+        <input type="text" id="mp-search" placeholder="search names..." oninput="renderListings()" style="flex:1;min-width:120px;padding:0.4rem 0.6rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:'Rubik',sans-serif;outline:none">
+        <select id="mp-sort" onchange="renderListings()" style="padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.8rem;font-family:'Rubik',sans-serif">
+          <option value="newest">newest</option>
+          <option value="price-low">price: low to high</option>
+          <option value="price-high">price: high to low</option>
+          <option value="name-az">name: A-Z</option>
+          <option value="expiry-soon">expiry: soonest</option>
+        </select>
+        <select id="mp-type" onchange="renderListings()" style="padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.8rem;font-family:'Rubik',sans-serif">
+          <option value="all">all names</option>
+          <option value="namespace">namespaces only</option>
+          <option value="regular">regular only</option>
+        </select>
+      </div>
+      <div id="buy-status" style="display:none;text-align:center;color:#6b8f6b;font-size:0.85rem;padding:0.5rem;margin-bottom:0.5rem"></div>
       <div id="listings-container">
         <p style="color:#6b8f6b;text-align:center">Loading listings...</p>
       </div>
@@ -4241,6 +5483,10 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
     </div>
 
     <div id="panel-offers" class="tab-panel">
+      <div style="display:flex;gap:0.5rem;margin-bottom:1rem;align-items:center">
+        <input type="text" id="offer-name-input" placeholder="make an offer on any name..." style="flex:1;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:'Rubik',sans-serif;outline:none">
+        <button onclick="var n=document.getElementById('offer-name-input').value.trim().toLowerCase().replace(/[^a-z0-9\\-]/g,'');if(n)showOfferForm(n);else alert('Enter a name')" style="padding:0.5rem 1rem;background:#00e676;color:#000;border:none;border-radius:6px;font-weight:700;font-size:0.85rem;cursor:pointer;font-family:'Rubik',sans-serif;white-space:nowrap">Make Offer</button>
+      </div>
       <div id="offers-container">
         <p style="color:#6b8f6b;text-align:center">Loading offers...</p>
       </div>

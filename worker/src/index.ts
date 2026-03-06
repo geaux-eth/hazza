@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { type Env, getClient, getMainnetClient, getEthMainnetClient, buildTx, registryAddress, REGISTRY_ABI, EXOSKELETON_ABI, EXOSKELETON_ADDRESS } from "./contract";
 import { landingPage, profilePage, aboutPage, pricingPage, pricingProtectionsPage, pricingDetailsPage, docsPage, domainsPage, registerPage, managePage, dashboardPage, marketplacePage } from "./pages";
 import { handleCcipRead, handleCcipOptions } from "./ccip";
-import { type Address, formatUnits, keccak256, toBytes, isAddress, createWalletClient, http, encodeFunctionData } from "viem";
+import { type Address, formatUnits, keccak256, toBytes, isAddress, createWalletClient, http, encodeFunctionData, verifyMessage } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
 import { Resvg, initWasm } from "@resvg/resvg-wasm";
@@ -131,11 +131,15 @@ app.get("/api/quote/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
   if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   const wallet = (c.req.query("wallet") || "0x0000000000000000000000000000000000000000") as Address;
-  const numYears = BigInt(c.req.query("years") || "1");
+  const yearsStr = c.req.query("years") || "1";
+  if (!/^\d+$/.test(yearsStr)) return c.json({ error: "Invalid years parameter" }, 400);
+  const numYears = BigInt(yearsStr);
   const charCount = Number(c.req.query("charCount") || "5");
   const ensImport = c.req.query("ensImport") === "true";
   const verifiedPass = c.req.query("verifiedPass") === "true";
-  const memberId = BigInt(c.req.query("memberId") || "0");
+  const memberIdStr = c.req.query("memberId") || "0";
+  if (!/^\d+$/.test(memberIdStr)) return c.json({ error: "Invalid memberId parameter" }, 400);
+  const memberId = BigInt(memberIdStr);
 
   const client = getClient(c.env);
 
@@ -290,6 +294,7 @@ app.get("/api/reverse/:address", async (c) => {
 // Full profile: resolve + text records + status
 app.get("/api/profile/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
@@ -300,27 +305,24 @@ app.get("/api/profile/:name", async (c) => {
     return c.json({ name, registered: false });
   }
 
-  const textKeys = [
-    "avatar", "header", "description", "url",
-    "com.twitter", "com.github", "xyz.farcaster", "org.telegram", "com.discord", "com.linkedin",
-    "agent.endpoint", "agent.model", "agent.status", "agent.capabilities",
-  ];
-
-  const [textValues, isActive, inGrace, inRedemption, chash] = await Promise.all([
-    client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
+  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord"];
+  const [isActive, inGrace, inRedemption, textValues, chash] = await Promise.all([
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name] }),
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInGracePeriod", args: [name] }),
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInRedemptionPeriod", args: [name] }),
+    client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
   ]);
-
-  const texts: Record<string, string> = {};
-  textKeys.forEach((k, i) => { if (textValues[i]) texts[k] = textValues[i]; });
 
   let status = "expired";
   if (isActive) status = "active";
   else if (inGrace) status = "grace";
   else if (inRedemption) status = "redemption";
+
+  const texts: Record<string, string> = {};
+  textKeys.forEach((key, i) => {
+    if (textValues[i]) texts[key] = textValues[i];
+  });
 
   return c.json({
     name,
@@ -334,7 +336,7 @@ app.get("/api/profile/:name", async (c) => {
     agentWallet,
     status,
     texts,
-    contenthash: chash && chash !== "0x" ? chash : null,
+    contenthash: chash && chash !== "0x" ? (chash as string) : null,
     url: `https://${name}.hazza.name`,
   });
 });
@@ -343,19 +345,14 @@ app.get("/api/profile/:name", async (c) => {
 app.get("/api/text/:name/:key", async (c) => {
   const name = c.req.param("name").toLowerCase();
   const key = c.req.param("key");
-  const client = getClient(c.env);
-  const value = await client.readContract({
-    address: registryAddress(c.env),
-    abi: REGISTRY_ABI,
-    functionName: "text",
-    args: [name, key],
-  });
-  return c.json({ name, key, value });
+  // Contract doesn't have text records yet — return empty
+  return c.json({ name, key, value: "" });
 });
 
 // OG image generator (PNG via resvg-wasm)
 app.get("/api/og/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
@@ -372,22 +369,11 @@ app.get("/api/og/:name", async (c) => {
     if (nameOwner !== "0x0000000000000000000000000000000000000000") {
       subtitle = "registered";
       ownerText = nameOwner as string;
-      // Try ENS reverse resolution + text records in parallel
-      const [ensResult, textResult] = await Promise.allSettled([
-        getEthMainnetClient(c.env).getEnsName({ address: nameOwner as `0x${string}` }),
-        client.readContract({
-          address: addr, abi: REGISTRY_ABI, functionName: "textMany",
-          args: [name, ["description", "netlibrary.member"]],
-        }),
-      ]);
-      if (ensResult.status === "fulfilled" && ensResult.value) {
-        ownerText = ensResult.value;
-      }
-      if (textResult.status === "fulfilled") {
-        const textValues = textResult.value as string[];
-        if (textValues[0]) description = String(textValues[0]).slice(0, 80);
-        if (textValues[1]) memberBadge = `Net Library #${textValues[1]}`;
-      }
+      // Try ENS reverse resolution
+      try {
+        const ensName = await getEthMainnetClient(c.env).getEnsName({ address: nameOwner as `0x${string}` });
+        if (ensName) ownerText = ensName;
+      } catch { /* ENS lookup optional */ }
     }
   } catch { /* name not registered or invalid */ }
 
@@ -506,6 +492,84 @@ app.get("/api/icon", async (c) => {
         "Content-Type": "image/svg+xml",
         "Cache-Control": "public, max-age=86400",
       },
+    });
+  }
+});
+
+// 500x500 branded square NFT image (for wallet display, like ENS)
+app.get("/api/nft-image/:name", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  const svgEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const displayName = name.length > 12 ? name.slice(0, 10) + "..." : name;
+  const fontSize = displayName.length > 8 ? 44 : displayName.length > 5 ? 56 : 68;
+
+  // Check namespace status
+  let isNamespace = false;
+  try {
+    const client = getClient(c.env);
+    const addr = registryAddress(c.env);
+    const nameHash = keccak256(toBytes(name));
+    const nsData = await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "namespaces", args: [nameHash] });
+    const nsAdmin = (nsData as any[])[0];
+    isNamespace = !!nsAdmin && nsAdmin !== "0x0000000000000000000000000000000000000000";
+  } catch {}
+
+  const nsBadge = isNamespace ? `
+  <!-- Namespace badge (top right) -->
+  <rect x="436" y="28" width="36" height="36" rx="6" fill="#00e676"/>
+  <text x="454" y="46" font-family="Rubik, sans-serif" font-size="18" fill="#000000" font-weight="900" text-anchor="middle" dominant-baseline="central">N</text>` : '';
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="500" y2="500" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#050a05"/>
+      <stop offset="100%" stop-color="#0a1a0a"/>
+    </linearGradient>
+  </defs>
+  <rect width="500" height="500" rx="24" fill="url(#bg)"/>
+  <rect x="0" y="0" width="500" height="4" rx="2" fill="#00e676"/>
+
+  <!-- Logo icon (top left) -->
+  <rect x="28" y="28" width="36" height="36" rx="6" fill="#000000" stroke="#00e676" stroke-width="2"/>
+  <text x="46" y="46" font-family="Rubik, sans-serif" font-size="20" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
+  ${nsBadge}
+
+  <!-- Name -->
+  <text x="250" y="230" font-family="Rubik, sans-serif" font-size="${fontSize}" fill="#ffffff" font-weight="900" text-anchor="middle">${svgEsc(displayName)}</text>
+
+  <!-- .hazza.name suffix -->
+  <text x="250" y="275" font-family="Rubik, sans-serif" font-size="18" fill="#00e676" font-weight="700" text-anchor="middle">.hazza.name</text>
+
+  <!-- Accent line -->
+  <rect x="200" y="300" width="100" height="2" rx="1" fill="#1a2e1a"/>
+
+  <!-- Footer -->
+  <text x="250" y="440" font-family="Rubik, sans-serif" font-size="12" fill="#445544" text-anchor="middle" font-weight="700">immediately useful names</text>
+  <text x="250" y="465" font-family="Rubik, sans-serif" font-size="10" fill="#00e676" text-anchor="middle" font-weight="700">built on Base with Net Protocol</text>
+</svg>`;
+
+  try {
+    if (!wasmInitialized) {
+      await initWasm(resvgWasm);
+      wasmInitialized = true;
+    }
+    const fontData = await getFonts();
+    const resvg = new Resvg(svg, {
+      fitTo: { mode: "width", value: 500 },
+      font: {
+        fontBuffers: fontData.map(f => new Uint8Array(f)),
+        defaultFontFamily: "Rubik",
+      },
+    });
+    const pngData = resvg.render();
+    const pngBuffer = pngData.asPng();
+    return new Response(pngBuffer, {
+      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+    });
+  } catch {
+    return new Response(svg, {
+      headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" },
     });
   }
 });
@@ -653,6 +717,7 @@ app.get("/api/nfts/:address", async (c) => {
 // ERC-721 metadata (served by tokenURI base URL)
 app.get("/api/metadata/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
@@ -663,24 +728,26 @@ app.get("/api/metadata/:name", async (c) => {
     return c.json({ error: "Name not registered" }, 404);
   }
 
-  const textKeys = ["avatar", "description", "url", "com.twitter", "xyz.farcaster"];
-  const textValues = await client.readContract({
-    address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys],
-  });
+  const nameHash = keccak256(toBytes(name));
+  let isNamespace = false;
+  try {
+    const nsData = await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "namespaces", args: [nameHash] });
+    const nsAdmin = (nsData as any[])[0];
+    isNamespace = !!nsAdmin && nsAdmin !== "0x0000000000000000000000000000000000000000";
+  } catch {}
 
   const attributes: { trait_type: string; value: string }[] = [
     { trait_type: "Length", value: name.length.toString() },
     { trait_type: "Registered", value: new Date(Number(registeredAt) * 1000).toISOString().split("T")[0] },
     { trait_type: "Expires", value: new Date(Number(expiresAt) * 1000).toISOString().split("T")[0] },
+    { trait_type: "Namespace", value: isNamespace ? "Yes" : "No" },
   ];
   if (agentId > 0n) attributes.push({ trait_type: "Agent", value: `#${agentId}` });
-  if (textValues[3]) attributes.push({ trait_type: "Twitter", value: textValues[3] });
-  if (textValues[4]) attributes.push({ trait_type: "Farcaster", value: textValues[4] });
 
   return c.json({
     name: `${name}.hazza.name`,
-    description: textValues[1] || `${name}.hazza.name — an onchain name on Base`,
-    image: textValues[0] || `https://hazza.name/api/og/${name}`,
+    description: `${name}.hazza.name — an onchain name on Base`,
+    image: `https://hazza.name/api/nft-image/${name}`,
     external_url: `https://${name}.hazza.name`,
     attributes,
   });
@@ -695,45 +762,83 @@ app.get("/api/names/:address", async (c) => {
   const addr = registryAddress(c.env);
 
   try {
-    const balance = await client.readContract({
-      address: addr, abi: REGISTRY_ABI, functionName: "balanceOf", args: [wallet],
-    });
+    const [balance, total] = await Promise.all([
+      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "balanceOf", args: [wallet] }),
+      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "totalRegistered" }),
+    ]);
     const count = Number(balance);
     if (count === 0) return c.json({ wallet, names: [], total: 0 });
-
-    // Iterate all tokens and filter by owner (no ERC721Enumerable)
-    const total = await client.readContract({
-      address: addr, abi: REGISTRY_ABI, functionName: "totalRegistered",
-    });
     const totalCount = Number(total);
-    const names: { name: string; tokenId: string; url: string; expiresAt: number; status: string }[] = [];
 
-    for (let id = 1; id <= totalCount && names.length < count; id++) {
-      try {
-        const name = await client.readContract({
-          address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(id)],
-        });
-        if (!name) continue;
-        const [owner, , , expiresAt] = await client.readContract({
-          address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name as string],
-        });
-        if ((owner as string).toLowerCase() === wallet.toLowerCase()) {
-          // Determine status
-          const [isActive, inGrace, inRedemption] = await Promise.all([
-            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name as string] }),
-            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInGracePeriod", args: [name as string] }),
-            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInRedemptionPeriod", args: [name as string] }),
-          ]);
-          const status = isActive ? "active" : inGrace ? "grace" : inRedemption ? "redemption" : "expired";
-          names.push({
-            name: name as string,
-            tokenId: id.toString(),
-            url: `https://${name}.hazza.name`,
-            expiresAt: Number(expiresAt),
-            status,
-          });
+    // Batch nameOf calls in chunks to find which tokens exist
+    const BATCH_SIZE = 50;
+    const names: { name: string; tokenId: string; url: string; expiresAt: number; status: string; isNamespace: boolean }[] = [];
+
+    for (let start = 1; start <= totalCount && names.length < count; start += BATCH_SIZE) {
+      const end = Math.min(start + BATCH_SIZE - 1, totalCount);
+      const ids = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+
+      // Batch: get name for each token ID
+      const nameResults = await Promise.all(
+        ids.map(id =>
+          client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(id)] })
+            .catch(() => "")
+        )
+      );
+
+      // For tokens with names, batch resolve to check ownership
+      const validIds: { id: number; name: string }[] = [];
+      nameResults.forEach((name, i) => {
+        if (name) validIds.push({ id: ids[i], name: name as string });
+      });
+
+      if (validIds.length === 0) continue;
+
+      const resolveResults = await Promise.all(
+        validIds.map(({ name }) =>
+          client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] })
+            .catch(() => null)
+        )
+      );
+
+      // Filter to names owned by this wallet and get status
+      const owned: { id: number; name: string; expiresAt: bigint }[] = [];
+      resolveResults.forEach((result, i) => {
+        if (!result) return;
+        const [nameOwner, , , expiresAt] = result as [string, bigint, bigint, bigint, string, bigint, string];
+        if (nameOwner.toLowerCase() === wallet.toLowerCase()) {
+          owned.push({ id: validIds[i].id, name: validIds[i].name, expiresAt });
         }
-      } catch { continue; }
+      });
+
+      if (owned.length === 0) continue;
+
+      // Batch status + namespace checks for owned names
+      const statusResults = await Promise.all(
+        owned.map(({ name }) => {
+          const nameHash = keccak256(toBytes(name));
+          return Promise.all([
+            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name] }),
+            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInGracePeriod", args: [name] }),
+            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInRedemptionPeriod", args: [name] }),
+            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "namespaces", args: [nameHash] }).catch(() => [null]),
+          ]);
+        })
+      );
+
+      statusResults.forEach(([isActive, inGrace, inRedemption, nsData], i) => {
+        const status = isActive ? "active" : inGrace ? "grace" : inRedemption ? "redemption" : "expired";
+        const nsAdmin = (nsData as any[])?.[0];
+        const isNamespace = !!nsAdmin && nsAdmin !== "0x0000000000000000000000000000000000000000";
+        names.push({
+          name: owned[i].name,
+          tokenId: String(owned[i].id),
+          url: `https://${owned[i].name}.hazza.name`,
+          expiresAt: Number(owned[i].expiresAt),
+          status,
+          isNamespace,
+        });
+      });
     }
     return c.json({ wallet, names, total: names.length });
   } catch {
@@ -918,18 +1023,35 @@ async function unmarkPayment(env: Env, txHash: string): Promise<void> {
   await env.WATCHLIST_KV.delete(`payment:${txHash}`);
 }
 
-// Rate limiting for free registrations (per IP, 3/hour)
-async function checkFreeRegRateLimit(env: Env, ip: string): Promise<boolean> {
+// Rate limiting for free registrations (per IP + per wallet, 2/hour each with margin for races)
+async function checkFreeRegRateLimit(env: Env, ip: string, owner?: string): Promise<{ allowed: boolean; reason?: string }> {
   const key = `freerate:${ip}`;
   const val = await env.WATCHLIST_KV.get(key);
   const count = val ? parseInt(val) : 0;
-  return count < 3;
+  if (count >= 2) return { allowed: false, reason: "Rate limit: too many free registrations from this IP" };
+
+  if (owner) {
+    const walletKey = `freerate:wallet:${owner.toLowerCase()}`;
+    const walletVal = await env.WATCHLIST_KV.get(walletKey);
+    if (walletVal && parseInt(walletVal) >= 2) {
+      return { allowed: false, reason: "Rate limit: max 2 free registrations per wallet per hour" };
+    }
+  }
+
+  return { allowed: true };
 }
-async function incrementFreeRegRate(env: Env, ip: string): Promise<void> {
+async function incrementFreeRegRate(env: Env, ip: string, owner?: string): Promise<void> {
   const key = `freerate:${ip}`;
   const val = await env.WATCHLIST_KV.get(key);
   const count = val ? parseInt(val) + 1 : 1;
   await env.WATCHLIST_KV.put(key, String(count), { expirationTtl: 3600 }); // 1 hour TTL
+
+  if (owner) {
+    const walletKey = `freerate:wallet:${owner.toLowerCase()}`;
+    const walletValInc = await env.WATCHLIST_KV.get(walletKey);
+    const walletCount = walletValInc ? parseInt(walletValInc) + 1 : 1;
+    await env.WATCHLIST_KV.put(walletKey, String(walletCount), { expirationTtl: 3600 });
+  }
 }
 
 // Minimal USDC ABI for transfer event verification
@@ -978,10 +1100,11 @@ app.post("/x402/register", async (c) => {
 
   // --- First registration free: contract returns $0 for first-time wallets ---
   if (totalCost === 0n) {
-    // Rate limit free registrations by IP (3/hour to prevent sybil farming)
+    // Rate limit free registrations by IP + wallet (2/hour each to prevent sybil farming)
     const clientIp = c.req.header("cf-connecting-ip") || "unknown";
-    if (!await checkFreeRegRateLimit(c.env, clientIp)) {
-      return c.json({ error: "Rate limited — too many free registrations. Try again later." }, 429);
+    const rateCheck = await checkFreeRegRateLimit(c.env, clientIp, owner);
+    if (!rateCheck.allowed) {
+      return c.json({ error: rateCheck.reason || "Rate limited — too many free registrations. Try again later." }, 429);
     }
     try {
       const chainId = Number(c.env.CHAIN_ID);
@@ -1017,7 +1140,7 @@ app.post("/x402/register", async (c) => {
         tokenId = tid.toString();
       } catch { /* non-critical */ }
 
-      await incrementFreeRegRate(c.env, clientIp);
+      await incrementFreeRegRate(c.env, clientIp, owner);
       return c.json({
         name, owner, tokenId,
         registrationTx: regTxHash,
@@ -1026,8 +1149,8 @@ app.post("/x402/register", async (c) => {
         firstRegistration: true,
       });
     } catch (e: any) {
-      const msg = e?.shortMessage || e?.message || "Unknown error";
-      return c.json({ error: "Free registration failed", detail: msg }, 500);
+      console.error("Free registration failed:", e?.shortMessage || e?.message || e);
+      return c.json({ error: "Registration failed. Please try again." }, 500);
     }
   }
 
@@ -1101,8 +1224,8 @@ app.post("/x402/register", async (c) => {
         memberId: freeClaimMemberId,
       });
     } catch (e: any) {
-      const msg = e?.shortMessage || e?.message || "Unknown error";
-      return c.json({ error: "Free claim registration failed", detail: msg }, 500);
+      console.error("Free claim registration failed:", e?.shortMessage || e?.message || e);
+      return c.json({ error: "Registration failed. Please try again." }, 500);
     }
   }
 
@@ -1157,15 +1280,20 @@ app.post("/x402/register", async (c) => {
       return c.json({ error: "Payment already used" }, 400);
     }
 
+    // Mark immediately to prevent TOCTOU race — unmark if verification fails
+    await markPaymentUsed(c.env, txHash);
+
     // Verify tx on-chain
     let receipt;
     try {
       receipt = await client.getTransactionReceipt({ hash: txHash });
     } catch {
+      await unmarkPayment(c.env, txHash);
       return c.json({ error: "Transaction not found or not confirmed" }, 400);
     }
 
     if (receipt.status !== "success") {
+      await unmarkPayment(c.env, txHash);
       return c.json({ error: "Transaction failed" }, 400);
     }
 
@@ -1178,9 +1306,11 @@ app.post("/x402/register", async (c) => {
       if (log.address.toLowerCase() !== usdcAddr) continue;
       if (log.topics[0] !== transferTopic) continue;
 
-      // topics[2] = "to" address (padded to 32 bytes)
+      // topics[1] = "from" address, topics[2] = "to" address (padded to 32 bytes)
+      const fromAddr = ("0x" + (log.topics[1] || "").slice(26)).toLowerCase();
       const toAddr = ("0x" + (log.topics[2] || "").slice(26)).toLowerCase();
       if (toAddr !== relayerAddr.toLowerCase()) continue;
+      if (fromAddr !== owner.toLowerCase()) continue; // Verify sender is the registrant
 
       // Decode transfer amount from data
       const transferAmount = BigInt(log.data);
@@ -1191,11 +1321,11 @@ app.post("/x402/register", async (c) => {
     }
 
     if (!verified) {
+      await unmarkPayment(c.env, txHash);
       return c.json({ error: "Payment verification failed: no matching USDC transfer to relayer" }, 400);
     }
 
-    // Mark tx as used (KV-backed)
-    await markPaymentUsed(c.env, txHash);
+    // Payment already marked as used above (mark-before-verify pattern)
 
   } else {
     return c.json({ error: `Unsupported payment scheme: ${payment.scheme}. Use "exact".` }, 400);
@@ -1276,8 +1406,8 @@ app.post("/x402/register", async (c) => {
     });
 
   } catch (e: any) {
-    const msg = e?.shortMessage || e?.message || "Unknown error";
-    return c.json({ error: "Registration failed", detail: msg }, 500);
+    console.error("Registration failed:", e?.shortMessage || e?.message || e);
+    return c.json({ error: "Registration failed. Please try again." }, 500);
   }
 });
 
@@ -1319,12 +1449,19 @@ async function enrichListing(listing: any, client: any, addr: Address) {
       priceRaw = rawWei.toString();
     }
 
-    // Fetch avatar
+    // Fetch avatar + namespace status
     let avatar = "";
+    let isNamespace = false;
     try {
       avatar = await client.readContract({
         address: addr, abi: REGISTRY_ABI, functionName: "text", args: [name as string, "avatar"],
       }) as string;
+    } catch {}
+    try {
+      const nameHash = keccak256(toBytes(name as string));
+      const nsData = await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "namespaces", args: [nameHash] });
+      const nsAdmin = (nsData as any[])[0];
+      isNamespace = !!nsAdmin && nsAdmin !== "0x0000000000000000000000000000000000000000";
     } catch {}
 
     return {
@@ -1338,6 +1475,7 @@ async function enrichListing(listing: any, client: any, addr: Address) {
       listingExpiry: listing.expirationDate,
       orderHash: listing.orderHash,
       nameStatus: isActive ? "active" : "expired",
+      isNamespace,
       avatar: avatar || null,
       profileUrl: `https://${name}.hazza.name`,
       messageData: listing.messageData || null,
@@ -1513,6 +1651,308 @@ app.delete("/api/marketplace/watch", async (c) => {
   }
 });
 
+// POST /api/marketplace/fulfill — prepare buy transaction via SDK
+app.post("/api/marketplace/fulfill", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.orderHash || !body?.buyerAddress) {
+    return c.json({ error: "Missing orderHash and buyerAddress" }, 400);
+  }
+  try {
+    const bazaar = getBazaarClient(c.env);
+    const nftAddress = registryAddress(c.env);
+    const rawListings = await bazaar.getListings({ nftAddress });
+    const listing = rawListings.find((l: any) => l.orderHash === body.orderHash);
+    if (!listing) return c.json({ error: "Listing not found or no longer active" }, 404);
+
+    const prepared = await bazaar.prepareFulfillListing(listing, body.buyerAddress as `0x${string}`);
+    // Return approval txs + fulfillment tx as serialized calldata
+    // Parse approve(address,uint256) calldata to extract spender + amount for batch executor
+    const parseApproval = (a: any) => {
+      const data = a.data || "";
+      let spender = "", amount = "0";
+      if (data.startsWith("0x095ea7b3") && data.length >= 138) {
+        spender = "0x" + data.slice(34, 74);
+        amount = BigInt("0x" + data.slice(74, 138)).toString();
+      }
+      return { to: a.to, data, value: a.value?.toString() || "0", spender, amount };
+    };
+    return c.json({
+      approvals: prepared.approvals.map(parseApproval),
+      fulfillment: {
+        to: prepared.fulfillment.to,
+        data: prepared.fulfillment.data,
+        value: prepared.fulfillment.value?.toString() || "0",
+      },
+    });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+// POST /api/marketplace/fulfill-offer — prepare offer acceptance transaction via SDK
+app.post("/api/marketplace/fulfill-offer", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.orderHash || !body?.tokenId || !body?.sellerAddress) {
+    return c.json({ error: "Missing orderHash, tokenId, and sellerAddress" }, 400);
+  }
+  try {
+    const bazaar = getBazaarClient(c.env);
+    const nftAddress = registryAddress(c.env);
+    const rawOffers = await bazaar.getCollectionOffers({ nftAddress });
+    const offer = rawOffers.find((o: any) => o.orderHash === body.orderHash);
+    if (!offer) return c.json({ error: "Offer not found or no longer active" }, 404);
+
+    const prepared = await bazaar.prepareFulfillCollectionOffer(offer, body.tokenId, body.sellerAddress as `0x${string}`);
+    const parseApproval2 = (a: any) => {
+      const data = a.data || "";
+      let spender = "", amount = "0";
+      if (data.startsWith("0x095ea7b3") && data.length >= 138) {
+        spender = "0x" + data.slice(34, 74);
+        amount = BigInt("0x" + data.slice(74, 138)).toString();
+      }
+      return { to: a.to, data, value: a.value?.toString() || "0", spender, amount };
+    };
+    return c.json({
+      approvals: prepared.approvals.map(parseApproval2),
+      fulfillment: {
+        to: prepared.fulfillment.to,
+        data: prepared.fulfillment.data,
+        value: prepared.fulfillment.value?.toString() || "0",
+      },
+    });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+// =========================================================================
+//                    OTC OFFERS (Individual Name Offers)
+// =========================================================================
+
+const ALLOWED_OFFER_CURRENCIES = ["ETH", "WETH", "USDC"];
+const MAX_OFFERS_PER_NAME = 50;
+const MAX_OFFER_DURATION_SECS = 30 * 86400; // 30 days max
+const ALLOWED_BROKERS: Record<string, number> = {
+  // Cheryl — 1% broker fee, 1% platform fee
+  "0xaf5e770478e45650e36805d1ccaab240309f4a20": 100,
+};
+
+// POST /api/marketplace/offer — submit a signed offer for a specific name
+// Stores Seaport order data in KV. Supports broker fee split (e.g. Cheryl 1% + hazza 1%).
+app.post("/api/marketplace/offer", async (c) => {
+  // Rate limit: 10 offers per IP per hour
+  const offerIp = c.req.header("cf-connecting-ip") || "unknown";
+  const offerIpKey = `offerrate:${offerIp}`;
+  const offerIpCount = parseInt(await c.env.WATCHLIST_KV.get(offerIpKey) || "0");
+  if (offerIpCount >= 10) {
+    return c.json({ error: "Rate limited — too many offers. Try again later." }, 429);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  if (!body?.name || !body?.offerer || !body?.price || !body?.signature || !body?.orderComponents) {
+    return c.json({ error: "Missing required fields: name, offerer, price, signature, orderComponents" }, 400);
+  }
+
+  const name = body.name.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64);
+  if (!name) return c.json({ error: "Invalid name" }, 400);
+  if (!isAddress(body.offerer)) return c.json({ error: "Invalid offerer address" }, 400);
+
+  // Validate price is a positive number
+  const priceNum = parseFloat(body.price);
+  if (isNaN(priceNum) || priceNum <= 0 || priceNum > 1e12) {
+    return c.json({ error: "Invalid price" }, 400);
+  }
+  const priceStr = priceNum.toString();
+
+  // Validate currency
+  const currency = ALLOWED_OFFER_CURRENCIES.includes(body.currency) ? body.currency : "WETH";
+
+  // Validate broker — must be on allowlist
+  let broker: string | null = null;
+  let brokerFeeBps = 0;
+  let platformFeeBps = parseInt(c.env.MARKETPLACE_FEE_BPS) || 200;
+  if (body.broker && isAddress(body.broker)) {
+    const brokerAddr = body.broker.toLowerCase();
+    if (ALLOWED_BROKERS[brokerAddr] !== undefined) {
+      broker = brokerAddr;
+      brokerFeeBps = ALLOWED_BROKERS[brokerAddr];
+      platformFeeBps = platformFeeBps - brokerFeeBps; // split: e.g. 200 total → 100 platform + 100 broker
+    }
+    // Unapproved brokers are silently ignored — full fee goes to platform
+  }
+
+  // Validate expiresAt — cap at 30 days
+  const now = Math.floor(Date.now() / 1000);
+  let expiresAt = Math.floor(Number(body.expiresAt) || 0);
+  if (expiresAt <= now || expiresAt > now + MAX_OFFER_DURATION_SECS) {
+    expiresAt = now + 7 * 86400; // default 7 days
+  }
+
+  // Validate orderComponents size (prevent KV bloat)
+  const ocStr = JSON.stringify(body.orderComponents);
+  if (ocStr.length > 10240) {
+    return c.json({ error: "Order components too large" }, 400);
+  }
+
+  // Verify the name exists and get tokenId
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+  try {
+    const [nameOwner, tokenId] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+    }) as [string, bigint, bigint, bigint, string, bigint, string];
+    if (nameOwner === "0x0000000000000000000000000000000000000000") {
+      return c.json({ error: "Name not registered" }, 404);
+    }
+
+    const offer = {
+      id: `offer:${name}:${body.offerer.toLowerCase()}:${Date.now()}`,
+      name,
+      tokenId: tokenId.toString(),
+      offerer: body.offerer.toLowerCase(),
+      price: priceStr,
+      currency,
+      broker,
+      brokerFeeBps,
+      platformFeeBps,
+      orderComponents: body.orderComponents,
+      signature: body.signature,
+      expiresAt,
+      createdAt: now,
+      owner: nameOwner.toLowerCase(),
+    };
+
+    // Store in KV: per-name list
+    const nameKey = `offers:${name}`;
+    const existing = (await c.env.WATCHLIST_KV.get(nameKey, "json") as any[] | null) || [];
+
+    // Filter expired first
+    const active = existing.filter((o: any) => o.expiresAt > now);
+
+    // Cap offers per name
+    const idx = active.findIndex((o: any) => o.offerer === offer.offerer);
+    if (idx >= 0) {
+      active[idx] = offer; // replace existing from same offerer
+    } else if (active.length >= MAX_OFFERS_PER_NAME) {
+      return c.json({ error: "Too many offers on this name. Try again later." }, 429);
+    } else {
+      active.push(offer);
+    }
+
+    // Set TTL to the latest expiration in the array
+    const maxExpiry = Math.max(...active.map((o: any) => o.expiresAt));
+    const ttl = Math.min(maxExpiry - now + 86400, MAX_OFFER_DURATION_SECS + 86400); // +1 day buffer
+    await c.env.WATCHLIST_KV.put(nameKey, JSON.stringify(active), {
+      expirationTtl: Math.max(ttl, 60),
+    });
+
+    // Increment rate limit counter
+    await c.env.WATCHLIST_KV.put(offerIpKey, String(offerIpCount + 1), { expirationTtl: 3600 });
+
+    return c.json({ success: true, offer: { id: offer.id, name, price: offer.price, expiresAt: offer.expiresAt } });
+  } catch (e: any) {
+    return c.json({ error: "Failed to submit offer" }, 500);
+  }
+});
+
+// GET /api/marketplace/offers/:name — get all offers for a specific name
+app.get("/api/marketplace/offers/:name", async (c) => {
+  const name = c.req.param("name").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64);
+  if (!name) return c.json({ offers: [] });
+  try {
+    const nameKey = `offers:${name}`;
+    const offers = (await c.env.WATCHLIST_KV.get(nameKey, "json") as any[] | null) || [];
+    // Filter expired
+    const now = Math.floor(Date.now() / 1000);
+    const active = offers.filter((o: any) => o.expiresAt > now);
+    // Clean up expired (only rewrite if something was removed)
+    if (active.length !== offers.length) {
+      const maxExpiry = active.length > 0 ? Math.max(...active.map((o: any) => o.expiresAt)) : now;
+      const ttl = Math.min(maxExpiry - now + 86400, MAX_OFFER_DURATION_SECS + 86400);
+      await c.env.WATCHLIST_KV.put(nameKey, JSON.stringify(active), { expirationTtl: Math.max(ttl, 60) });
+    }
+    return c.json({ offers: active, total: active.length });
+  } catch (e: any) {
+    return c.json({ offers: [] });
+  }
+});
+
+// GET /api/marketplace/all-offers — get all active offers across all names (for the offers tab)
+app.get("/api/marketplace/all-offers", async (c) => {
+  try {
+    const limit = Math.min(parseInt(c.req.query("limit") || "100"), 200);
+    const keys = await c.env.WATCHLIST_KV.list({ prefix: "offers:", limit: 100 });
+    const allOffers: any[] = [];
+    const now = Math.floor(Date.now() / 1000);
+    // Parallel KV reads instead of sequential
+    const results = await Promise.all(
+      keys.keys.map((key) => c.env.WATCHLIST_KV.get(key.name, "json").catch(() => null))
+    );
+    for (const offers of results) {
+      if (!Array.isArray(offers)) continue;
+      for (const o of offers) {
+        if (o.expiresAt > now) allOffers.push(o);
+        if (allOffers.length >= limit) break;
+      }
+      if (allOffers.length >= limit) break;
+    }
+    // Sort by newest first
+    allOffers.sort((a: any, b: any) => b.createdAt - a.createdAt);
+    return c.json({ offers: allOffers.slice(0, limit), total: allOffers.length });
+  } catch (e: any) {
+    return c.json({ offers: [], total: 0 });
+  }
+});
+
+// DELETE /api/marketplace/offer — cancel an offer
+// Requires a signed message from the offerer to prove ownership
+app.delete("/api/marketplace/offer", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.name || !body?.offerer || !body?.signature) {
+    return c.json({ error: "Missing name, offerer, and signature" }, 400);
+  }
+  if (!isAddress(body.offerer)) return c.json({ error: "Invalid offerer address" }, 400);
+
+  // Verify the signature proves the caller controls the offerer address
+  // Message format: "cancel-offer:{name}:{offerer}:{timestamp}"
+  const timestamp = Math.floor(Number(body.timestamp) || 0);
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - timestamp) > 300) { // 5 minute window
+    return c.json({ error: "Signature expired. Try again." }, 400);
+  }
+
+  try {
+    const message = `cancel-offer:${body.name.toLowerCase()}:${body.offerer.toLowerCase()}:${timestamp}`;
+    const valid = await verifyMessage({
+      address: body.offerer as `0x${string}`,
+      message,
+      signature: body.signature as `0x${string}`,
+    });
+    if (!valid) {
+      return c.json({ error: "Invalid signature — you can only cancel your own offers" }, 403);
+    }
+  } catch {
+    return c.json({ error: "Signature verification failed" }, 400);
+  }
+
+  const name = body.name.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64);
+  try {
+    const nameKey = `offers:${name}`;
+    const existing = (await c.env.WATCHLIST_KV.get(nameKey, "json") as any[] | null) || [];
+    const filtered = existing.filter((o: any) => o.offerer !== body.offerer.toLowerCase());
+    if (filtered.length > 0) {
+      const maxExpiry = Math.max(...filtered.map((o: any) => o.expiresAt));
+      const ttl = Math.min(maxExpiry - now + 86400, MAX_OFFER_DURATION_SECS + 86400);
+      await c.env.WATCHLIST_KV.put(nameKey, JSON.stringify(filtered), { expirationTtl: Math.max(ttl, 60) });
+    } else {
+      await c.env.WATCHLIST_KV.delete(nameKey);
+    }
+    return c.json({ success: true });
+  } catch (e: any) {
+    return c.json({ error: "Failed to cancel offer" }, 500);
+  }
+});
+
 // =========================================================================
 //                         CCIP-READ GATEWAY (ERC-3668)
 // =========================================================================
@@ -1564,7 +2004,7 @@ app.get("*", async (c) => {
       return c.html(dashboardPage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID));
     }
     if (path === "/marketplace") {
-      return c.html(marketplacePage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID, c.env.SEAPORT_ADDRESS, c.env.BAZAAR_ADDRESS));
+      return c.html(marketplacePage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID, c.env.SEAPORT_ADDRESS, c.env.BAZAAR_ADDRESS, c.env.BATCH_EXECUTOR_ADDRESS || '', c.env.HAZZA_TREASURY, c.env.MARKETPLACE_FEE_BPS || '200', c.env.WETH_ADDRESS || '0x4200000000000000000000000000000000000006'));
     }
     if (path === "/.well-known/farcaster.json") {
       return c.json({
@@ -1610,25 +2050,19 @@ app.get("*", async (c) => {
       return c.html(profilePage(name, null, c.env.CHAIN_ID));
     }
 
-    // Fetch text records + status in parallel
-    const textKeys = [
-      "avatar", "header", "description", "url",
-      "com.twitter", "com.github", "xyz.farcaster", "org.telegram", "com.discord", "com.linkedin",
-      "agent.endpoint", "agent.model", "agent.status", "agent.capabilities",
-      "agent.uri", "net.profile", "helixa.id", "netlibrary.member", "netlibrary.pass",
-      "site.key",
-    ];
-
-    const [textValues, isActive, inGrace, inRedemption, chash] = await Promise.all([
-      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
+    const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "site.key", "agent.uri", "net.profile"];
+    const [isActive, inGrace, inRedemption, textValues, chash] = await Promise.all([
       client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name] }),
       client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInGracePeriod", args: [name] }),
       client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInRedemptionPeriod", args: [name] }),
+      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
       client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
     ]);
 
     const texts: Record<string, string> = {};
-    textKeys.forEach((k, i) => { if (textValues[i]) texts[k] = textValues[i]; });
+    textKeys.forEach((key, i) => {
+      if (textValues[i]) texts[key] = textValues[i];
+    });
 
     let status: "active" | "grace" | "redemption" | "expired" = "expired";
     if (isActive) status = "active";
@@ -1751,7 +2185,8 @@ app.get("*", async (c) => {
         bankrData,
       }, c.env.CHAIN_ID)
     );
-  } catch {
+  } catch (err) {
+    console.error(`Profile page error for ${name}:`, err);
     return c.html(profilePage(name, null, c.env.CHAIN_ID));
   }
 });

@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./HazzaConfig.sol";
 
 interface IERC20 {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
@@ -21,7 +22,7 @@ interface IERC721Balance {
     function balanceOf(address owner) external view returns (uint256);
 }
 
-contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
+contract HazzaRegistryV2 is ERC721, Ownable, ReentrancyGuard {
     // =========================================================================
     //                              TYPES
     // =========================================================================
@@ -76,9 +77,10 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     //                              STATE
     // =========================================================================
 
-    IERC20 public immutable usdc;
-    IERC8004Registry public immutable agentRegistry;
+    IERC20 public usdc;
+    IERC8004Registry public agentRegistry;
     address public treasury;
+    HazzaConfig public config;
 
     // Membership NFT contracts (configurable — Unlimited Pass not yet deployed)
     IERC721Balance public netLibraryMembership;
@@ -134,41 +136,42 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     mapping(bytes32 => bytes) private _contenthashes;
 
     // =========================================================================
-    //                            CONSTANTS
+    //                     CONFIG KEYS (read from HazzaConfig)
     // =========================================================================
 
-    uint256 public constant MIN_COMMIT_AGE = 60;
-    uint256 public constant MAX_COMMIT_AGE = 86400;
+    // Pre-computed keccak256 keys for gas-efficient config reads
+    bytes32 private constant K_PRICE_3_CHAR = keccak256("PRICE_3_CHAR");
+    bytes32 private constant K_PRICE_4_CHAR = keccak256("PRICE_4_CHAR");
+    bytes32 private constant K_PRICE_5_PLUS = keccak256("PRICE_5_PLUS");
+    bytes32 private constant K_RENEWAL_FEE = keccak256("RENEWAL_FEE");
+    bytes32 private constant K_REDEMPTION_FEE = keccak256("REDEMPTION_FEE");
+    bytes32 private constant K_NAMESPACE_PRICE = keccak256("NAMESPACE_PRICE");
+    bytes32 private constant K_SUBNAME_PRICE = keccak256("SUBNAME_PRICE");
+    bytes32 private constant K_YEAR = keccak256("YEAR");
+    bytes32 private constant K_GRACE_PERIOD = keccak256("GRACE_PERIOD");
+    bytes32 private constant K_REDEMPTION_PERIOD = keccak256("REDEMPTION_PERIOD");
+    bytes32 private constant K_PRICING_WINDOW = keccak256("PRICING_WINDOW");
+    bytes32 private constant K_MIN_NAME_LENGTH = keccak256("MIN_NAME_LENGTH");
+    bytes32 private constant K_MAX_NAME_LENGTH = keccak256("MAX_NAME_LENGTH");
+    bytes32 private constant K_MIN_COMMIT_AGE = keccak256("MIN_COMMIT_AGE");
+    bytes32 private constant K_MAX_COMMIT_AGE = keccak256("MAX_COMMIT_AGE");
+    bytes32 private constant K_DAILY_LIMIT_NONMEMBER_EARLY = keccak256("DAILY_LIMIT_NONMEMBER_EARLY");
+    bytes32 private constant K_DAILY_LIMIT_NONMEMBER_LATER = keccak256("DAILY_LIMIT_NONMEMBER_LATER");
+    bytes32 private constant K_TOTAL_LIMIT_NONMEMBER = keccak256("TOTAL_LIMIT_NONMEMBER");
+    bytes32 private constant K_DAILY_LIMIT_MEMBER_EARLY = keccak256("DAILY_LIMIT_MEMBER_EARLY");
+    bytes32 private constant K_TOTAL_LIMIT_MEMBER = keccak256("TOTAL_LIMIT_MEMBER");
+    bytes32 private constant K_EARLY_PERIOD = keccak256("EARLY_PERIOD");
+    bytes32 private constant K_UNLIMITED_PASS_DISCOUNT = keccak256("UNLIMITED_PASS_DISCOUNT");
+    bytes32 private constant K_ENS_IMPORT_DISCOUNT = keccak256("ENS_IMPORT_DISCOUNT");
+    bytes32 private constant K_PROGRESSIVE_MULT_1 = keccak256("PROGRESSIVE_MULT_1");
+    bytes32 private constant K_PROGRESSIVE_MULT_2 = keccak256("PROGRESSIVE_MULT_2");
+    bytes32 private constant K_PROGRESSIVE_MULT_3 = keccak256("PROGRESSIVE_MULT_3");
+    bytes32 private constant K_MAX_RELAYER_COMMISSION = keccak256("MAX_RELAYER_COMMISSION");
 
-    // Pricing (USDC 6 decimals)
-    uint256 public constant PRICE_3_CHAR = 100e6;   // $100
-    uint256 public constant PRICE_4_CHAR = 25e6;    // $25
-    uint256 public constant PRICE_5_PLUS = 5e6;     // $5
-    uint256 public constant RENEWAL_FEE = 2e6;      // $2/year
-    uint256 public constant REDEMPTION_FEE = 10e6;   // $10 penalty
-    uint256 public constant NAMESPACE_PRICE = 0;      // Free to enable
-    uint256 public constant SUBNAME_PRICE = 1e6;     // $1 per agent subname
-
-    // Time
-    uint256 public constant YEAR = 365 days;
-    uint256 public constant GRACE_PERIOD = 30 days;
-    uint256 public constant REDEMPTION_PERIOD = 30 days;
-    uint256 public constant PRICING_WINDOW = 90 days;
-
-    // Name constraints
-    uint256 public constant MIN_NAME_LENGTH = 3;
-    uint256 public constant MAX_NAME_LENGTH = 63;
-
-    // Rate limits — non-members
-    uint256 public constant DAILY_LIMIT_NONMEMBER_EARLY = 1;   // days 1-7
-    uint256 public constant DAILY_LIMIT_NONMEMBER_LATER = 3;   // days 8+
-    uint256 public constant TOTAL_LIMIT_NONMEMBER = 10;
-
-    // Rate limits — Net Library members
-    uint256 public constant DAILY_LIMIT_MEMBER_EARLY = 3;      // days 1-7
-    uint256 public constant TOTAL_LIMIT_MEMBER = 30;
-
-    uint256 public constant EARLY_PERIOD = 7 days;
+    // Config reader helpers
+    function _cfg(bytes32 key) internal view returns (uint256) {
+        return config.get(key);
+    }
 
     // =========================================================================
     //                              EVENTS
@@ -242,18 +245,35 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         address _usdc,
         address _agentRegistry,
         address _treasury,
+        address _config,
         address _netLibraryMembership,
         address _unlimitedPass
-    ) ERC721("HAZZA Name", "HAZZA") Ownable(msg.sender) {
+    ) ERC721("hazza name", "HAZZA") Ownable(msg.sender) {
         usdc = IERC20(_usdc);
         agentRegistry = IERC8004Registry(_agentRegistry);
         treasury = _treasury;
+        config = HazzaConfig(_config);
         if (_netLibraryMembership != address(0)) {
             netLibraryMembership = IERC721Balance(_netLibraryMembership);
         }
         if (_unlimitedPass != address(0)) {
             unlimitedPass = IERC721Balance(_unlimitedPass);
         }
+    }
+
+    /// @notice Update the config contract address
+    function setConfig(address _config) external onlyOwner {
+        config = HazzaConfig(_config);
+    }
+
+    /// @notice Update the USDC token address
+    function setUsdc(address _usdc) external onlyOwner {
+        usdc = IERC20(_usdc);
+    }
+
+    /// @notice Update the ERC-8004 agent registry address
+    function setAgentRegistry(address _agentRegistry) external onlyOwner {
+        agentRegistry = IERC8004Registry(_agentRegistry);
     }
 
     // =========================================================================
@@ -292,8 +312,8 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         bytes32 commitHash = keccak256(abi.encodePacked(name, nameOwner, salt));
         Commitment memory c = commitments[commitHash];
         if (c.timestamp == 0) revert CommitmentNotFound();
-        if (block.timestamp - c.timestamp < MIN_COMMIT_AGE) revert CommitmentTooNew();
-        if (block.timestamp - c.timestamp > MAX_COMMIT_AGE) revert CommitmentTooOld();
+        if (block.timestamp - c.timestamp < _cfg(K_MIN_COMMIT_AGE)) revert CommitmentTooNew();
+        if (block.timestamp - c.timestamp > _cfg(K_MAX_COMMIT_AGE)) revert CommitmentTooOld();
         delete commitments[commitHash];
 
         _registerName(name, agentURI, RegistrationConfig({
@@ -424,7 +444,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         uint256 tokenId = _nextTokenId++;
 
         // Compute expiry once
-        uint64 expiresAt = uint64(block.timestamp + (c.numYears * YEAR));
+        uint64 expiresAt = uint64(block.timestamp + (c.numYears * _cfg(K_YEAR)));
 
         // Store record
         _names[nameHash] = NameRecord({
@@ -461,7 +481,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         if (info.firstRegistrationTime == 0) {
             info.firstRegistrationTime = uint64(block.timestamp);
         }
-        if (info.pricingWindowStart == 0 || block.timestamp - info.pricingWindowStart > PRICING_WINDOW) {
+        if (info.pricingWindowStart == 0 || block.timestamp - info.pricingWindowStart > _cfg(K_PRICING_WINDOW)) {
             info.pricingWindowStart = uint64(block.timestamp);
             info.pricingWindowCount = 1;
         } else {
@@ -484,7 +504,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         if (_isReleased(record)) revert NameNotRegistered();
         require(msg.sender == ownerOf(record.tokenId) || msg.sender == record.operator, "Not authorized");
 
-        uint256 cost = RENEWAL_FEE * numYears;
+        uint256 cost = _cfg(K_RENEWAL_FEE) * numYears;
         bool sent = usdc.transferFrom(msg.sender, treasury, cost);
         if (!sent) revert TransferFailed();
 
@@ -492,7 +512,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         uint64 base = record.expiresAt > uint64(block.timestamp)
             ? record.expiresAt
             : uint64(block.timestamp);
-        record.expiresAt = base + uint64(numYears * YEAR);
+        record.expiresAt = base + uint64(numYears * _cfg(K_YEAR));
 
         emit NameRenewed(name, record.tokenId, record.expiresAt, numYears);
     }
@@ -506,11 +526,11 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         if (!_isInRedemption(record)) revert NotInRedemptionPeriod();
         if (ownerOf(record.tokenId) != msg.sender) revert NotNameOwner();
 
-        uint256 cost = REDEMPTION_FEE + (RENEWAL_FEE * numYears);
+        uint256 cost = _cfg(K_REDEMPTION_FEE) + (_cfg(K_RENEWAL_FEE) * numYears);
         bool sent = usdc.transferFrom(msg.sender, treasury, cost);
         if (!sent) revert TransferFailed();
 
-        record.expiresAt = uint64(block.timestamp + (numYears * YEAR));
+        record.expiresAt = uint64(block.timestamp + (numYears * _cfg(K_YEAR)));
         emit NameRenewed(name, record.tokenId, record.expiresAt, numYears);
     }
 
@@ -534,19 +554,19 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     function _isInGrace(NameRecord memory r) internal view returns (bool) {
         if (r.tokenId == 0) return false;
         uint256 exp = r.expiresAt;
-        return block.timestamp > exp && block.timestamp <= exp + GRACE_PERIOD;
+        return block.timestamp > exp && block.timestamp <= exp + _cfg(K_GRACE_PERIOD);
     }
 
     function _isInRedemption(NameRecord memory r) internal view returns (bool) {
         if (r.tokenId == 0) return false;
         uint256 exp = r.expiresAt;
-        return block.timestamp > exp + GRACE_PERIOD
-            && block.timestamp <= exp + GRACE_PERIOD + REDEMPTION_PERIOD;
+        return block.timestamp > exp + _cfg(K_GRACE_PERIOD)
+            && block.timestamp <= exp + _cfg(K_GRACE_PERIOD) + _cfg(K_REDEMPTION_PERIOD);
     }
 
     function _isReleased(NameRecord memory r) internal view returns (bool) {
         if (r.tokenId == 0) return false;
-        return block.timestamp > r.expiresAt + GRACE_PERIOD + REDEMPTION_PERIOD;
+        return block.timestamp > r.expiresAt + _cfg(K_GRACE_PERIOD) + _cfg(K_REDEMPTION_PERIOD);
     }
 
     // =========================================================================
@@ -573,30 +593,30 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
 
         if (tier == 1) {
             // Net Library member
-            if (info.totalRegistrations >= TOTAL_LIMIT_MEMBER) revert WalletLimitExceeded();
+            if (info.totalRegistrations >= _cfg(K_TOTAL_LIMIT_MEMBER)) revert WalletLimitExceeded();
             if (info.firstRegistrationTime != 0
-                && block.timestamp - info.firstRegistrationTime < EARLY_PERIOD
-                && todayCount >= DAILY_LIMIT_MEMBER_EARLY) {
+                && block.timestamp - info.firstRegistrationTime < _cfg(K_EARLY_PERIOD)
+                && todayCount >= _cfg(K_DAILY_LIMIT_MEMBER_EARLY)) {
                 revert RateLimitExceeded();
             }
             // After early period: unlimited daily
         } else {
             // Non-member
-            if (info.totalRegistrations >= TOTAL_LIMIT_NONMEMBER) revert WalletLimitExceeded();
+            if (info.totalRegistrations >= _cfg(K_TOTAL_LIMIT_NONMEMBER)) revert WalletLimitExceeded();
             if (info.firstRegistrationTime != 0
-                && block.timestamp - info.firstRegistrationTime < EARLY_PERIOD) {
-                if (todayCount >= DAILY_LIMIT_NONMEMBER_EARLY) revert RateLimitExceeded();
+                && block.timestamp - info.firstRegistrationTime < _cfg(K_EARLY_PERIOD)) {
+                if (todayCount >= _cfg(K_DAILY_LIMIT_NONMEMBER_EARLY)) revert RateLimitExceeded();
             } else {
-                if (todayCount >= DAILY_LIMIT_NONMEMBER_LATER) revert RateLimitExceeded();
+                if (todayCount >= _cfg(K_DAILY_LIMIT_NONMEMBER_LATER)) revert RateLimitExceeded();
             }
         }
     }
 
     /// @notice Base price by character count (ENSIP-15 grapheme clusters)
-    function _basePriceByLength(uint256 charLen) internal pure returns (uint256) {
-        if (charLen <= 3) return PRICE_3_CHAR;
-        if (charLen == 4) return PRICE_4_CHAR;
-        return PRICE_5_PLUS;
+    function _basePriceByLength(uint256 charLen) internal view returns (uint256) {
+        if (charLen <= 3) return _cfg(K_PRICE_3_CHAR);
+        if (charLen == 4) return _cfg(K_PRICE_4_CHAR);
+        return _cfg(K_PRICE_5_PLUS);
     }
 
     function _adjustedPrice(
@@ -612,7 +632,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
 
         // Get count in current pricing window
         uint256 count = info.pricingWindowCount;
-        if (info.pricingWindowStart != 0 && block.timestamp - info.pricingWindowStart > PRICING_WINDOW) {
+        if (info.pricingWindowStart != 0 && block.timestamp - info.pricingWindowStart > _cfg(K_PRICING_WINDOW)) {
             count = 0; // window expired, reset
         }
 
@@ -657,7 +677,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         uint256 charLen = charCount > 0 ? uint256(charCount) : bytes(name).length;
         uint256 base = _basePriceByLength(charLen);
         registrationFee = _adjustedPrice(base, wallet, ensImport, verifiedPass);
-        renewalFee = RENEWAL_FEE * numYears;
+        renewalFee = _cfg(K_RENEWAL_FEE) * numYears;
         totalCost = registrationFee; // renewal is paid separately, not bundled
     }
 
@@ -686,7 +706,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         } else {
             registrationFee = _adjustedPrice(base, wallet, ensImport, verifiedPass);
         }
-        renewalFee = RENEWAL_FEE * numYears;
+        renewalFee = _cfg(K_RENEWAL_FEE) * numYears;
         totalCost = registrationFee;
     }
 
@@ -921,7 +941,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         if (subnames[nsHash][subHash].owner != address(0)) revert SubnameAlreadyExists();
 
         // $1 per subname
-        bool sent = usdc.transferFrom(msg.sender, treasury, SUBNAME_PRICE);
+        bool sent = usdc.transferFrom(msg.sender, treasury, _cfg(K_SUBNAME_PRICE));
         if (!sent) revert TransferFailed();
 
         subnames[nsHash][subHash] = SubnameRecord({
@@ -980,7 +1000,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
 
     /// @notice Get the base USDC price for a name (before multipliers)
     /// @param charCount ENSIP-15 grapheme count (0 = use byte length)
-    function price(string calldata name, uint8 charCount) public pure returns (uint256) {
+    function price(string calldata name, uint8 charCount) public view returns (uint256) {
         uint256 charLen = charCount > 0 ? uint256(charCount) : bytes(name).length;
         return _basePriceByLength(charLen);
     }
@@ -1084,12 +1104,12 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     // =========================================================================
 
     /// @dev Strict ASCII validation for public commit-reveal path
-    function _validateNameStrict(string calldata name) internal pure {
+    function _validateNameStrict(string calldata name) internal view {
         bytes memory b = bytes(name);
         uint256 len = b.length;
 
-        if (len < MIN_NAME_LENGTH) revert NameTooShort();
-        if (len > MAX_NAME_LENGTH) revert NameTooLong();
+        if (len < _cfg(K_MIN_NAME_LENGTH)) revert NameTooShort();
+        if (len > _cfg(K_MAX_NAME_LENGTH)) revert NameTooLong();
         if (b[0] == 0x2D) revert LeadingHyphen();
         if (b[len - 1] == 0x2D) revert TrailingHyphen();
 
@@ -1108,13 +1128,13 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     }
 
     /// @dev Permissive UTF-8 validation for relayer path (ENSIP-15 normalized offchain)
-    function _validateNamePermissive(string calldata name, uint8 charCount) internal pure {
+    function _validateNamePermissive(string calldata name, uint8 charCount) internal view {
         uint256 len = bytes(name).length;
         if (len == 0) revert NameTooShort();
         if (len > 255) revert NameTooLong();
-        // Enforce MIN_NAME_LENGTH on effective character count
+        // Enforce _cfg(K_MIN_NAME_LENGTH) on effective character count
         uint256 effectiveLen = charCount > 0 ? uint256(charCount) : len;
-        if (effectiveLen < MIN_NAME_LENGTH) revert NameTooShort();
+        if (effectiveLen < _cfg(K_MIN_NAME_LENGTH)) revert NameTooShort();
     }
 
     function _requireActiveNameOwner(bytes32 nameHash) internal view {

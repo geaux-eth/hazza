@@ -8,7 +8,7 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const DEFAULTS = {
   baseUrl: 'https://hazza.name',
   rpcUrl: 'https://sepolia.base.org',
-  registryAddress: '0xb38d1a7693B2a61A31F3E764A793AF88124940A2',
+  registryAddress: '0x2ab93c016F534C49e85c8E9E3E9aA8D45867ed7A',
   usdcAddress: '0x06A096A051906dEDd05Ef22dCF61ca1199bb038c',
   chainId: '84532',
 };

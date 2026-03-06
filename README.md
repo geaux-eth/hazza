@@ -12,7 +12,7 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 
 ## Contract (Base Sepolia)
 
-**Registry:** `0x126453000d57Ec2952F6c863874ce21d23a7F402`
+**Registry:** `0x2ab93c016F534C49e85c8E9E3E9aA8D45867ed7A`
 **MockUSDC:** `0x06A096A051906dEDd05Ef22dCF61ca1199bb038c`
 
 ### Key Functions
@@ -115,6 +115,26 @@ MOCK_USDC=0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
 HAZZA_TREASURY=0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a \
 CHERYL_WALLET=0xaf5e770478e45650e36805d1ccaab240309f4a20 \
 forge script script/DeployMock.s.sol --rpc-url https://sepolia.base.org --private-key $PK --broadcast
+```
+
+### Deploy BatchExecutor (Optional — enables batch marketplace buys)
+
+```bash
+cd /root/hazza-contracts
+forge script script/DeployBatchExecutor.s.sol --rpc-url https://sepolia.base.org --private-key $PK --broadcast
+# Then set BATCH_EXECUTOR_ADDRESS in wrangler.toml to the deployed address
+```
+
+### Approve Relayer for USDC
+
+After deploying, each relayer must approve the registry to spend USDC:
+
+```bash
+cast send 0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
+  "approve(address,uint256)" \
+  0x2ab93c016F534C49e85c8E9E3E9aA8D45867ed7A \
+  115792089237316195423570985008687907853269984665640564039457584007913129639935 \
+  --rpc-url https://sepolia.base.org --private-key $RELAYER_PK
 ```
 
 ## Pages

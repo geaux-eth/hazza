@@ -100,34 +100,20 @@ export async function handleCcipRead(c: Context<{ Bindings: Env }>) {
 
       case TEXT_SELECTOR: {
         // text(bytes32, string) → text record value
-        const [, key] = decodeAbiParameters(
-          [{ type: "bytes32" }, { type: "string" }],
-          innerParams,
-        );
-        const value = await client.readContract({
-          address: addr,
-          abi: REGISTRY_ABI,
-          functionName: "text",
-          args: [hazzaName, key as string],
-        });
+        // HazzaRegistry has no text() function — return empty string
         result = encodeAbiParameters(
           [{ type: "string" }],
-          [value as string],
+          [""],
         );
         break;
       }
 
       case CONTENTHASH_SELECTOR: {
         // contenthash(bytes32) → content hash bytes
-        const chash = await client.readContract({
-          address: addr,
-          abi: REGISTRY_ABI,
-          functionName: "contenthash",
-          args: [hazzaName],
-        });
+        // HazzaRegistry has no contenthash() function — return empty bytes
         result = encodeAbiParameters(
           [{ type: "bytes" }],
-          [chash as Hex],
+          ["0x"],
         );
         break;
       }

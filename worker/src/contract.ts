@@ -241,6 +241,27 @@ export const REGISTRY_ABI = [
     outputs: [],
   },
   {
+    name: "setAddr",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "coinType", type: "uint256" },
+      { name: "value", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "setContenthash",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "hash", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
     name: "setOperator",
     type: "function",
     stateMutability: "nonpayable",
@@ -306,6 +327,35 @@ export const REGISTRY_ABI = [
     ],
     outputs: [],
   },
+  // --- Namespace ---
+  {
+    name: "namespaces",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "nameHash", type: "bytes32" }],
+    outputs: [
+      { name: "admin", type: "address" },
+      { name: "parentTokenId", type: "uint256" },
+    ],
+  },
+  {
+    name: "registerNamespace",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "name", type: "string" }],
+    outputs: [],
+  },
+  {
+    name: "issueSubname",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "namespace", type: "string" },
+      { name: "subname", type: "string" },
+      { name: "subnameOwner", type: "address" },
+    ],
+    outputs: [],
+  },
   // --- Free Claim ---
   {
     name: "hasClaimedFreeName",
@@ -351,6 +401,10 @@ export type Env = {
   SEAPORT_ADDRESS: string;
   BAZAAR_ADDRESS: string;
   BASE_USDC_ADDRESS: string;
+  BATCH_EXECUTOR_ADDRESS: string;
+  HAZZA_TREASURY: string;
+  MARKETPLACE_FEE_BPS: string;
+  WETH_ADDRESS: string;
   WATCHLIST_KV: KVNamespace;
 };
 
