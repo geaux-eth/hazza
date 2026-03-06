@@ -22,7 +22,7 @@ You can help users register, manage, and resolve hazza names — short, immediat
 ## Key Info
 
 - **Website:** https://hazza.name
-- **Contract (Sepolia):** `0x2ab93c016F534C49e85c8E9E3E9aA8D45867ed7A`
+- **Contract (Sepolia):** `0xDd6672dc20820C59e026EC6751e508b3d9f13479`
 - **USDC (Sepolia):** `0x06A096A051906dEDd05Ef22dCF61ca1199bb038c`
 - **Chain:** Base Sepolia (chainId 84532) — mainnet coming soon
 - **Powered by:** x402 payment protocol + Net Protocol

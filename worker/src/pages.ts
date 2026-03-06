@@ -3445,7 +3445,7 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
       <div class="section-title">Contract</div>
       <div class="info-grid">
         <div class="info-row"><span class="label">Network</span><span class="value">Base Sepolia (testnet)</span></div>
-        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0x2ab93c016F534C49e85c8E9E3E9aA8D45867ed7A</span></div>
+        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0xDd6672dc20820C59e026EC6751e508b3d9f13479</span></div>
         <div class="info-row"><span class="label">USDC</span><span class="value" style="font-size:0.75rem">0x06A096A051906dEDd05Ef22dCF61ca1199bb038c</span></div>
         <div class="info-row"><span class="label">Source</span><span class="value"><a href="https://github.com/geaux-eth/hazza">github.com/geaux-eth/hazza</a></span></div>
       </div>

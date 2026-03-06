@@ -12,7 +12,7 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 
 ## Contract (Base Sepolia)
 
-**Registry:** `0x2ab93c016F534C49e85c8E9E3E9aA8D45867ed7A`
+**Registry:** `0xDd6672dc20820C59e026EC6751e508b3d9f13479`
 **MockUSDC:** `0x06A096A051906dEDd05Ef22dCF61ca1199bb038c`
 
 ### Key Functions
@@ -132,7 +132,7 @@ After deploying, each relayer must approve the registry to spend USDC:
 ```bash
 cast send 0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
   "approve(address,uint256)" \
-  0x2ab93c016F534C49e85c8E9E3E9aA8D45867ed7A \
+  0xDd6672dc20820C59e026EC6751e508b3d9f13479 \
   115792089237316195423570985008687907853269984665640564039457584007913129639935 \
   --rpc-url https://sepolia.base.org --private-key $RELAYER_PK
 ```
