@@ -45,7 +45,7 @@ Progressive pricing applies for bulk registrations. ENS-verified imports get 50%
 
 - **1 free hazza name** (bonus, in addition to everyone's first-free)
 - **20% discount** on all additional registrations
-- **No rate limits** on registrations
+- No daily or total registration limits (same as everyone — progressive pricing is the only brake)
 
 ### Anti-Abuse
 
@@ -144,7 +144,7 @@ cast send 0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
 | `/manage` | Name management (text records, agent, operator, custom domain) |
 | `/dashboard` | Dashboard showing all owned names |
 | `/pricing` | Pricing details |
-| `/pricing/protections` | Rate limits and anti-squatting |
+| `/pricing/protections` | Anti-squatting and name rights |
 | `/pricing/details` | Full pricing breakdown |
 | `/about` | About hazza |
 | `/docs` | API documentation |

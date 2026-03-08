@@ -41,7 +41,7 @@ There are two paths:
 1. **Commit-reveal** (public, anti-frontrunning) — user submits a hash, waits 60s, then reveals and registers
 2. **registerDirect** (relayer-only) — the x402 Worker or an authorized relayer registers on behalf of the user
 
-Both paths end up in `_registerName()` which validates the name, checks rate limits, calculates price, collects payment, mints the NFT, and optionally registers an ERC-8004 agent. Names are permanent — pay once, available forever.
+Both paths end up in `_registerName()` which validates the name, calculates price, collects payment, mints the NFT, and optionally registers an ERC-8004 agent. Names are permanent — pay once, available forever. No daily limits or wallet caps — progressive pricing is the sole anti-squat mechanism.
 
 ## Pricing (contract is the source of truth)
 
@@ -68,7 +68,7 @@ The window resets automatically after 90 days.
 ### Discounts (stackable)
 
 - **ENS import:** 50% off registration
-- **Unlimited Pass:** 20% off + bypasses rate limits + 1 additional free name via Net Library member ID
+- **Unlimited Pass:** 20% off + 1 additional free name via Net Library member ID
 - First name free applies before discounts — everyone's very first registration costs $0
 
 ## Name Rules

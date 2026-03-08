@@ -10,7 +10,6 @@ export const REGISTRY_ABI = [
     inputs: [{ name: "wallet", type: "address" }],
     outputs: [
       { name: "totalRegistrations", type: "uint128" },
-      { name: "firstRegistrationTime", type: "uint64" },
       { name: "pricingWindowStart", type: "uint64" },
       { name: "pricingWindowCount", type: "uint128" },
     ],

@@ -54,7 +54,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
 
     struct WalletInfo {
         uint128 totalRegistrations;
-        uint64 firstRegistrationTime;
         uint64 pricingWindowStart;
         uint128 pricingWindowCount;
     }
@@ -111,7 +110,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
 
     // Rate limiting
     mapping(address => WalletInfo) public walletInfo;
-    mapping(address => mapping(uint256 => uint256)) public dailyRegistrations; // wallet => day => count
+    // (removed dailyRegistrations — progressive pricing is the sole anti-squat mechanism)
 
     // Namespaces
     mapping(bytes32 => Namespace) public namespaces;
@@ -152,16 +151,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     uint256 public constant MIN_NAME_LENGTH = 3;
     uint256 public constant MAX_NAME_LENGTH = 63;
 
-    // Rate limits — non-members
-    uint256 public constant DAILY_LIMIT_NONMEMBER_EARLY = 1;   // days 1-7
-    uint256 public constant DAILY_LIMIT_NONMEMBER_LATER = 3;   // days 8+
-    uint256 public constant TOTAL_LIMIT_NONMEMBER = 10;
-
-    // Rate limits — Net Library members
-    uint256 public constant DAILY_LIMIT_MEMBER_EARLY = 3;      // days 1-7
-    uint256 public constant TOTAL_LIMIT_MEMBER = 30;
-
-    uint256 public constant EARLY_PERIOD = 7 days;
+    // No daily/total registration limits — progressive pricing is the sole anti-squat mechanism
 
     // =========================================================================
     //                              EVENTS
@@ -209,8 +199,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     error AgentAlreadyRegistered();
     error InvalidAgentWallet();
     error ZeroAddress();
-    error RateLimitExceeded();
-    error WalletLimitExceeded();
     error NameNotRegistered();
     error NotNamespaceAdmin();
     error NamespaceAlreadyExists();
@@ -375,7 +363,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         if (_names[nameHash].tokenId != 0) revert NameNotAvailable();
 
         // Rate limiting (applied to name recipient, not relayer)
-        _enforceRateLimit(c.nameOwner, c.verifiedPass);
+
 
         // Calculate price
         uint256 charLen = c.charCount > 0 ? uint256(c.charCount) : bytes(name).length;
@@ -424,17 +412,12 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     function _updateWalletInfo(address wallet) internal {
         WalletInfo storage info = walletInfo[wallet];
         info.totalRegistrations++;
-        if (info.firstRegistrationTime == 0) {
-            info.firstRegistrationTime = uint64(block.timestamp);
-        }
         if (info.pricingWindowStart == 0 || block.timestamp - info.pricingWindowStart > PRICING_WINDOW) {
             info.pricingWindowStart = uint64(block.timestamp);
             info.pricingWindowCount = 1;
         } else {
             info.pricingWindowCount++;
         }
-        uint256 today = block.timestamp / 1 days;
-        dailyRegistrations[wallet][today]++;
     }
 
     // =========================================================================
@@ -448,37 +431,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         return 0;
     }
 
-    function _enforceRateLimit(address wallet, bool verifiedPass) internal view {
-        uint8 tier = verifiedPass ? 2 : _getMembershipTier(wallet);
-        WalletInfo memory info = walletInfo[wallet];
-        uint256 today = block.timestamp / 1 days;
-        uint256 todayCount = dailyRegistrations[wallet][today];
-
-        if (tier == 2) {
-            // Unlimited Pass — no limits
-            return;
-        }
-
-        if (tier == 1) {
-            // Net Library member
-            if (info.totalRegistrations >= TOTAL_LIMIT_MEMBER) revert WalletLimitExceeded();
-            if (info.firstRegistrationTime != 0
-                && block.timestamp - info.firstRegistrationTime < EARLY_PERIOD
-                && todayCount >= DAILY_LIMIT_MEMBER_EARLY) {
-                revert RateLimitExceeded();
-            }
-            // After early period: unlimited daily
-        } else {
-            // Non-member
-            if (info.totalRegistrations >= TOTAL_LIMIT_NONMEMBER) revert WalletLimitExceeded();
-            if (info.firstRegistrationTime != 0
-                && block.timestamp - info.firstRegistrationTime < EARLY_PERIOD) {
-                if (todayCount >= DAILY_LIMIT_NONMEMBER_EARLY) revert RateLimitExceeded();
-            } else {
-                if (todayCount >= DAILY_LIMIT_NONMEMBER_LATER) revert RateLimitExceeded();
-            }
-        }
-    }
 
     /// @notice Base price by character count (ENSIP-15 grapheme clusters)
     function _basePriceByLength(uint256 charLen) internal pure returns (uint256) {

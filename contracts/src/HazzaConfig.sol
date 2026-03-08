@@ -37,16 +37,6 @@ contract HazzaConfig is Ownable {
         _init("MIN_COMMIT_AGE", 60);
         _init("MAX_COMMIT_AGE", 86400);
 
-        // Rate limits — non-members
-        _init("DAILY_LIMIT_NONMEMBER_EARLY", 1);
-        _init("DAILY_LIMIT_NONMEMBER_LATER", 3);
-        _init("TOTAL_LIMIT_NONMEMBER", 10);
-
-        // Rate limits — members
-        _init("DAILY_LIMIT_MEMBER_EARLY", 3);
-        _init("TOTAL_LIMIT_MEMBER", 30);
-
-        _init("EARLY_PERIOD", 7 days);
 
         // Discount basis points (10000 = 100%)
         _init("UNLIMITED_PASS_DISCOUNT", 2000);  // 20%

@@ -2883,7 +2883,7 @@ export function pricingPage(): string {
     <div class="section">
       <div class="section-title">Learn more</div>
       <div class="info-grid">
-        <div class="info-row"><span class="label"><a href="/pricing/protections">Protections</a></span><span class="value">Anti-squatting, rate limits, and name rights</span></div>
+        <div class="info-row"><span class="label"><a href="/pricing/protections">Protections</a></span><span class="value">Anti-squatting and name rights</span></div>
         <div class="info-row"><span class="label"><a href="/pricing/details">Fine print</a></span><span class="value">Payment, ownership, name rules, and contract</span></div>
       </div>
     </div>
@@ -2901,7 +2901,7 @@ export function pricingPage(): string {
 export function pricingProtectionsPage(): string {
   return shell(
     "hazza \u2014 immediately useful names",
-    "Anti-squatting, front-running, rate limits, and name rights for hazza registrations.",
+    "Anti-squatting, front-running, and name rights for hazza registrations.",
     `
     <div class="header">
       <h1>protections</h1>
@@ -2917,36 +2917,18 @@ export function pricingProtectionsPage(): string {
     <hr class="divider">
 
     <div class="section">
-      <div class="section-title">Rate limits</div>
-      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        New wallets have registration limits that relax over time.<br>
-        Holding a <a href="https://netlibrary.app">Net Library</a> membership or Unlimited Pass increases your limits.
-      </p>
-      <div class="info-grid">
-        <div class="info-row"><span class="label">Non-member (week 1)</span><span class="value">1 name/day, 10 total</span></div>
-        <div class="info-row"><span class="label">Non-member (after week 1)</span><span class="value">3 names/day, 10 total</span></div>
-        <div class="info-row"><span class="label"><a href="https://netlibrary.app">Net Library</a> member (week 1)</span><span class="value">3 names/day, 30 total</span></div>
-        <div class="info-row"><span class="label"><a href="https://netlibrary.app">Net Library</a> member (after)</span><span class="value">Unlimited daily, 30 total</span></div>
-        <div class="info-row"><span class="label">Unlimited Pass holder</span><span class="value">No limits</span></div>
-      </div>
-      <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
-        Net Library membership is a <a href="https://netlibrary.app">netlibrary.eth</a> subname ($2).<br>
-        The <a href="https://netlibrary.app">Unlimited Pass</a> ($10) unlocks unlimited hazza registrations, 20% discount, and 1 free name. Free name tracked by Net Library member number &mdash; one per member, ever.
-      </p>
-    </div>
-
-    <hr class="divider">
-
-    <div class="section">
       <div class="section-title">Name rights</div>
       <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
         hazza names are <strong style="color:#fff">first-come, first-served</strong>.
-        There is no challenge or dispute system. Progressive pricing and rate limits provide the anti-squatting protection.
+        There is no challenge or dispute system. Progressive pricing is the sole anti-squatting mechanism &mdash; no daily caps, no wallet limits. Register as many as you want.
       </p>
       <div class="info-grid">
         <div class="info-row"><span class="label">Ownership</span><span class="value">Whoever registers first, owns it</span></div>
         <div class="info-row"><span class="label">Protection</span><span class="value">Progressive pricing deters bulk registration</span></div>
       </div>
+      <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
+        <a href="https://netlibrary.app">Unlimited Pass</a> holders ($10) get 20% off all registrations + 1 free name.
+      </p>
     </div>
 
     <hr class="divider">

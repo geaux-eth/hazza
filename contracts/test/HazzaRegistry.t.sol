@@ -311,90 +311,16 @@ contract HazzaRegistryTest is Test {
     }
 
     // =========================================================================
-    //                        RATE LIMITING
+    //                     NO RATE LIMITS (progressive pricing only)
     // =========================================================================
 
-    function test_nonMemberDailyLimit() public {
-        // Non-member, day 1: max 1 per day
+    function test_noRateLimitMultiplePerDay() public {
+        // Anyone can register multiple names per day — progressive pricing is the only brake
         _register("first", alice);
-
-        vm.expectRevert(HazzaRegistry.RateLimitExceeded.selector);
-        _register("second", alice);
-    }
-
-    function test_nonMemberAfterEarlyPeriod() public {
-        _register("first", alice);
-        vm.warp(block.timestamp + 8 days);
-
-        // Should allow up to 3 per day after 7 days
         _register("second", alice);
         _register("third", alice);
         _register("fourth", alice);
-
-        vm.expectRevert(HazzaRegistry.RateLimitExceeded.selector);
-        _register("fifth", alice);
-    }
-
-    function test_nonMemberWalletCap() public {
-        // Use absolute timestamps to avoid via_ir caching issues
-        uint256 t0 = 100000;
-
-        // Register first name to start early period
-        vm.warp(t0);
-        _register("cap00", alice);
-
-        // Warp past early period → 3/day limit for non-members
-        vm.warp(t0 + 8 days);
-        _register("cap01", alice);
-        _register("cap02", alice);
-        _register("cap03", alice);
-
-        vm.warp(t0 + 9 days);
-        _register("cap04", alice);
-        _register("cap05", alice);
-        _register("cap06", alice);
-
-        vm.warp(t0 + 10 days);
-        _register("cap07", alice);
-        _register("cap08", alice);
-        _register("cap09", alice);
-
-        // Now at 10 total — next should hit wallet cap
-        vm.warp(t0 + 11 days);
-        vm.expectRevert(HazzaRegistry.WalletLimitExceeded.selector);
-        _register("toomany", alice);
-    }
-
-    function test_memberHigherLimits() public {
-        membership.setMember(alice, true);
-        // Member, day 1: max 3 per day
-        _register("mem1", alice);
-        _register("mem2", alice);
-        _register("mem3", alice);
-
-        vm.expectRevert(HazzaRegistry.RateLimitExceeded.selector);
-        _register("mem4", alice);
-    }
-
-    function test_memberUnlimitedAfterEarlyPeriod() public {
-        membership.setMember(alice, true);
-        _register("first", alice);
-        vm.warp(block.timestamp + 8 days);
-
-        // Unlimited daily after 7 days for members
-        for (uint256 i = 0; i < 20; i++) {
-            string memory name = string(abi.encodePacked("bulk", vm.toString(i)));
-            _register(name, alice);
-        }
-    }
-
-    function test_unlimitedPassNoLimits() public {
-        unlimitedPass.setMember(alice, true);
-        // No limits at all
-        for (uint256 i = 0; i < 15; i++) {
-            string memory name = string(abi.encodePacked("pass", vm.toString(i)));
-            _register(name, alice);
-        }
+        // All succeed — no daily cap
     }
 
     function test_membershipTier() public {
@@ -814,19 +740,6 @@ contract HazzaRegistryTest is Test {
         registry.registerDirect("crosswallet", alice, 0, false, address(0), "", false, true);
         // $5 * 80% = $4
         assertEq(usdc.balanceOf(treasury) - before, 4e6);
-    }
-
-    function test_verifiedPassBypassesRateLimit() public {
-        // Without pass: alice can only register 1/day in early period
-        _register("first1", alice);
-
-        // Second should fail normally
-        vm.expectRevert(HazzaRegistry.RateLimitExceeded.selector);
-        _register("second1", alice);
-
-        // But with verifiedPass, no rate limit
-        registry.registerDirect("second1", alice, 0, false, address(0), "", false, true);
-        assertFalse(registry.available("second1"));
     }
 
     function test_stackedDiscounts() public {
