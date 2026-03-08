@@ -23,13 +23,6 @@ export const REGISTRY_ABI = [
     outputs: [{ type: "bool" }],
   },
   {
-    name: "isActive",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "name", type: "string" }],
-    outputs: [{ type: "bool" }],
-  },
-  {
     name: "resolve",
     type: "function",
     stateMutability: "view",
@@ -38,7 +31,6 @@ export const REGISTRY_ABI = [
       { name: "nameOwner", type: "address" },
       { name: "tokenId", type: "uint256" },
       { name: "registeredAt", type: "uint64" },
-      { name: "expiresAt", type: "uint64" },
       { name: "operator", type: "address" },
       { name: "agentId", type: "uint256" },
       { name: "agentWallet", type: "address" },
@@ -61,7 +53,6 @@ export const REGISTRY_ABI = [
     inputs: [
       { name: "name", type: "string" },
       { name: "wallet", type: "address" },
-      { name: "numYears", type: "uint256" },
       { name: "charCount", type: "uint8" },
       { name: "ensImport", type: "bool" },
       { name: "verifiedPass", type: "bool" },
@@ -69,7 +60,6 @@ export const REGISTRY_ABI = [
     outputs: [
       { name: "totalCost", type: "uint256" },
       { name: "registrationFee", type: "uint256" },
-      { name: "renewalFee", type: "uint256" },
     ],
   },
   {
@@ -160,21 +150,6 @@ export const REGISTRY_ABI = [
     stateMutability: "view",
     inputs: [{ name: "name", type: "string" }],
     outputs: [{ type: "bytes" }],
-  },
-  // --- Status ---
-  {
-    name: "isInGracePeriod",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "name", type: "string" }],
-    outputs: [{ type: "bool" }],
-  },
-  {
-    name: "isInRedemptionPeriod",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "name", type: "string" }],
-    outputs: [{ type: "bool" }],
   },
   // --- Token URI ---
   {
@@ -281,16 +256,6 @@ export const REGISTRY_ABI = [
     ],
     outputs: [],
   },
-  {
-    name: "renew",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "name", type: "string" },
-      { name: "numYears", type: "uint256" },
-    ],
-    outputs: [],
-  },
   // --- x402 Relayer ---
   {
     name: "registerDirect",
@@ -299,7 +264,6 @@ export const REGISTRY_ABI = [
     inputs: [
       { name: "name", type: "string" },
       { name: "nameOwner", type: "address" },
-      { name: "numYears", type: "uint256" },
       { name: "charCount", type: "uint8" },
       { name: "wantAgent", type: "bool" },
       { name: "agentWallet", type: "address" },
@@ -316,7 +280,6 @@ export const REGISTRY_ABI = [
     inputs: [
       { name: "name", type: "string" },
       { name: "nameOwner", type: "address" },
-      { name: "numYears", type: "uint256" },
       { name: "charCount", type: "uint8" },
       { name: "wantAgent", type: "bool" },
       { name: "agentWallet", type: "address" },
@@ -371,7 +334,6 @@ export const REGISTRY_ABI = [
     inputs: [
       { name: "name", type: "string" },
       { name: "wallet", type: "address" },
-      { name: "numYears", type: "uint256" },
       { name: "charCount", type: "uint8" },
       { name: "ensImport", type: "bool" },
       { name: "verifiedPass", type: "bool" },
@@ -380,7 +342,6 @@ export const REGISTRY_ABI = [
     outputs: [
       { name: "totalCost", type: "uint256" },
       { name: "registrationFee", type: "uint256" },
-      { name: "renewalFee", type: "uint256" },
       { name: "isFreeClaim", type: "bool" },
     ],
   },

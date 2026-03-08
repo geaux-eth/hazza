@@ -17,8 +17,7 @@ const cmd = new Command('profile')
         ['Owner', 'owner'],
         ['Token ID', 'tokenId'],
         ['Registered', 'registeredAt', v => v ? new Date(v * 1000).toLocaleDateString() : '—'],
-        ['Expires', 'expiresAt', v => v ? new Date(v * 1000).toLocaleDateString() : '—'],
-        ['Status', d => d.expired ? chalk.red('Expired') : chalk.green('Active')],
+        ['Status', d => chalk.green('Permanent')],
         ['Profile URL', d => `https://${name}.hazza.name`],
       ]);
 

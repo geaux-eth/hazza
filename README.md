@@ -1,6 +1,6 @@
 # hazza — Onchain Name Registry
 
-Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an ERC-721 NFT, ENS-compatible resolution via CCIP-Read, and an optional ERC-8004 AI agent identity.
+Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an ERC-721 NFT, ENS-compatible resolution via CCIP-Read, and an optional ERC-8004 AI agent identity. **Pay once, available forever.**
 
 **Live:** [hazza.name](https://hazza.name)
 
@@ -26,7 +26,6 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 | `hasClaimedFreeName(uint256)` | Check if member already claimed free name |
 | `resolve(string)` | Resolve name to owner, token ID, expiry, agent |
 | `reverseResolve(address)` | Wallet to primary name |
-| `renew(string, uint256)` | Renew a name |
 
 ### Pricing
 
@@ -35,9 +34,8 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 | 3 characters | $100 |
 | 4 characters | $25 |
 | 5+ characters | $5 |
-| Renewal | $2/year |
 
-**First name free:** Everyone's first registration is free (just pay gas). Pricing above applies to additional names.
+**Pay once, available forever.** No renewals, no expiration. First name free — everyone's first registration is free (just pay gas). Pricing above applies to additional names.
 
 Progressive pricing applies for bulk registrations. ENS-verified imports get 50% off.
 
@@ -82,7 +80,7 @@ All endpoints at `hazza.name`.
 
 ### x402 Payment Flow (Paid Registration)
 
-1. `POST /x402/register` with `{ name, owner, years }` — returns 402 with USDC amount
+1. `POST /x402/register` with `{ name, owner }` — returns 402 with USDC amount
 2. User transfers USDC to relayer address
 3. `POST /x402/register` with `X-PAYMENT` header containing tx proof
 4. Worker verifies payment on-chain, calls `registerDirect` via relayer

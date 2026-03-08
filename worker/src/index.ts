@@ -80,7 +80,7 @@ app.get("/api/resolve/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
   if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   const client = getClient(c.env);
-  const [nameOwner, tokenId, registeredAt, expiresAt, operator, agentId, agentWallet] =
+  const [nameOwner, tokenId, registeredAt, operator, agentId, agentWallet] =
     await client.readContract({
       address: registryAddress(c.env),
       abi: REGISTRY_ABI,
@@ -97,10 +97,10 @@ app.get("/api/resolve/:name", async (c) => {
     owner: nameOwner,
     tokenId: tokenId.toString(),
     registeredAt: Number(registeredAt),
-    expiresAt: Number(expiresAt),
     operator,
     agentId: agentId.toString(),
     agentWallet,
+    status: "active",
     url: `https://${name}.hazza.name`,
   });
 });
@@ -131,10 +131,7 @@ app.get("/api/quote/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
   if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   const wallet = (c.req.query("wallet") || "0x0000000000000000000000000000000000000000") as Address;
-  const yearsStr = c.req.query("years") || "1";
-  if (!/^\d+$/.test(yearsStr)) return c.json({ error: "Invalid years parameter" }, 400);
-  const numYears = BigInt(yearsStr);
-  const charCount = Number(c.req.query("charCount") || "5");
+  const charCount = Number(c.req.query("charCount") || "0");
   const ensImport = c.req.query("ensImport") === "true";
   const verifiedPass = c.req.query("verifiedPass") === "true";
   const memberIdStr = c.req.query("memberId") || "0";
@@ -145,63 +142,58 @@ app.get("/api/quote/:name", async (c) => {
 
   // Use member-aware quote if memberId provided
   if (memberId > 0n) {
-    const [totalCost, registrationFee, renewalFee, isFreeClaim] = await client.readContract({
+    const [totalCost, registrationFee, isFreeClaim] = await client.readContract({
       address: registryAddress(c.env),
       abi: REGISTRY_ABI,
       functionName: "quoteNameWithMember",
-      args: [name, wallet, numYears, charCount, ensImport, verifiedPass, memberId],
+      args: [name, wallet, charCount, ensImport, verifiedPass, memberId],
     });
 
     const lineItems: { label: string; amount: string }[] = [];
     if (isFreeClaim) {
-      lineItems.push({ label: "Registration (1 year included)", amount: "FREE" });
+      lineItems.push({ label: "Registration", amount: "FREE" });
       lineItems.push({ label: "Unlimited Pass + Net Library", amount: "1 free name" });
     } else {
-      lineItems.push({ label: "Registration (1 year included)", amount: formatUnits(registrationFee, 6) });
+      lineItems.push({ label: "Registration", amount: formatUnits(registrationFee, 6) });
       if (verifiedPass) lineItems.push({ label: "Unlimited Pass", amount: "20% discount" });
     }
-    if (ensImport) lineItems.push({ label: "ENS Import", amount: "Challenge immunity" });
+    if (ensImport) lineItems.push({ label: "ENS Import", amount: "50% discount" });
 
     return c.json({
-      name, wallet, years: Number(numYears),
+      name, wallet,
       total: formatUnits(totalCost, 6),
       totalRaw: totalCost.toString(),
       registrationFee: formatUnits(registrationFee, 6),
-      renewalFee: formatUnits(renewalFee, 6),
-      renewalNote: "$2/yr renewal after first year",
       isFreeClaim,
       memberId: memberId.toString(),
       lineItems,
     });
   }
 
-  const [totalCost, registrationFee, renewalFee] = await client.readContract({
+  const [totalCost, registrationFee] = await client.readContract({
     address: registryAddress(c.env),
     abi: REGISTRY_ABI,
     functionName: "quoteName",
-    args: [name, wallet, numYears, charCount, ensImport, verifiedPass],
+    args: [name, wallet, charCount, ensImport, verifiedPass],
   });
 
-  // Build line items for UI display — renewal is NOT charged at registration
+  // Build line items for UI display
   const isFirstFree = totalCost === 0n && registrationFee === 0n;
   const lineItems: { label: string; amount: string }[] = [];
   if (isFirstFree) {
-    lineItems.push({ label: "First name (1 year included)", amount: "FREE + gas" });
+    lineItems.push({ label: "First name", amount: "FREE + gas" });
   } else {
-    lineItems.push({ label: "Registration (1 year included)", amount: formatUnits(registrationFee, 6) });
-    if (ensImport) lineItems.push({ label: "ENS Import", amount: "Challenge immunity" });
+    lineItems.push({ label: "Registration", amount: formatUnits(registrationFee, 6) });
+    if (ensImport) lineItems.push({ label: "ENS Import", amount: "50% discount" });
     if (verifiedPass) lineItems.push({ label: "Unlimited Pass", amount: "20% discount" });
   }
 
   return c.json({
     name,
     wallet,
-    years: Number(numYears),
     total: formatUnits(totalCost, 6),
     totalRaw: totalCost.toString(),
     registrationFee: formatUnits(registrationFee, 6),
-    renewalFee: formatUnits(renewalFee, 6),
-    renewalNote: "$2/yr renewal after first year",
     ...(isFirstFree ? { firstRegistration: true, message: "Your first name is free — just pay gas!" } : {}),
     lineItems,
   });
@@ -298,26 +290,18 @@ app.get("/api/profile/:name", async (c) => {
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
-  const [nameOwner, tokenId, registeredAt, expiresAt, operator, agentId, agentWallet] =
+  const [nameOwner, tokenId, registeredAt, operator, agentId, agentWallet] =
     await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] });
 
   if (nameOwner === "0x0000000000000000000000000000000000000000") {
     return c.json({ name, registered: false });
   }
 
-  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord"];
-  const [isActive, inGrace, inRedemption, textValues, chash] = await Promise.all([
-    client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name] }),
-    client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInGracePeriod", args: [name] }),
-    client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInRedemptionPeriod", args: [name] }),
+  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xmtp"];
+  const [textValues, chash] = await Promise.all([
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
   ]);
-
-  let status = "expired";
-  if (isActive) status = "active";
-  else if (inGrace) status = "grace";
-  else if (inRedemption) status = "redemption";
 
   const texts: Record<string, string> = {};
   textKeys.forEach((key, i) => {
@@ -330,11 +314,10 @@ app.get("/api/profile/:name", async (c) => {
     owner: nameOwner,
     tokenId: tokenId.toString(),
     registeredAt: Number(registeredAt),
-    expiresAt: Number(expiresAt),
     operator,
     agentId: agentId.toString(),
     agentWallet,
-    status,
+    status: "active",
     texts,
     contenthash: chash && chash !== "0x" ? (chash as string) : null,
     url: `https://${name}.hazza.name`,
@@ -344,9 +327,20 @@ app.get("/api/profile/:name", async (c) => {
 // Single text record
 app.get("/api/text/:name/:key", async (c) => {
   const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   const key = c.req.param("key");
-  // Contract doesn't have text records yet — return empty
-  return c.json({ name, key, value: "" });
+  const client = getClient(c.env);
+  try {
+    const value = await client.readContract({
+      address: registryAddress(c.env),
+      abi: REGISTRY_ABI,
+      functionName: "text",
+      args: [name, key],
+    });
+    return c.json({ name, key, value: value || "" });
+  } catch {
+    return c.json({ name, key, value: "" });
+  }
 });
 
 // OG image generator (PNG via resvg-wasm)
@@ -721,7 +715,7 @@ app.get("/api/metadata/:name", async (c) => {
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
-  const [nameOwner, tokenId, registeredAt, expiresAt, , agentId] =
+  const [nameOwner, tokenId, registeredAt, , agentId] =
     await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] });
 
   if (nameOwner === "0x0000000000000000000000000000000000000000") {
@@ -739,7 +733,6 @@ app.get("/api/metadata/:name", async (c) => {
   const attributes: { trait_type: string; value: string }[] = [
     { trait_type: "Length", value: name.length.toString() },
     { trait_type: "Registered", value: new Date(Number(registeredAt) * 1000).toISOString().split("T")[0] },
-    { trait_type: "Expires", value: new Date(Number(expiresAt) * 1000).toISOString().split("T")[0] },
     { trait_type: "Namespace", value: isNamespace ? "Yes" : "No" },
   ];
   if (agentId > 0n) attributes.push({ trait_type: "Agent", value: `#${agentId}` });
@@ -772,7 +765,7 @@ app.get("/api/names/:address", async (c) => {
 
     // Batch nameOf calls in chunks to find which tokens exist
     const BATCH_SIZE = 50;
-    const names: { name: string; tokenId: string; url: string; expiresAt: number; status: string; isNamespace: boolean }[] = [];
+    const names: { name: string; tokenId: string; url: string; status: string; isNamespace: boolean }[] = [];
 
     for (let start = 1; start <= totalCount && names.length < count; start += BATCH_SIZE) {
       const end = Math.min(start + BATCH_SIZE - 1, totalCount);
@@ -801,41 +794,34 @@ app.get("/api/names/:address", async (c) => {
         )
       );
 
-      // Filter to names owned by this wallet and get status
-      const owned: { id: number; name: string; expiresAt: bigint }[] = [];
+      // Filter to names owned by this wallet
+      const owned: { id: number; name: string }[] = [];
       resolveResults.forEach((result, i) => {
         if (!result) return;
-        const [nameOwner, , , expiresAt] = result as [string, bigint, bigint, bigint, string, bigint, string];
+        const [nameOwner] = result as [string, bigint, bigint, string, bigint, string];
         if (nameOwner.toLowerCase() === wallet.toLowerCase()) {
-          owned.push({ id: validIds[i].id, name: validIds[i].name, expiresAt });
+          owned.push({ id: validIds[i].id, name: validIds[i].name });
         }
       });
 
       if (owned.length === 0) continue;
 
-      // Batch status + namespace checks for owned names
-      const statusResults = await Promise.all(
+      // Batch namespace checks for owned names
+      const nsResults = await Promise.all(
         owned.map(({ name }) => {
           const nameHash = keccak256(toBytes(name));
-          return Promise.all([
-            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name] }),
-            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInGracePeriod", args: [name] }),
-            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInRedemptionPeriod", args: [name] }),
-            client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "namespaces", args: [nameHash] }).catch(() => [null]),
-          ]);
+          return client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "namespaces", args: [nameHash] }).catch(() => [null]);
         })
       );
 
-      statusResults.forEach(([isActive, inGrace, inRedemption, nsData], i) => {
-        const status = isActive ? "active" : inGrace ? "grace" : inRedemption ? "redemption" : "expired";
+      nsResults.forEach((nsData, i) => {
         const nsAdmin = (nsData as any[])?.[0];
         const isNamespace = !!nsAdmin && nsAdmin !== "0x0000000000000000000000000000000000000000";
         names.push({
           name: owned[i].name,
           tokenId: String(owned[i].id),
           url: `https://${owned[i].name}.hazza.name`,
-          expiresAt: Number(owned[i].expiresAt),
-          status,
+          status: "active",
           isNamespace,
         });
       });
@@ -1075,11 +1061,9 @@ app.post("/x402/register", async (c) => {
 
   const name = String(body.name).toLowerCase();
   const owner = body.owner as Address;
-  const years = Number(body.years) || 1;
 
   if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   if (!isAddress(owner)) return c.json({ error: "Invalid owner address" }, 400);
-  if (years < 1 || years > 10) return c.json({ error: "Years must be 1-10" }, 400);
 
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
@@ -1091,11 +1075,10 @@ app.post("/x402/register", async (c) => {
   });
   if (!available) return c.json({ error: "Name not available" }, 409);
 
-  // Get quote — contract charges registration fee only (renewal paid separately)
-  // For first-time wallets, _adjustedPrice() returns 0 (first name free)
+  // Get quote — for first-time wallets, _adjustedPrice() returns 0 (first name free)
   const [totalCost] = await client.readContract({
     address: addr, abi: REGISTRY_ABI, functionName: "quoteName",
-    args: [name, owner, BigInt(years), 5, false, false],
+    args: [name, owner, 0, false, false],
   });
 
   // --- First registration free: contract returns $0 for first-time wallets ---
@@ -1114,7 +1097,7 @@ app.post("/x402/register", async (c) => {
       const txData = encodeFunctionData({
         abi: REGISTRY_ABI,
         functionName: "registerDirect",
-        args: [name, owner, BigInt(years), 5, false, "0x0000000000000000000000000000000000000000" as Address, "", false, false],
+        args: [name, owner, 0, false, "0x0000000000000000000000000000000000000000" as Address, "", false, false],
       });
 
       let regTxHash: `0x${string}`;
@@ -1145,7 +1128,6 @@ app.post("/x402/register", async (c) => {
         name, owner, tokenId,
         registrationTx: regTxHash,
         profileUrl: `https://${name}.hazza.name`,
-        expiresAt: Math.floor(Date.now() / 1000) + (years * 365 * 86400),
         firstRegistration: true,
       });
     } catch (e: any) {
@@ -1186,7 +1168,7 @@ app.post("/x402/register", async (c) => {
         abi: REGISTRY_ABI,
         functionName: "registerDirectWithMember",
         args: [
-          name, owner, BigInt(years), 5,
+          name, owner, 0,
           false, "0x0000000000000000000000000000000000000000" as Address, "",
           false, true, BigInt(freeClaimMemberId),
         ],
@@ -1219,7 +1201,6 @@ app.post("/x402/register", async (c) => {
         name, owner, tokenId,
         registrationTx: regTxHash,
         profileUrl: `https://${name}.hazza.name`,
-        expiresAt: Math.floor(Date.now() / 1000) + (years * 365 * 86400),
         freeClaim: true,
         memberId: freeClaimMemberId,
       });
@@ -1345,8 +1326,7 @@ app.post("/x402/register", async (c) => {
       args: [
         name,
         owner,
-        BigInt(years),
-        5,      // charCount — flat $5 pricing for all names
+        0,      // charCount — 0 means use byte length
         false,  // wantAgent
         "0x0000000000000000000000000000000000000000" as Address, // agentWallet
         "",     // agentURI
@@ -1396,7 +1376,6 @@ app.post("/x402/register", async (c) => {
       tokenId,
       registrationTx: regTxHash,
       profileUrl: `https://${name}.hazza.name`,
-      expiresAt: Math.floor(Date.now() / 1000) + (years * 365 * 86400),
     }), {
       status: 200,
       headers: {
@@ -1429,13 +1408,6 @@ async function enrichListing(listing: any, client: any, addr: Address) {
       address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(tokenId)],
     });
     if (!name) return null;
-
-    const [, , , expiresAt] = await client.readContract({
-      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name as string],
-    });
-    const [isActive] = await Promise.all([
-      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name as string] }),
-    ]);
 
     // Detect currency from consideration items
     let currency = "ETH";
@@ -1471,10 +1443,9 @@ async function enrichListing(listing: any, client: any, addr: Address) {
       price,
       priceRaw,
       currency,
-      expiresAt: Number(expiresAt),
       listingExpiry: listing.expirationDate,
       orderHash: listing.orderHash,
-      nameStatus: isActive ? "active" : "expired",
+      nameStatus: "active",
       isNamespace,
       avatar: avatar || null,
       profileUrl: `https://${name}.hazza.name`,
@@ -1511,6 +1482,102 @@ async function enrichListing(listing: any, client: any, addr: Address) {
     return null;
   }
 }
+
+// =========================================================================
+//                        MESSAGE BOARD
+// =========================================================================
+
+const BOARD_KV_KEY = "board:messages";
+const BOARD_MAX_MESSAGES = 200;
+const BOARD_MAX_LENGTH = 500;
+const BOARD_RATE_LIMIT_TTL = 60; // 1 post per minute per IP
+
+// GET /api/board — fetch board messages
+app.get("/api/board", async (c) => {
+  try {
+    const data = await c.env.WATCHLIST_KV.get(BOARD_KV_KEY, "json") as any[] | null;
+    return c.json({ messages: data || [] });
+  } catch (e: any) {
+    return c.json({ messages: [], error: e.message });
+  }
+});
+
+// POST /api/board — post a message (requires wallet signature)
+app.post("/api/board", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { text, author, signature } = body;
+
+    if (!text || typeof text !== "string" || text.trim().length === 0) {
+      return c.json({ error: "Message text required" }, 400);
+    }
+    if (text.length > BOARD_MAX_LENGTH) {
+      return c.json({ error: `Message too long (max ${BOARD_MAX_LENGTH} chars)` }, 400);
+    }
+    if (!author || !isAddress(author)) {
+      return c.json({ error: "Valid wallet address required" }, 400);
+    }
+    if (!signature) {
+      return c.json({ error: "Signature required" }, 400);
+    }
+
+    // Rate limit by IP
+    const ip = c.req.header("cf-connecting-ip") || "unknown";
+    const rateKey = `board-rate:${ip}`;
+    const lastPost = await c.env.WATCHLIST_KV.get(rateKey);
+    if (lastPost) {
+      return c.json({ error: "Please wait before posting again" }, 429);
+    }
+
+    // Verify signature
+    const expectedMessage = "hazza board post: " + text.trim();
+    const valid = await verifyMessage({
+      address: author as Address,
+      message: expectedMessage,
+      signature: signature as `0x${string}`,
+    });
+    if (!valid) {
+      return c.json({ error: "Invalid signature" }, 401);
+    }
+
+    // Resolve hazza name for the author
+    let authorName: string | null = null;
+    try {
+      const client = getClient(c.env);
+      const addr = registryAddress(c.env);
+      const name = await client.readContract({
+        address: addr,
+        abi: REGISTRY_ABI,
+        functionName: "reverseResolve",
+        args: [author],
+      }) as string;
+      if (name) authorName = name;
+    } catch {}
+
+    // Load existing messages
+    const messages = (await c.env.WATCHLIST_KV.get(BOARD_KV_KEY, "json") as any[] | null) || [];
+
+    // Add new message at the top
+    messages.unshift({
+      text: text.trim(),
+      author,
+      authorName,
+      timestamp: Date.now(),
+    });
+
+    // Cap at max
+    if (messages.length > BOARD_MAX_MESSAGES) {
+      messages.length = BOARD_MAX_MESSAGES;
+    }
+
+    await c.env.WATCHLIST_KV.put(BOARD_KV_KEY, JSON.stringify(messages));
+    await c.env.WATCHLIST_KV.put(rateKey, "1", { expirationTtl: BOARD_RATE_LIMIT_TTL });
+
+    return c.json({ ok: true });
+  } catch (e: any) {
+    return c.json({ error: e.message || "Failed to post" }, 500);
+  }
+});
 
 // GET /api/marketplace/listings — active HAZZA name listings
 app.get("/api/marketplace/listings", async (c) => {
@@ -2043,18 +2110,15 @@ app.get("*", async (c) => {
   const addr = registryAddress(c.env);
 
   try {
-    const [nameOwner, tokenId, registeredAt, expiresAt, operator, agentId, agentWallet] =
+    const [nameOwner, tokenId, registeredAt, operator, agentId, agentWallet] =
       await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] });
 
     if (nameOwner === "0x0000000000000000000000000000000000000000") {
       return c.html(profilePage(name, null, c.env.CHAIN_ID));
     }
 
-    const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "site.key", "agent.uri", "net.profile"];
-    const [isActive, inGrace, inRedemption, textValues, chash] = await Promise.all([
-      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isActive", args: [name] }),
-      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInGracePeriod", args: [name] }),
-      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "isInRedemptionPeriod", args: [name] }),
+    const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "site.key", "agent.uri", "net.profile", "xmtp"];
+    const [textValues, chash] = await Promise.all([
       client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
       client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
     ]);
@@ -2064,10 +2128,7 @@ app.get("*", async (c) => {
       if (textValues[i]) texts[key] = textValues[i];
     });
 
-    let status: "active" | "grace" | "redemption" | "expired" = "expired";
-    if (isActive) status = "active";
-    else if (inGrace) status = "grace";
-    else if (inRedemption) status = "redemption";
+    const status = "active" as const;
 
     // Serve custom site from Net Protocol if site.key is set and requesting root
     const siteKey = texts["site.key"];
@@ -2171,7 +2232,6 @@ app.get("*", async (c) => {
         ownerEns,
         tokenId: tokenId.toString(),
         registeredAt: Number(registeredAt),
-        expiresAt: Number(expiresAt),
         operator,
         agentId: agentId.toString(),
         agentWallet,

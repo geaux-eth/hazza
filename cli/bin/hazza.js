@@ -6,7 +6,7 @@ const pkg = require('../package.json');
 
 const program = new Command()
   .name('hazza')
-  .description('HAZZA — immediately useful onchain names on Base, powered by x402 and Net Protocol')
+  .description('hazza — immediately useful names on Base, powered by x402 and Net Protocol')
   .version(pkg.version)
   .option('--json', 'Output as JSON')
   .option('--rpc-url <url>', 'Override RPC URL')
@@ -25,7 +25,6 @@ program.addCommand(require('../commands/search'));
 program.addCommand(require('../commands/register'));
 program.addCommand(require('../commands/names'));
 program.addCommand(require('../commands/profile'));
-program.addCommand(require('../commands/renew'));
 program.addCommand(require('../commands/records'));
 program.addCommand(require('../commands/stats'));
 program.addCommand(require('../commands/marketplace'));

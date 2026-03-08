@@ -29,8 +29,7 @@ const cmd = new Command('search')
         const wallet = conf.get('wallet');
         const quoteData = await api.quote(name, wallet).catch(() => null);
         if (quoteData) {
-          out.info(`Price: ${formatUSDC(quoteData.totalCost || quoteData.price || 0)} USDC`);
-          if (quoteData.years) out.info(`Duration: ${quoteData.years} year(s)`);
+          out.info(`Price: ${formatUSDC(quoteData.totalCost || quoteData.price || 0)} USDC (pay once, available forever)`);
         }
         // Check free claim
         if (wallet) {
@@ -43,10 +42,6 @@ const cmd = new Command('search')
       } else {
         out.warn('Not available');
         if (result.owner) out.info(`Owner: ${result.owner}`);
-        if (result.expiresAt) {
-          const exp = new Date(result.expiresAt * 1000).toLocaleDateString();
-          out.info(`Expires: ${exp}`);
-        }
       }
     } catch (e) {
       out.error(e.message);

@@ -3,9 +3,7 @@ pragma solidity ^0.8.24;
 
 interface IHazzaRegistry {
     // --- Events ---
-    event NameRegistered(string name, address indexed owner, uint256 indexed tokenId, uint256 price, uint64 expiresAt);
-    event NameRenewed(string name, uint256 indexed tokenId, uint64 newExpiresAt, uint256 numYears);
-    event NameReleased(string name, uint256 indexed tokenId);
+    event NameRegistered(string name, address indexed owner, uint256 indexed tokenId, uint256 price);
     event AgentRegistered(string name, uint256 indexed agentId, address indexed agentWallet);
     event OperatorSet(string name, address indexed operator);
     event CustomDomainSet(string name, string domain);
@@ -26,16 +24,13 @@ interface IHazzaRegistry {
 
     // --- Read ---
     function available(string calldata name) external view returns (bool);
-    function isActive(string calldata name) external view returns (bool);
-    function isInGracePeriod(string calldata name) external view returns (bool);
-    function isInRedemptionPeriod(string calldata name) external view returns (bool);
     function price(string calldata name, uint8 charCount) external pure returns (uint256);
-    function quoteName(string calldata name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass)
-        external view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee);
-    function quoteNameWithMember(string calldata name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass, uint256 memberId)
-        external view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee, bool isFreeClaim);
+    function quoteName(string calldata name, address wallet, uint8 charCount, bool ensImport, bool verifiedPass)
+        external view returns (uint256 totalCost, uint256 registrationFee);
+    function quoteNameWithMember(string calldata name, address wallet, uint8 charCount, bool ensImport, bool verifiedPass, uint256 memberId)
+        external view returns (uint256 totalCost, uint256 registrationFee, bool isFreeClaim);
     function resolve(string calldata name)
-        external view returns (address nameOwner, uint256 tokenId, uint64 registeredAt, uint64 expiresAt, address operator, uint256 agentId, address agentWallet);
+        external view returns (address nameOwner, uint256 tokenId, uint64 registeredAt, address operator, uint256 agentId, address agentWallet);
     function reverseResolve(address wallet) external view returns (string memory);
     function nameOf(uint256 tokenId) external view returns (string memory);
     function totalRegistered() external view returns (uint256);
@@ -51,9 +46,8 @@ interface IHazzaRegistry {
     function contenthash(string calldata name) external view returns (bytes memory);
 
     // --- Write ---
-    function registerDirect(string calldata name, address nameOwner, uint256 numYears, uint8 charCount, bool wantAgent, address agentWallet, string calldata agentURI, bool ensImport, bool verifiedPass) external;
-    function registerDirectWithMember(string calldata name, address nameOwner, uint256 numYears, uint8 charCount, bool wantAgent, address agentWallet, string calldata agentURI, bool ensImport, bool verifiedPass, uint256 memberId) external;
-    function renew(string calldata name, uint256 numYears) external;
+    function registerDirect(string calldata name, address nameOwner, uint8 charCount, bool wantAgent, address agentWallet, string calldata agentURI, bool ensImport, bool verifiedPass) external;
+    function registerDirectWithMember(string calldata name, address nameOwner, uint8 charCount, bool wantAgent, address agentWallet, string calldata agentURI, bool ensImport, bool verifiedPass, uint256 memberId) external;
     function setOperator(string calldata name, address operator) external;
     function setCustomDomain(string calldata name, string calldata domain) external;
     function removeCustomDomain(string calldata name, string calldata domain) external;

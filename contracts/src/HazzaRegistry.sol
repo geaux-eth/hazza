@@ -29,7 +29,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     struct NameRecord {
         uint256 tokenId;
         uint64 registeredAt;
-        uint64 expiresAt;
         address operator;
         uint256 agentId;
         address agentWallet;
@@ -63,7 +62,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     /// @dev Internal struct to reduce stack depth in _registerName
     struct RegistrationConfig {
         address nameOwner;
-        uint256 numYears;
         uint8 charCount;       // ENSIP-15 grapheme cluster count (0 = use byte length)
         bool wantAgent;
         address agentWallet;
@@ -140,19 +138,14 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     uint256 public constant MIN_COMMIT_AGE = 60;
     uint256 public constant MAX_COMMIT_AGE = 86400;
 
-    // Pricing (USDC 6 decimals)
-    uint256 public constant PRICE_3_CHAR = 100e6;   // $100
-    uint256 public constant PRICE_4_CHAR = 25e6;    // $25
+    // Pricing (USDC 6 decimals) — flat $5, pay once, available forever
+    uint256 public constant PRICE_3_CHAR = 5e6;     // $5
+    uint256 public constant PRICE_4_CHAR = 5e6;     // $5
     uint256 public constant PRICE_5_PLUS = 5e6;     // $5
-    uint256 public constant RENEWAL_FEE = 2e6;      // $2/year
-    uint256 public constant REDEMPTION_FEE = 10e6;   // $10 penalty
     uint256 public constant NAMESPACE_PRICE = 0;      // Free to enable
     uint256 public constant SUBNAME_PRICE = 1e6;     // $1 per agent subname
 
     // Time
-    uint256 public constant YEAR = 365 days;
-    uint256 public constant GRACE_PERIOD = 30 days;
-    uint256 public constant REDEMPTION_PERIOD = 30 days;
     uint256 public constant PRICING_WINDOW = 90 days;
 
     // Name constraints
@@ -174,9 +167,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     //                              EVENTS
     // =========================================================================
 
-    event NameRegistered(string name, address indexed owner, uint256 indexed tokenId, uint256 price, uint64 expiresAt);
-    event NameRenewed(string name, uint256 indexed tokenId, uint64 newExpiresAt, uint256 numYears);
-    event NameReleased(string name, uint256 indexed tokenId);
+    event NameRegistered(string name, address indexed owner, uint256 indexed tokenId, uint256 price);
     event AgentRegistered(string name, uint256 indexed agentId, address indexed agentWallet);
     event OperatorSet(string name, address indexed operator);
     event CustomDomainSet(string name, string domain);
@@ -218,10 +209,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     error AgentAlreadyRegistered();
     error InvalidAgentWallet();
     error ZeroAddress();
-    error NameExpired();
-    error NameNotExpired();
-    error NotInGracePeriod();
-    error NotInRedemptionPeriod();
     error RateLimitExceeded();
     error WalletLimitExceeded();
     error NameNotRegistered();
@@ -283,12 +270,10 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         string calldata name,
         address nameOwner,
         bytes32 salt,
-        uint256 numYears,
         bool wantAgent,
         address agentWallet,
         string calldata agentURI
     ) external nonReentrant {
-        require(numYears > 0 && numYears <= 10, "Years must be 1-10");
         bytes32 commitHash = keccak256(abi.encodePacked(name, nameOwner, salt));
         Commitment memory c = commitments[commitHash];
         if (c.timestamp == 0) revert CommitmentNotFound();
@@ -298,7 +283,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
 
         _registerName(name, agentURI, RegistrationConfig({
             nameOwner: nameOwner,
-            numYears: numYears,
             charCount: 0, // ASCII: use byte length
             wantAgent: wantAgent,
             agentWallet: agentWallet,
@@ -313,7 +297,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     function registerDirect(
         string calldata name,
         address nameOwner,
-        uint256 numYears,
         uint8 charCount,
         bool wantAgent,
         address agentWallet,
@@ -321,10 +304,8 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         bool ensImport,
         bool verifiedPass
     ) external onlyRelayerOrOwner nonReentrant {
-        require(numYears > 0 && numYears <= 10, "Years must be 1-10");
         _registerName(name, agentURI, RegistrationConfig({
             nameOwner: nameOwner,
-            numYears: numYears,
             charCount: charCount,
             wantAgent: wantAgent,
             agentWallet: agentWallet,
@@ -339,7 +320,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     function registerDirectWithMember(
         string calldata name,
         address nameOwner,
-        uint256 numYears,
         uint8 charCount,
         bool wantAgent,
         address agentWallet,
@@ -348,7 +328,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         bool verifiedPass,
         uint256 memberId
     ) external onlyRelayerOrOwner nonReentrant {
-        require(numYears > 0 && numYears <= 10, "Years must be 1-10");
         bool isFreeClaim = false;
         if (memberId > 0) {
             if (memberFreeClaimed[memberId]) revert FreeClaimAlreadyUsed();
@@ -357,7 +336,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         }
         _registerNameWithMember(name, agentURI, RegistrationConfig({
             nameOwner: nameOwner,
-            numYears: numYears,
             charCount: charCount,
             wantAgent: wantAgent,
             agentWallet: agentWallet,
@@ -383,7 +361,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         uint256 memberId
     ) internal {
         if (c.nameOwner == address(0)) revert ZeroAddress();
-        if (c.numYears == 0) c.numYears = 1;
 
         // Validate: strict ASCII for public path, permissive UTF-8 for relayer
         if (c.relayer == address(0)) {
@@ -394,15 +371,8 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
 
         bytes32 nameHash = keccak256(bytes(name));
 
-        // Check availability (including expired+released names)
-        {
-            NameRecord memory existing = _names[nameHash];
-            if (existing.tokenId != 0) {
-                if (!_isReleased(existing)) revert NameNotAvailable();
-                _burn(existing.tokenId);
-                delete tokenToName[existing.tokenId];
-            }
-        }
+        // Check availability — names are permanent, no expiry
+        if (_names[nameHash].tokenId != 0) revert NameNotAvailable();
 
         // Rate limiting (applied to name recipient, not relayer)
         _enforceRateLimit(c.nameOwner, c.verifiedPass);
@@ -423,14 +393,10 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         // Assign token ID (but mint AFTER all state writes to prevent reentrancy)
         uint256 tokenId = _nextTokenId++;
 
-        // Compute expiry once
-        uint64 expiresAt = uint64(block.timestamp + (c.numYears * YEAR));
-
-        // Store record
+        // Store record — pay once, available forever
         _names[nameHash] = NameRecord({
             tokenId: tokenId,
             registeredAt: uint64(block.timestamp),
-            expiresAt: expiresAt,
             operator: c.nameOwner,
             agentId: 0,
             agentWallet: address(0)
@@ -441,7 +407,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         // Update wallet info & daily count
         _updateWalletInfo(c.nameOwner);
 
-        emit NameRegistered(name, c.nameOwner, tokenId, totalCost, expiresAt);
+        emit NameRegistered(name, c.nameOwner, tokenId, totalCost);
         if (isFreeClaim) {
             emit FreeNameClaimed(name, c.nameOwner, memberId, tokenId);
         }
@@ -469,84 +435,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         }
         uint256 today = block.timestamp / 1 days;
         dailyRegistrations[wallet][today]++;
-    }
-
-    // =========================================================================
-    //                        RENEWAL & EXPIRY
-    // =========================================================================
-
-    /// @notice Renew a name for additional years
-    function renew(string calldata name, uint256 numYears) external nonReentrant {
-        require(numYears > 0 && numYears <= 10, "Years must be 1-10");
-        bytes32 nameHash = keccak256(bytes(name));
-        NameRecord storage record = _names[nameHash];
-        if (record.tokenId == 0) revert NameNotRegistered();
-        if (_isReleased(record)) revert NameNotRegistered();
-        require(msg.sender == ownerOf(record.tokenId) || msg.sender == record.operator, "Not authorized");
-
-        uint256 cost = RENEWAL_FEE * numYears;
-        bool sent = usdc.transferFrom(msg.sender, treasury, cost);
-        if (!sent) revert TransferFailed();
-
-        // Extend from current expiry (or from now if in grace/redemption)
-        uint64 base = record.expiresAt > uint64(block.timestamp)
-            ? record.expiresAt
-            : uint64(block.timestamp);
-        record.expiresAt = base + uint64(numYears * YEAR);
-
-        emit NameRenewed(name, record.tokenId, record.expiresAt, numYears);
-    }
-
-    /// @notice Reclaim a name during redemption period (extra $10 penalty)
-    function redeem(string calldata name, uint256 numYears) external nonReentrant {
-        require(numYears > 0 && numYears <= 10, "Years must be 1-10");
-        bytes32 nameHash = keccak256(bytes(name));
-        NameRecord storage record = _names[nameHash];
-        if (record.tokenId == 0) revert NameNotRegistered();
-        if (!_isInRedemption(record)) revert NotInRedemptionPeriod();
-        if (ownerOf(record.tokenId) != msg.sender) revert NotNameOwner();
-
-        uint256 cost = REDEMPTION_FEE + (RENEWAL_FEE * numYears);
-        bool sent = usdc.transferFrom(msg.sender, treasury, cost);
-        if (!sent) revert TransferFailed();
-
-        record.expiresAt = uint64(block.timestamp + (numYears * YEAR));
-        emit NameRenewed(name, record.tokenId, record.expiresAt, numYears);
-    }
-
-    /// @notice Check if a name is active (not expired)
-    function isActive(string calldata name) external view returns (bool) {
-        bytes32 nameHash = keccak256(bytes(name));
-        NameRecord memory record = _names[nameHash];
-        return record.tokenId != 0 && record.expiresAt > uint64(block.timestamp);
-    }
-
-    /// @notice Check if a name is in grace period (expired but restorable at normal price)
-    function isInGracePeriod(string calldata name) external view returns (bool) {
-        return _isInGrace(_names[keccak256(bytes(name))]);
-    }
-
-    /// @notice Check if a name is in redemption period (needs penalty fee)
-    function isInRedemptionPeriod(string calldata name) external view returns (bool) {
-        return _isInRedemption(_names[keccak256(bytes(name))]);
-    }
-
-    function _isInGrace(NameRecord memory r) internal view returns (bool) {
-        if (r.tokenId == 0) return false;
-        uint256 exp = r.expiresAt;
-        return block.timestamp > exp && block.timestamp <= exp + GRACE_PERIOD;
-    }
-
-    function _isInRedemption(NameRecord memory r) internal view returns (bool) {
-        if (r.tokenId == 0) return false;
-        uint256 exp = r.expiresAt;
-        return block.timestamp > exp + GRACE_PERIOD
-            && block.timestamp <= exp + GRACE_PERIOD + REDEMPTION_PERIOD;
-    }
-
-    function _isReleased(NameRecord memory r) internal view returns (bool) {
-        if (r.tokenId == 0) return false;
-        return block.timestamp > r.expiresAt + GRACE_PERIOD + REDEMPTION_PERIOD;
     }
 
     // =========================================================================
@@ -648,17 +536,14 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     function quoteName(
         string calldata name,
         address wallet,
-        uint256 numYears,
         uint8 charCount,
         bool ensImport,
         bool verifiedPass
-    ) external view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee) {
-        if (numYears == 0) numYears = 1;
+    ) external view returns (uint256 totalCost, uint256 registrationFee) {
         uint256 charLen = charCount > 0 ? uint256(charCount) : bytes(name).length;
         uint256 base = _basePriceByLength(charLen);
         registrationFee = _adjustedPrice(base, wallet, ensImport, verifiedPass);
-        renewalFee = RENEWAL_FEE * numYears;
-        totalCost = registrationFee; // renewal is paid separately, not bundled
+        totalCost = registrationFee;
     }
 
     /// @notice Check if a Net Library member has already claimed their free name
@@ -671,13 +556,11 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     function quoteNameWithMember(
         string calldata name,
         address wallet,
-        uint256 numYears,
         uint8 charCount,
         bool ensImport,
         bool verifiedPass,
         uint256 memberId
-    ) external view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee, bool isFreeClaim) {
-        if (numYears == 0) numYears = 1;
+    ) external view returns (uint256 totalCost, uint256 registrationFee, bool isFreeClaim) {
         uint256 charLen = charCount > 0 ? uint256(charCount) : bytes(name).length;
         uint256 base = _basePriceByLength(charLen);
         if (memberId > 0 && !memberFreeClaimed[memberId]) {
@@ -686,7 +569,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         } else {
             registrationFee = _adjustedPrice(base, wallet, ensImport, verifiedPass);
         }
-        renewalFee = RENEWAL_FEE * numYears;
         totalCost = registrationFee;
     }
 
@@ -818,13 +700,12 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         emit PrimaryNameSet(msg.sender, "");
     }
 
-    /// @notice Reverse resolve: address → primary HAZZA name
+    /// @notice Reverse resolve: address → primary hazza name
     function reverseResolve(address wallet) external view returns (string memory) {
         bytes32 nameHash = primaryName[wallet];
         if (nameHash == bytes32(0)) return "";
         NameRecord memory record = _names[nameHash];
-        // Only return if name is still active and owned by this wallet
-        if (record.tokenId == 0 || record.expiresAt < uint64(block.timestamp)) return "";
+        if (record.tokenId == 0) return "";
         if (ownerOf(record.tokenId) != wallet) return "";
         return _nameStrings[nameHash];
     }
@@ -972,10 +853,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
 
     /// @notice Check if a name is available for registration
     function available(string calldata name) external view returns (bool) {
-        bytes32 nameHash = keccak256(bytes(name));
-        NameRecord memory record = _names[nameHash];
-        if (record.tokenId == 0) return true;
-        return _isReleased(record);
+        return _names[keccak256(bytes(name))].tokenId == 0;
     }
 
     /// @notice Get the base USDC price for a name (before multipliers)
@@ -990,19 +868,17 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
         address nameOwner,
         uint256 tokenId,
         uint64 registeredAt,
-        uint64 expiresAt,
         address operator,
         uint256 agentId,
         address agentWallet
     ) {
         bytes32 nameHash = keccak256(bytes(name));
         NameRecord memory record = _names[nameHash];
-        if (record.tokenId == 0) return (address(0), 0, 0, 0, address(0), 0, address(0));
+        if (record.tokenId == 0) return (address(0), 0, 0, address(0), 0, address(0));
         return (
             ownerOf(record.tokenId),
             record.tokenId,
             record.registeredAt,
-            record.expiresAt,
             record.operator,
             record.agentId,
             record.agentWallet
@@ -1120,14 +996,12 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard {
     function _requireActiveNameOwner(bytes32 nameHash) internal view {
         NameRecord memory record = _names[nameHash];
         if (record.tokenId == 0) revert NameNotRegistered();
-        if (record.expiresAt < uint64(block.timestamp)) revert NameExpired();
         if (ownerOf(record.tokenId) != msg.sender) revert NotNameOwner();
     }
 
     function _requireActiveNameOwnerOrOperator(bytes32 nameHash) internal view {
         NameRecord memory record = _names[nameHash];
         if (record.tokenId == 0) revert NameNotRegistered();
-        if (record.expiresAt < uint64(block.timestamp)) revert NameExpired();
         require(ownerOf(record.tokenId) == msg.sender || record.operator == msg.sender, "Not authorized");
     }
 }

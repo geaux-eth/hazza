@@ -45,7 +45,6 @@ const STYLES = `
     white-space: nowrap;
     animation: statusPulse 3s ease-in-out infinite;
   }
-  .status-pill.expired { animation: none; }
   nav {
     display: flex;
     justify-content: space-between;
@@ -237,9 +236,6 @@ const STYLES = `
     vertical-align: middle;
   }
   .status-active { background: #00e676; color: #000; }
-  .status-grace { background: #ffab00; color: #000; }
-  .status-redemption { background: #ff5252; color: #fff; }
-  .status-expired { background: #444; color: #999; }
   .socials {
     display: flex;
     gap: 0.75rem;
@@ -1149,8 +1145,8 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
       <div class="result" id="reg-search-result"></div>
       <div id="reg-pricing-info" style="margin-top:1.5rem;color:#6b8f6b;font-size:0.9rem;line-height:1.8;text-align:center">
         <p style="margin:0"><strong style="color:#00e676">your first name is <span style="color:#fff">free</span></strong></p>
-        <p style="margin:0.25rem 0 0 0">just pay gas — 1 year included</p>
-        <p style="margin:0.75rem 0 0 0;color:#fff;font-size:0.8rem">additional names $5</p>
+        <p style="margin:0.25rem 0 0 0">just pay gas</p>
+        <p style="margin:0.75rem 0 0 0;color:#fff;font-size:0.8rem">additional names $5+</p>
       </div>
     </div>
 
@@ -1162,7 +1158,7 @@ export function registerPage(registryAddress: string, usdcAddress: string, chain
 
     <div id="pre-connect-info" style="text-align:center;margin-bottom:1.5rem">
       <p style="color:#6b8f6b;font-size:0.9rem;margin:0 0 0.25rem 0">your first name is free — just pay gas</p>
-      <p style="color:#fff;font-size:0.8rem;margin:0">additional names $5</p>
+      <p style="color:#fff;font-size:0.8rem;margin:0">additional names $5+</p>
     </div>
 
     <div id="connect-section" style="display:none;text-align:center;margin-bottom:1.5rem">
@@ -1236,12 +1232,11 @@ const MANAGE_SCRIPT = `
     "function setOperator(string name, address operator) external",
     "function setPrimaryName(string name) external",
     "function setCustomDomain(string name, string domain) external",
-    "function renew(string name, uint256 numYears) external",
     "function registerAgent(string name, string agentURI, address agentWallet) external",
     "function generateApiKey(string name, bytes32 salt) external returns (bytes32)",
-    "function quoteName(string name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee)",
+    "function quoteName(string name, address wallet, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee)",
     "function transferFrom(address from, address to, uint256 tokenId) external",
-    "function resolve(string name) view returns (address owner, uint256 tokenId, uint256 registeredAt, uint256 expiresAt, address operator, uint256 agentId, address agentWallet)"
+    "function resolve(string name) view returns (address owner, uint256 tokenId, uint256 registeredAt, address operator, uint256 agentId, address agentWallet)"
   ];
   const ERC20_ABI = [
     "function approve(address spender, uint256 amount) external returns (bool)",
@@ -1286,22 +1281,14 @@ const MANAGE_SCRIPT = `
       if (t['org.telegram']) $('field-telegram').value = t['org.telegram'];
       if (t['com.discord']) $('field-discord').value = t['com.discord'];
       if (t['com.linkedin']) $('field-linkedin').value = t['com.linkedin'];
+      if (t['xmtp']) $('field-xmtp').value = t['xmtp'];
 
       // Status info
       $('info-status').textContent = profileData.status;
       $('info-owner').textContent = profileData.owner.slice(0, 6) + '...' + profileData.owner.slice(-4);
-      $('info-expires').textContent = new Date(profileData.expiresAt * 1000).toLocaleDateString();
 
       // Store tokenId for transfer
       currentTokenId = profileData.tokenId;
-
-      // Show renew section if in grace/redemption
-      if (profileData.status === 'grace' || profileData.status === 'redemption') {
-        $('renew-section').style.display = 'block';
-        $('renew-notice').textContent = profileData.status === 'grace'
-          ? 'Your name is in the grace period. Renew at normal price.'
-          : 'Your name is in redemption. Renew with a $10 penalty.';
-      }
 
       // If wallet is already connected (from nav or session), auto-connect now that profile is loaded
       if (!userAddress && (window.__hazza_wallet || sessionStorage.getItem('hazza_wallet'))) {
@@ -1475,29 +1462,6 @@ const MANAGE_SCRIPT = `
       const tx = await registry.setCustomDomain(nameParam, domain);
       await tx.wait();
       showMsg('Custom domain set!', false);
-    } catch (e) {
-      showMsg('Error: ' + (e.reason || e.message || e), true);
-    }
-  }
-
-  // --- Renew ---
-  async function renewName() {
-    const years = parseInt($('renew-years').value) || 1;
-    const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
-    const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
-    try {
-      showMsg('Getting renewal cost...', false);
-      const [totalCost] = await registry.quoteName(nameParam, userAddress, years, 0, false, false);
-      showMsg('Approving USDC...', false);
-      const allowance = await usdc.allowance(userAddress, REGISTRY);
-      if (allowance < totalCost) {
-        const approveTx = await usdc.approve(REGISTRY, totalCost);
-        await approveTx.wait();
-      }
-      showMsg('Renewing...', false);
-      const tx = await registry.renew(nameParam, years);
-      await tx.wait();
-      showMsg('Renewed for ' + years + ' year' + (years > 1 ? 's' : '') + '!', false);
     } catch (e) {
       showMsg('Error: ' + (e.reason || e.message || e), true);
     }
@@ -1713,7 +1677,7 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
 
   return shell(
     "hazza \u2014 immediately useful names",
-    "Manage your name. Edit your profile, set text records, renew your name, and configure your onchain identity.",
+    "Manage your name. Edit your profile, set text records, and configure your onchain identity.",
     `<div id="hazza-config" data-registry="${registryAddress}" data-usdc="${usdcAddress}" data-chainid="${chainId}" style="display:none"></div>
     <div id="manage-body">
     <div class="header">
@@ -1723,7 +1687,6 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
     <div style="display:flex;justify-content:center;gap:2rem;margin-bottom:1.5rem;font-size:0.85rem">
       <div><span style="color:#6b8f6b">Status</span> <span id="info-status" style="color:#fff"></span></div>
       <div><span style="color:#6b8f6b">Owner</span> <span id="info-owner" style="color:#fff"></span></div>
-      <div><span style="color:#6b8f6b">Expires</span> <span id="info-expires" style="color:#fff"></span></div>
     </div>
 
     <div id="connect-section" style="display:none;text-align:center;margin-bottom:1.5rem">
@@ -1772,6 +1735,8 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
         ${fieldRow("Telegram", "org.telegram", "field-telegram", "username")}
         ${fieldRow("Discord", "com.discord", "field-discord", "username#1234")}
         ${fieldRow("LinkedIn", "com.linkedin", "field-linkedin", "username")}
+        ${fieldRow("XMTP", "xmtp", "field-xmtp", "0x... XMTP-enabled address")}
+        <p style="color:#555;font-size:0.7rem;margin-top:-0.25rem;margin-bottom:0.5rem">Set your XMTP address to enable private DMs on your profile. <a href="https://xmtp.org" style="color:#7c3aed" target="_blank" rel="noopener">What is XMTP?</a></p>
       </div>
     </div>
 
@@ -1880,23 +1845,6 @@ export function managePage(registryAddress: string, usdcAddress: string, chainId
 
       <hr class="divider">
 
-      <div id="renew-section" style="display:none">
-        <div class="section">
-          <div class="section-title">Renew</div>
-          <p id="renew-notice" style="color:#ffab00;font-size:0.85rem;margin-bottom:0.75rem"></p>
-          <div style="display:flex;gap:0.5rem;align-items:center">
-            <label style="color:#6b8f6b;font-size:0.85rem">Years</label>
-            <select id="renew-years" style="padding:0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.9rem;font-family:'Rubik',sans-serif">
-              <option value="1">1 year</option>
-              <option value="2">2 years</option>
-              <option value="3">3 years</option>
-              <option value="5">5 years</option>
-            </select>
-            <button onclick="renewName()" style="padding:0.5rem 1.5rem;background:#ffab00;color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.85rem;font-family:'Rubik',sans-serif">Renew</button>
-          </div>
-        </div>
-        <hr class="divider">
-      </div>
 
       <div id="offers-section" style="display:none">
         <div class="section">
@@ -1943,10 +1891,9 @@ const DASHBOARD_SCRIPT = `
 
   const REGISTRY_ABI = [
     "function primaryName(address wallet) view returns (bytes32)",
-    "function renew(string name, uint256 numYears) external",
-    "function quoteName(string name, address wallet, uint256 numYears, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee, uint256 renewalFee)",
+    "function quoteName(string name, address wallet, uint8 charCount, bool ensImport, bool verifiedPass) view returns (uint256 totalCost, uint256 registrationFee)",
     "function transferFrom(address from, address to, uint256 tokenId) external",
-    "function resolve(string name) view returns (address owner, uint256 tokenId, uint256 registeredAt, uint256 expiresAt, address operator, uint256 agentId, address agentWallet)",
+    "function resolve(string name) view returns (address owner, uint256 tokenId, uint256 registeredAt, address operator, uint256 agentId, address agentWallet)",
     "function registerNamespace(string name) external",
     "function issueSubname(string namespace, string subname, address subnameOwner) external",
     "function setText(string name, string key, string value) external",
@@ -2036,15 +1983,12 @@ const DASHBOARD_SCRIPT = `
 
       let html = '';
       for (const n of data.names) {
-        const expires = new Date(n.expiresAt * 1000);
-        const daysLeft = Math.max(0, Math.ceil((expires.getTime() - Date.now()) / 86400000));
-        const statusColor = n.status === 'active' ? '#00e676' : n.status === 'grace' ? '#ffab00' : n.status === 'redemption' ? '#ff5252' : '#444';
-        const statusLabel = n.status === 'active' ? 'active' : n.status === 'grace' ? 'grace period' : n.status === 'redemption' ? 'redemption' : 'expired';
-        const daysText = n.status === 'active' ? daysLeft + ' days left' : n.status === 'grace' ? 'grace: ' + daysLeft + 'd left' : n.status === 'redemption' ? 'redemption: ' + daysLeft + 'd left' : 'released';
+        const statusColor = '#00e676';
+        const statusLabel = 'active';
         const eName = escHtml(n.name);
         const uName = encodeURIComponent(n.name);
-        var pillBg = n.status === 'active' ? 'rgba(0,230,118,0.15)' : n.status === 'grace' ? 'rgba(255,171,0,0.15)' : n.status === 'redemption' ? 'rgba(255,82,82,0.15)' : 'rgba(68,68,68,0.15)';
-        var pillClass = 'status-pill' + (n.status === 'expired' ? ' expired' : '');
+        var pillBg = 'rgba(0,230,118,0.15)';
+        var pillClass = 'status-pill';
         html += '<div class="name-card" data-name="' + eName + '" style="margin-bottom:0.5rem">';
         // Collapsed card header — tappable
         html += '<div class="name-card-header" onclick="toggleCard(\\x27' + eName + '\\x27)" style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem 1rem;background:#111;border:1px solid #1a2e1a;border-radius:8px;cursor:pointer;transition:border-radius 0.2s">';
@@ -2058,8 +2002,7 @@ const DASHBOARD_SCRIPT = `
         html += '<div id="card-detail-' + eName + '" class="name-card-detail" style="display:none;padding:0.75rem 1rem;background:#0a150a;border:1px solid #1a2e1a;border-top:none;border-radius:0 0 8px 8px">';
         // Info row
         html += '<div style="display:flex;gap:1.5rem;font-size:0.75rem;color:#6b8f6b;margin-bottom:0.75rem;flex-wrap:wrap">';
-        html += '<span>' + escHtml(daysText) + '</span>';
-        html += '<span>expires ' + expires.toLocaleDateString() + '</span>';
+        html += '<span>permanent</span>';
         html += '<a href="https://' + eName + '.hazza.name" style="color:#00e676;text-decoration:none">view profile ↗</a>';
         html += '</div>';
         // Action buttons
@@ -2068,8 +2011,7 @@ const DASHBOARD_SCRIPT = `
           html += '<button onclick="event.stopPropagation();toggleEdit(\\x27' + eName + '\\x27)" style="color:#00e676;font-size:0.75rem;border:1px solid #00e676;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">edit profile</button>';
           html += '<button onclick="event.stopPropagation();toggleTransfer(\\x27' + eName + '\\x27, ' + escHtml(String(n.tokenId)) + ')" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">transfer</button>';
           html += '<a href="/marketplace?sell=' + uName + '" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;text-decoration:none" onclick="event.stopPropagation()">sell</a>';
-          if (n.status !== 'expired') html += '<button onclick="event.stopPropagation();toggleRenew(\\x27' + eName + '\\x27)" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">renew</button>';
-          if (!n.isNamespace && n.status === 'active') html += '<button onclick="event.stopPropagation();toggleNamespace(\\x27' + eName + '\\x27)" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">namespace</button>';
+          if (!n.isNamespace) html += '<button onclick="event.stopPropagation();toggleNamespace(\\x27' + eName + '\\x27)" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">namespace</button>';
         }
         html += '<button onclick="event.stopPropagation();shareName(\\x27' + eName + '\\x27)" style="color:#6b8f6b;font-size:0.75rem;border:1px solid #1a2e1a;padding:0.3rem 0.6rem;border-radius:6px;background:transparent;cursor:pointer;font-family:Rubik,sans-serif">share</button>';
         html += '</div>';
@@ -2116,17 +2058,6 @@ const DASHBOARD_SCRIPT = `
           html += '<div style="display:flex;gap:0.5rem;align-items:center">';
           html += '<button onclick="event.stopPropagation();doNamespace(\\x27' + eName + '\\x27)" style="padding:0.4rem 1rem;background:#00e676;color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:Rubik,sans-serif">Enable Namespaces</button>';
           html += '<span id="namespace-status-' + eName + '" style="font-size:0.8rem;color:#6b8f6b"></span>';
-          html += '</div></div>';
-        }
-        // Inline renew panel
-        if (n.status !== 'expired') {
-          html += '<div id="renew-' + eName + '" style="display:none;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid #1a2e1a">';
-          html += '<div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">';
-          html += '<select id="renew-years-' + eName + '" style="padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:Rubik,sans-serif" onclick="event.stopPropagation()">';
-          html += '<option value="1">1 year ($2)</option><option value="2">2 years ($4)</option><option value="3">3 years ($6)</option><option value="5">5 years ($10)</option>';
-          html += '</select>';
-          html += '<button onclick="event.stopPropagation();doRenew(\\x27' + eName + '\\x27)" style="padding:0.4rem 1rem;background:#00e676;color:#000;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.8rem;font-family:Rubik,sans-serif">Renew</button>';
-          html += '<span id="renew-status-' + eName + '" style="font-size:0.8rem;color:#6b8f6b"></span>';
           html += '</div></div>';
         }
         html += '</div>'; // close name-card-detail
@@ -2177,7 +2108,7 @@ const DASHBOARD_SCRIPT = `
   });
 
   function closeAllPanels(name) {
-    ['edit-','transfer-','renew-','namespace-'].forEach(function(p) {
+    ['edit-','transfer-','namespace-'].forEach(function(p) {
       var el = $(p + name); if (el) el.style.display = 'none';
     });
   }
@@ -2241,13 +2172,6 @@ const DASHBOARD_SCRIPT = `
       statusEl.style.color = '#ff5252';
       statusEl.textContent = e.reason || e.message || 'Failed';
     }
-  }
-
-  function toggleRenew(name) {
-    var panel = $('renew-' + name);
-    var wasOpen = panel && panel.style.display !== 'none';
-    closeAllPanels(name);
-    if (!wasOpen && panel) panel.style.display = 'block';
   }
 
   function shareName(name) {
@@ -2320,34 +2244,6 @@ const DASHBOARD_SCRIPT = `
     } catch (e) {
       statusEl.style.color = '#ff5252';
       statusEl.textContent = e.reason || e.message || 'Transfer failed';
-    }
-  }
-
-  async function doRenew(name) {
-    const statusEl = $('renew-status-' + name);
-    const yearsEl = $('renew-years-' + name);
-    const years = parseInt(yearsEl.value) || 1;
-    try {
-      const registry = new ethers.Contract(REGISTRY, REGISTRY_ABI, signer);
-      const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
-      statusEl.style.color = '#6b8f6b';
-      statusEl.textContent = 'Getting cost...';
-      const [totalCost] = await registry.quoteName(name, userAddress, years, 0, false, false);
-      statusEl.textContent = 'Approving USDC...';
-      const allowance = await usdc.allowance(userAddress, REGISTRY);
-      if (allowance < totalCost) {
-        const approveTx = await usdc.approve(REGISTRY, totalCost);
-        await approveTx.wait();
-      }
-      statusEl.textContent = 'Renewing...';
-      const tx = await registry.renew(name, years);
-      await tx.wait();
-      statusEl.style.color = '#00e676';
-      statusEl.textContent = 'Renewed!';
-      setTimeout(() => loadNames(), 2000);
-    } catch (e) {
-      statusEl.style.color = '#ff5252';
-      statusEl.textContent = e.reason || e.message || 'Error';
     }
   }
 
@@ -2485,11 +2381,10 @@ type ProfileData = {
   ownerEns?: string | null;
   tokenId: string;
   registeredAt: number;
-  expiresAt: number;
   operator: string;
   agentId: string;
   agentWallet: string;
-  status: "active" | "grace" | "redemption" | "expired";
+  status: "active";
   texts: Record<string, string>;
   contenthash: string | null;
   agentMeta?: any;
@@ -2526,18 +2421,8 @@ function buildSocialLinks(texts: Record<string, string>): string {
   return links.length ? `<div class="socials">${links.join("")}</div>` : "";
 }
 
-function daysUntil(ts: number): number {
-  return Math.max(0, Math.ceil((ts * 1000 - Date.now()) / 86400000));
-}
-
 function statusBadge(status: string): string {
-  const labels: Record<string, string> = {
-    active: "Active",
-    grace: "Grace Period",
-    redemption: "Redemption",
-    expired: "Expired",
-  };
-  return `<span class="status-badge status-${status}">${labels[status] || status}</span>`;
+  return `<span class="status-badge status-active">Active</span>`;
 }
 
 export function profilePage(name: string, data: ProfileData | null, chainId?: string): string {
@@ -2547,13 +2432,11 @@ export function profilePage(name: string, data: ProfileData | null, chainId?: st
   let content: string;
   if (data) {
     const regDate = new Date(data.registeredAt * 1000).toLocaleDateString();
-    const expDate = new Date(data.expiresAt * 1000).toLocaleDateString();
     const shortOwner = data.owner.slice(0, 6) + "..." + data.owner.slice(-4);
     const ownerDisplay = data.ownerEns || shortOwner;
     const hasAgent = data.agentId !== "0";
     const zeroAddr = "0x0000000000000000000000000000000000000000";
     const hasOperator = data.operator !== zeroAddr && data.operator.toLowerCase() !== data.owner.toLowerCase();
-    const days = daysUntil(data.expiresAt);
     const texts = data.texts || {};
 
     // Avatar
@@ -2564,15 +2447,23 @@ export function profilePage(name: string, data: ProfileData | null, chainId?: st
     // Social links
     const socialsHtml = buildSocialLinks(texts);
 
+    // XMTP DM button
+    const xmtpAddr = texts["xmtp"];
+    const xmtpHtml = xmtpAddr
+      ? `<div style="margin-top:0.5rem;text-align:center"><button onclick="document.getElementById('xmtp-modal').style.display='flex'" style="display:inline-flex;align-items:center;gap:0.4rem;padding:0.4rem 1rem;background:#1a1a2e;border:1px solid #7c3aed;border-radius:20px;color:#a78bfa;font-size:0.8rem;font-weight:600;cursor:pointer;font-family:'Rubik',sans-serif"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Send DM</button></div>
+<div id="xmtp-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;justify-content:center;align-items:center;padding:1rem" onclick="if(event.target===this)this.style.display='none'">
+<div style="background:#111;border:1px solid #7c3aed;border-radius:12px;max-width:400px;width:100%;padding:1.5rem">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem"><span style="color:#a78bfa;font-weight:700;font-size:1rem">Private Message via XMTP</span><button onclick="document.getElementById('xmtp-modal').style.display='none'" style="background:none;border:none;color:#666;font-size:1.5rem;cursor:pointer">&times;</button></div>
+<p style="color:#aaa;font-size:0.85rem;line-height:1.5;margin-bottom:1rem">XMTP is an encrypted, wallet-to-wallet messaging protocol. Messages are private and decentralized &mdash; no one can read them except you and the recipient.</p>
+<a href="https://xmtp.chat/production/dm/${esc(xmtpAddr)}" target="_blank" rel="noopener" style="display:block;text-align:center;padding:0.6rem 1.5rem;background:#7c3aed;color:#fff;border-radius:8px;font-weight:700;font-size:0.9rem;text-decoration:none;margin-bottom:0.75rem">Open XMTP Chat</a>
+<p style="color:#555;font-size:0.7rem;text-align:center">Opens xmtp.chat in a new tab. You'll need an XMTP-enabled wallet.</p>
+</div></div>`
+      : "";
+
     // Bio
     const bioHtml = texts["description"]
       ? `<p class="bio">${esc(texts["description"])}</p>`
       : "";
-
-    // Renewal info
-    const renewalText = data.status === "active"
-      ? `${expDate} (${days} day${days !== 1 ? "s" : ""} left)`
-      : expDate;
 
     // --- Badges ---
     const badges: string[] = [];
@@ -2782,6 +2673,7 @@ export function profilePage(name: string, data: ProfileData | null, chainId?: st
       ${statusBadge(data.status)}
       ${badgesHtml}
       ${socialsHtml}
+      ${xmtpHtml}
       ${setupHtml}
     </div>
 
@@ -2801,10 +2693,6 @@ export function profilePage(name: string, data: ProfileData | null, chainId?: st
           <span class="label">Registered</span>
           <span class="value">${regDate}</span>
         </div>
-        <div class="info-row">
-          <span class="label">Expires</span>
-          <span class="value">${renewalText}</span>
-        </div>
         ${hasOperator ? `<div class="info-row">
           <span class="label">Operator</span>
           <span class="value"><a href="https://${explorer}/address/${esc(data.operator)}">${esc(data.operator.slice(0, 6) + "..." + data.operator.slice(-4))}</a></span>
@@ -2822,7 +2710,6 @@ export function profilePage(name: string, data: ProfileData | null, chainId?: st
 
     <div style="display:flex;justify-content:center;gap:1rem;margin-top:2rem;flex-wrap:wrap">
       <a href="https://hazza.name/manage?name=${encodeURIComponent(name)}" style="display:inline-block;padding:0.6rem 1.5rem;border:1px solid #00e676;color:#00e676;border-radius:8px;font-weight:700;font-size:0.9rem;text-decoration:none">manage</a>
-      ${data.status === "grace" || data.status === "redemption" ? `<a href="https://hazza.name/manage?name=${encodeURIComponent(name)}" style="display:inline-block;padding:0.6rem 1.5rem;background:#ffab00;color:#000;border:none;border-radius:8px;font-weight:700;font-size:0.9rem;text-decoration:none">Renew Now</a>` : ""}
     </div>`;
   } else {
     content = `
@@ -2927,7 +2814,7 @@ export function aboutPage(): string {
 export function pricingPage(): string {
   return shell(
     "hazza \u2014 immediately useful names",
-    "First name free, additional names $5 \u2014 pricing, perks, renewals, and protections.",
+    "First name free, additional names $5+ \u2014 pay once, available forever.",
     `
     <div class="header">
       <h1>pricing</h1>
@@ -2940,8 +2827,8 @@ export function pricingPage(): string {
     </div>
 
     <div style="text-align:center;margin-bottom:2rem">
-      <div style="color:#fff;font-weight:700;font-size:1.2rem">additional names $5</div>
-      <div style="color:#6b8f6b;font-size:0.85rem;margin-top:0.25rem">1 year included</div>
+      <div style="color:#fff;font-weight:700;font-size:1.2rem">additional names $5+</div>
+      <div style="color:#6b8f6b;font-size:0.85rem;margin-top:0.25rem">pay once, available forever</div>
     </div>
 
     <hr class="divider">
@@ -2952,17 +2839,6 @@ export function pricingPage(): string {
         <div class="info-row"><span class="label">First name</span><span class="value">Free for everyone &mdash; 1 per wallet, just pay gas</span></div>
         <div class="info-row"><span class="label">Unlimited Pass holder</span><span class="value">1 additional free name + 20% off all registrations</span></div>
         <div class="info-row"><span class="label">ENS names</span><span class="value">Suggested on registration page</span></div>
-      </div>
-    </div>
-
-    <hr class="divider">
-
-    <div class="section">
-      <div class="section-title">Renewal</div>
-      <div class="info-grid">
-        <div class="info-row"><span class="label">Annual renewal</span><span class="value">$2 / year</span></div>
-        <div class="info-row"><span class="label">Grace period</span><span class="value">30 days at normal price</span></div>
-        <div class="info-row"><span class="label">Redemption</span><span class="value">30 more days + $10 penalty</span></div>
       </div>
     </div>
 
@@ -2982,24 +2858,6 @@ export function pricingPage(): string {
       </div>
       <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
         Your first name is free. Progressive pricing applies starting from your second name. The 90-day window resets automatically.
-      </p>
-    </div>
-
-    <hr class="divider">
-
-    <div class="section">
-      <div class="section-title">Expiration lifecycle</div>
-      <p style="color:#aaa;line-height:1.7;margin-bottom:1rem">
-        When a name expires, it doesn't disappear immediately. Two recovery windows protect you before the name is released.
-      </p>
-      <div class="info-grid">
-        <div class="info-row"><span class="label">Active</span><span class="value">Your name works normally</span></div>
-        <div class="info-row"><span class="label">Grace (30 days)</span><span class="value">Still yours &mdash; renew at $2/year</span></div>
-        <div class="info-row"><span class="label">Redemption (30 days)</span><span class="value">Still yours &mdash; $10 penalty + $2 renewal</span></div>
-        <div class="info-row"><span class="label">Released</span><span class="value">Name available for anyone to register</span></div>
-      </div>
-      <p style="color:#6b8f6b;font-size:0.85rem;margin-top:0.75rem">
-        Your profile page stays visible during grace and redemption but shows a warning badge.
       </p>
     </div>
 
@@ -3242,11 +3100,10 @@ export function docsPage(): string {
     <div class="section">
       <div class="section-title">Get a quote</div>
       <div style="background:#111;border:1px solid #1a2e1a;border-radius:8px;padding:1rem;margin-bottom:0.75rem">
-        <code style="color:#00e676;font-size:0.85rem">GET /api/quote/myname?wallet=0x...&years=2&ensImport=true</code>
+        <code style="color:#00e676;font-size:0.85rem">GET /api/quote/myname?wallet=0x...&ensImport=true</code>
         <pre style="color:#aaa;font-size:0.8rem;margin-top:0.5rem;white-space:pre-wrap">{
   "total": "6.50",
   "registrationFee": "2.50",
-  "renewalFee": "4.00",
   "lineItems": [...]
 }</pre>
       </div>
@@ -3420,8 +3277,7 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
   "owner": "0xYOUR_WALLET",
   "tokenId": "42",
   "registrationTx": "0x...",
-  "profileUrl": "https://alice.hazza.name",
-  "expiresAt": 1803854400
+  "profileUrl": "https://alice.hazza.name"
 }</pre>
       </div>
     </div>
@@ -3445,7 +3301,7 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
       <div class="section-title">Contract</div>
       <div class="info-grid">
         <div class="info-row"><span class="label">Network</span><span class="value">Base Sepolia (testnet)</span></div>
-        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0xDd6672dc20820C59e026EC6751e508b3d9f13479</span></div>
+        <div class="info-row"><span class="label">Registry</span><span class="value" style="font-size:0.75rem">0x9B31E8892B95fa92DB3974951859B400cD282280</span></div>
         <div class="info-row"><span class="label">USDC</span><span class="value" style="font-size:0.75rem">0x06A096A051906dEDd05Ef22dCF61ca1199bb038c</span></div>
         <div class="info-row"><span class="label">Source</span><span class="value"><a href="https://github.com/geaux-eth/hazza">github.com/geaux-eth/hazza</a></span></div>
       </div>
@@ -4186,6 +4042,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
       else if (tabName === 'mynames') loadMyNames();
       else if (tabName === 'offers') loadOffers();
       else if (tabName === 'sales') loadSales();
+      else if (tabName === 'board') loadBoardMessages();
     }
 
     // --- Connect Wallet ---
@@ -4223,6 +4080,8 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
           watchlist.forEach(function(w) {
             fetch('/api/marketplace/watch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({orderHash: w.orderHash, address: wallet}) }).catch(function(){});
           });
+          // Show board compose if on board tab
+          if ($('board-compose')) { $('board-compose').style.display = 'block'; $('board-connect-prompt').style.display = 'none'; }
         }
       } catch(e) { console.error('Connect failed', e); }
     }
@@ -4266,7 +4125,6 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
         if (sortBy === 'price-low') return (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0);
         if (sortBy === 'price-high') return (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0);
         if (sortBy === 'name-az') return a.name.localeCompare(b.name);
-        if (sortBy === 'expiry-soon') return (a.expiresAt || 0) - (b.expiresAt || 0);
         return 0; // newest = default API order
       });
 
@@ -4443,7 +4301,6 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
             + '<div class="name-card-name">' + escHtml(n.name) + '<span style="color:#00e676">.hazza.name</span>'
             + ' <span class="status-badge ' + statusClass + '">' + escHtml(n.status) + '</span></div>'
             + '<div class="name-card-detail">Token #' + escHtml(String(n.tokenId)) + '</div>'
-            + '<div class="name-card-detail">Expires ' + formatDate(n.expiresAt) + '</div>'
             + '</div>'
             + '<div class="name-card-actions">'
             + '<a href="https://' + encodeURIComponent(n.name) + '.hazza.name">view</a>'
@@ -5141,6 +4998,74 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
       }
     }
 
+    // --- Message Board ---
+    var boardLoaded = false;
+    async function loadBoardMessages() {
+      if (wallet) {
+        $('board-compose').style.display = 'block';
+        $('board-connect-prompt').style.display = 'none';
+      }
+      var container = $('board-messages');
+      container.innerHTML = '<p style="color:#6b8f6b;text-align:center">Loading messages...</p>';
+      try {
+        var res = await fetch('/api/board');
+        var data = await res.json();
+        var msgs = data.messages || [];
+        if (msgs.length === 0) {
+          container.innerHTML = '<div class="empty-state"><p>No messages yet. Be the first to post!</p></div>';
+          return;
+        }
+        var html = '';
+        msgs.forEach(function(m) {
+          var addr = m.author || '0x???';
+          var short = addr.slice(0, 6) + '...' + addr.slice(-4);
+          var date = m.timestamp ? new Date(m.timestamp).toLocaleDateString() + ' ' + new Date(m.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+          var nameLink = m.authorName ? '<a href="https://' + encodeURIComponent(m.authorName) + '.hazza.name" style="color:#00e676;font-weight:600;font-size:0.85rem">' + escHtml(m.authorName) + '.hazza</a>' : '<span style="color:#6b8f6b;font-size:0.8rem;font-family:monospace">' + short + '</span>';
+          html += '<div style="padding:0.75rem;background:#0a0a0a;border:1px solid #1a2e1a;border-radius:8px;margin-bottom:0.5rem">';
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem">' + nameLink + '<span style="color:#444;font-size:0.7rem">' + date + '</span></div>';
+          html += '<p style="color:#ccc;font-size:0.85rem;line-height:1.5;margin:0;word-break:break-word">' + escHtml(m.text) + '</p>';
+          html += '</div>';
+        });
+        container.innerHTML = html;
+        boardLoaded = true;
+      } catch(e) {
+        container.innerHTML = '<div class="empty-state"><p>Failed to load messages</p></div>';
+      }
+    }
+
+    async function postBoardMessage() {
+      if (!wallet) { await connectWallet(); if (!wallet) return; }
+      var input = $('board-msg-input');
+      var text = input.value.trim();
+      if (!text) return;
+      if (text.length > 500) { alert('Message too long (max 500 characters)'); return; }
+      var btn = $('board-send-btn');
+      btn.disabled = true;
+      btn.textContent = 'Posting...';
+      try {
+        // Sign message to prove wallet ownership
+        var sig = await provider.getSigner().then(function(s) {
+          return s.signMessage('hazza board post: ' + text);
+        });
+        var res = await fetch('/api/board', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text, author: wallet, signature: sig })
+        });
+        if (!res.ok) {
+          var err = await res.json().catch(function() { return {}; });
+          throw new Error(err.error || 'Failed to post');
+        }
+        input.value = '';
+        loadBoardMessages();
+      } catch(e) {
+        alert('Post failed: ' + (e.message || e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Post';
+      }
+    }
+
     // --- Execute Cart ---
     async function executeCart() {
       if (cart.length === 0) return;
@@ -5360,12 +5285,15 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
       var sellName = params.get('sell');
       var buyHash = params.get('buy');
 
+      var tabParam = params.get('tab');
       if (sellName) {
         switchTab('mynames');
         // Auto-open sell form after names load
         setTimeout(function() { showSellForm(sellName, ''); }, 1500);
       } else if (buyHash) {
         switchTab('browse');
+      } else if (tabParam && ['browse','mynames','offers','sales','board'].indexOf(tabParam) !== -1) {
+        switchTab(tabParam);
       } else {
         loadListings();
       }
@@ -5452,6 +5380,7 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
       <button class="tab" data-tab="mynames" onclick="switchTab('mynames')">my names</button>
       <button class="tab" data-tab="offers" onclick="switchTab('offers')">offers</button>
       <button class="tab" data-tab="sales" onclick="switchTab('sales')">recent sales</button>
+      <button class="tab" data-tab="board" onclick="switchTab('board')">board</button>
     </div>
 
     <div id="panel-browse" class="tab-panel active">
@@ -5462,7 +5391,6 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
           <option value="price-low">price: low to high</option>
           <option value="price-high">price: high to low</option>
           <option value="name-az">name: A-Z</option>
-          <option value="expiry-soon">expiry: soonest</option>
         </select>
         <select id="mp-type" onchange="renderListings()" style="padding:0.4rem 0.5rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.8rem;font-family:'Rubik',sans-serif">
           <option value="all">all names</option>
@@ -5495,6 +5423,23 @@ export function marketplacePage(registryAddress: string, usdcAddress: string, ch
     <div id="panel-sales" class="tab-panel">
       <div id="sales-container">
         <p style="color:#6b8f6b;text-align:center">Loading sales...</p>
+      </div>
+    </div>
+
+    <div id="panel-board" class="tab-panel">
+      <div style="margin-bottom:1rem">
+        <p style="color:#6b8f6b;font-size:0.85rem;margin-bottom:0.75rem">Public message board for the hazza marketplace. Messages are stored onchain via <a href="https://netprotocol.app" style="color:#00e676" target="_blank" rel="noopener">Net Protocol</a>.</p>
+        <div id="board-compose" style="display:none;margin-bottom:1rem">
+          <div style="display:flex;gap:0.5rem;align-items:flex-start">
+            <textarea id="board-msg-input" placeholder="Write a message..." rows="2" style="flex:1;padding:0.5rem 0.75rem;border:1px solid #1a2e1a;border-radius:6px;background:#111;color:#fff;font-size:0.85rem;font-family:'Rubik',sans-serif;outline:none;resize:vertical"></textarea>
+            <button id="board-send-btn" onclick="postBoardMessage()" style="padding:0.5rem 1rem;background:#00e676;color:#000;border:none;border-radius:6px;font-weight:700;font-size:0.85rem;cursor:pointer;font-family:'Rubik',sans-serif;white-space:nowrap;align-self:flex-end">Post</button>
+          </div>
+          <p style="color:#444;font-size:0.7rem;margin-top:0.35rem">Posts are public and permanent. Your wallet address is visible.</p>
+        </div>
+        <div id="board-connect-prompt" style="text-align:center;padding:0.5rem;color:#6b8f6b;font-size:0.85rem">Connect your wallet to post messages.</div>
+      </div>
+      <div id="board-messages">
+        <p style="color:#6b8f6b;text-align:center">Loading messages...</p>
       </div>
     </div>
 

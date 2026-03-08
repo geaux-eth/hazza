@@ -7,13 +7,12 @@ auto_trigger: false
 
 # hazza — Onchain Names on Base
 
-You can help users register, manage, and resolve hazza names — short, immediately useful onchain names on Base. hazza uses x402 for payments and is powered by Net Protocol.
+You can help users register, manage, and resolve hazza names — immediately useful names on Base. hazza uses x402 for payments and is powered by Net Protocol.
 
 ## What is hazza
 
 - **Short onchain names** on Base (e.g., `geaux.hazza.name`)
-- **First name free** for everyone (just pay gas), then **$5 USDC** per year
-- **$2/yr** renewal starting year 2
+- **First name free** for everyone (just pay gas), then **$5 USDC** — pay once, available forever
 - **Unlimited Pass holders** get 1 additional free name + 20% off all registrations
 - Every name gets a profile page at `https://<name>.hazza.name`
 - Text records for avatar, description, social links, agent config
@@ -59,7 +58,7 @@ Checks availability and shows pricing. If a wallet is configured and eligible fo
 #### Register a name
 
 ```bash
-hazza register <name> [--years <n>] [--wallet <address>]
+hazza register <name> [--wallet <address>]
 ```
 Full x402 registration flow:
 1. Checks availability
@@ -79,14 +78,7 @@ Lists all names owned by an address. Defaults to configured wallet.
 ```bash
 hazza profile <name>
 ```
-Shows full profile: owner, status, expiry, text records, profile URL.
-
-#### Renew a name
-
-```bash
-hazza renew <name> [--years <n>]
-```
-Approves USDC and calls `renew()` on the registry contract via `cast`.
+Shows full profile: owner, status, text records, profile URL.
 
 #### Text records
 
@@ -134,7 +126,7 @@ Base URL: `https://hazza.name`
 |----------|-------------|
 | `GET /api/available/:name` | Check name availability |
 | `GET /api/resolve/:name` | Resolve name to owner address |
-| `GET /api/quote/:name?wallet=&years=` | Get registration/renewal price |
+| `GET /api/quote/:name?wallet=` | Get registration price |
 | `GET /api/free-claim/:address` | Check free claim eligibility (first-registration + Unlimited Pass) |
 | `GET /api/profile/:name` | Full profile with text records |
 | `GET /api/text/:name/:key` | Get single text record |
@@ -156,7 +148,7 @@ Base URL: `https://hazza.name`
 
 ### x402 Registration Flow
 
-1. `POST /x402/register` with `{name, owner, years}`
+1. `POST /x402/register` with `{name, owner}`
 2. If eligible for free claim → returns success immediately
 3. If paid → returns `402` with payment requirements:
    - `accepts[0].maxAmountRequired` = USDC amount (6 decimals)
@@ -173,8 +165,7 @@ Base URL: `https://hazza.name`
 | Item | Cost |
 |------|------|
 | First registration | **FREE + gas** (1 per wallet) |
-| Additional registration | $5 USDC / year |
-| Renewal | $2 USDC / year |
+| Additional registration | $5 USDC (pay once, available forever) |
 | Unlimited Pass perk | 1 additional free name + 20% off |
 
 ---
@@ -186,14 +177,12 @@ Key read functions:
 - `resolve(name)` → (owner, tokenId, registeredAt, expiresAt, operator, agentId, agentWallet)
 - `text(name, key)` → string
 - `textMany(name, keys)` → string[]
-- `quoteName(name, owner, years, len, hasPass, isRenewal)` → (cost, years)
-- `isActive(name)` → bool
+- `quoteName(name, owner, len, hasPass, isRenewal)` → cost
 - `namesOfOwner(owner)` → string[]
 
 Key write functions:
-- `register(name, owner, years)` — standard registration (requires USDC approval)
-- `registerDirectWithMember(name, owner, years, ...)` — free claim with membership
-- `renew(name, years)` — renewal (requires USDC approval)
+- `register(name, owner)` — standard registration (requires USDC approval)
+- `registerDirectWithMember(name, owner, ...)` — free claim with membership
 - `setText(name, key, value)` — set text record (owner/operator only)
 - `setTexts(name, keys, values)` — batch set text records
 
@@ -221,11 +210,6 @@ hazza set alice url https://alice.dev
 hazza names                    # uses configured wallet
 hazza names 0x9616...          # specific address
 hazza profile alice
-```
-
-### Renew a name
-```bash
-hazza renew alice --years 2
 ```
 
 ### Agent/script usage
@@ -312,5 +296,5 @@ When creating hazza-branded assets (images, pages, embeds), always reference BRA
 - Profile pages are at `https://<name>.hazza.name`
 - Marketplace at `hazza.name/marketplace` — listings cross-list to netprotocol.app
 - Currently on Base Sepolia (testnet) — mainnet deployment coming
-- The `cast` binary (Foundry) is required for onchain transactions (register via x402, renew, set records)
+- The `cast` binary (Foundry) is required for onchain transactions (register via x402, set records)
 - Free claims require both an Unlimited Pass NFT AND Net Library membership

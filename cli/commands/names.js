@@ -26,11 +26,10 @@ const cmd = new Command('names')
 
       out.heading(`Names for ${addr}`);
       out.table(
-        ['Name', 'Token ID', 'Expires', 'Status'],
+        ['Name', 'Token ID', 'Status'],
         nameList.map(n => [
           n.name,
           n.tokenId || '—',
-          n.expiresAt ? new Date(n.expiresAt * 1000).toLocaleDateString() : '—',
           (n.status || 'active').charAt(0).toUpperCase() + (n.status || 'active').slice(1),
         ]),
       );
