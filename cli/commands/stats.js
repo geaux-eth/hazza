@@ -15,7 +15,7 @@ const cmd = new Command('stats')
       out.item(result, [
         ['Total Registered', 'totalRegistered'],
         ['Contract', 'contract'],
-        ['Chain', d => d.chain === '8453' ? 'Base Mainnet' : 'Base Sepolia'],
+        ['Chain', d => d.chain === '8453' ? 'Base Mainnet' : `Unknown (chain ${d.chain})`],
         ['Website', d => 'https://hazza.name'],
       ]);
     } catch (e) {

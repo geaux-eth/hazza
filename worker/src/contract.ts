@@ -110,6 +110,20 @@ export const REGISTRY_ABI = [
     inputs: [],
     outputs: [{ type: "address" }],
   },
+  // --- Subname Resolution ---
+  {
+    name: "resolveSubname",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "namespace", type: "string" },
+      { name: "subname", type: "string" },
+    ],
+    outputs: [
+      { name: "subnameOwner", type: "address" },
+      { name: "operator", type: "address" },
+    ],
+  },
   // --- Text Records ---
   {
     name: "text",
@@ -166,6 +180,13 @@ export const REGISTRY_ABI = [
     inputs: [{ name: "wallet", type: "address" }],
     outputs: [{ type: "bytes32" }],
   },
+  {
+    name: "setPrimaryName",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "name", type: "string" }],
+    outputs: [],
+  },
   // --- ERC-721 Enumeration ---
   {
     name: "balanceOf",
@@ -183,24 +204,6 @@ export const REGISTRY_ABI = [
       { name: "index", type: "uint256" },
     ],
     outputs: [{ type: "uint256" }],
-  },
-  // --- API Keys ---
-  {
-    name: "verifyApiKey",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "rawKey", type: "bytes32" }],
-    outputs: [{ type: "bytes32" }],
-  },
-  {
-    name: "generateApiKey",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "name", type: "string" },
-      { name: "salt", type: "bytes32" },
-    ],
-    outputs: [{ type: "bytes32" }],
   },
   // --- Write Functions ---
   {
@@ -247,6 +250,16 @@ export const REGISTRY_ABI = [
   },
   {
     name: "setCustomDomain",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "domain", type: "string" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "removeCustomDomain",
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
@@ -365,7 +378,10 @@ export type Env = {
   HAZZA_TREASURY: string;
   MARKETPLACE_FEE_BPS: string;
   WETH_ADDRESS: string;
+  BOUNTY_ADDRESS: string;
   WATCHLIST_KV: KVNamespace;
+  NOTIFICATION_WEBHOOK?: string;  // Telegram/Discord webhook for alerts
+  ADMIN_API_KEY?: string;         // API key for admin endpoints
 };
 
 // Minimal ABI for Exoskeleton NFT (Base mainnet)
@@ -398,12 +414,26 @@ export const EXOSKELETON_ABI = [
 
 export const EXOSKELETON_ADDRESS = "0x8241BDD5009ed3F6C99737D2415994B58296Da0d" as Address;
 
+// ERC-8004 Agent Registry (Base mainnet)
+export const ERC8004_REGISTRY_ADDRESS = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" as Address;
+export const ERC8004_ABI = [
+  {
+    name: "balanceOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;
+
 export function getClient(env: Env): PublicClient {
   const chainId = Number(env.CHAIN_ID);
   const chain = chainId === 8453 ? base : baseSepolia;
+  // On mainnet, prefer the paid RPC (BASE_MAINNET_RPC) over the free public endpoint
+  const rpcUrl = chainId === 8453 && env.BASE_MAINNET_RPC ? env.BASE_MAINNET_RPC : env.RPC_URL;
   return createPublicClient({
     chain,
-    transport: http(env.RPC_URL),
+    transport: http(rpcUrl),
   });
 }
 

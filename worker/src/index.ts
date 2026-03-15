@@ -1,13 +1,16 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { type Env, getClient, getMainnetClient, getEthMainnetClient, buildTx, registryAddress, REGISTRY_ABI, EXOSKELETON_ABI, EXOSKELETON_ADDRESS } from "./contract";
-import { landingPage, profilePage, aboutPage, pricingPage, pricingProtectionsPage, pricingDetailsPage, docsPage, domainsPage, registerPage, managePage, dashboardPage, marketplacePage } from "./pages";
+import { type Env, getClient, getMainnetClient, getEthMainnetClient, buildTx, registryAddress, REGISTRY_ABI, EXOSKELETON_ABI, EXOSKELETON_ADDRESS, ERC8004_REGISTRY_ADDRESS, ERC8004_ABI } from "./contract";
+import { profileBotPage, spaShell, NOMI_AVATAR } from "./pages";
+
+const NOMI_AVATAR_URI = NOMI_AVATAR;
 import { handleCcipRead, handleCcipOptions } from "./ccip";
-import { type Address, formatUnits, keccak256, toBytes, isAddress, createWalletClient, http, encodeFunctionData, verifyMessage } from "viem";
+import { type Address, formatUnits, formatEther, keccak256, toBytes, isAddress, createWalletClient, http, encodeFunctionData, verifyMessage, namehash } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base } from "viem/chains";
 import { Resvg, initWasm } from "@resvg/resvg-wasm";
 import { BazaarClient } from "@net-protocol/bazaar";
+import { StorageClient } from "@net-protocol/storage";
 // @ts-ignore — wasm import handled by wrangler
 import resvgWasm from "../node_modules/@resvg/resvg-wasm/index_bg.wasm";
 
@@ -16,13 +19,20 @@ let cachedFonts: ArrayBuffer[] | null = null;
 
 async function getFonts(): Promise<ArrayBuffer[]> {
   if (cachedFonts) return cachedFonts;
-  const [blackResp, boldResp] = await Promise.all([
-    fetch("https://fonts.gstatic.com/s/rubik/v31/iJWZBXyIfDnIV5PNhY1KTN7Z-Yh-ro-1UA.ttf"),
-    fetch("https://fonts.gstatic.com/s/rubik/v31/iJWZBXyIfDnIV5PNhY1KTN7Z-Yh-4I-1UA.ttf"),
+  const [boldResp, semiboldResp] = await Promise.all([
+    fetch("https://fonts.gstatic.com/s/fredoka/v17/X7nP4b87HvSqjb_WIi2yDCRwoQ_k7367_B-i2yQag0-mac3OFiXMFg.ttf"),
+    fetch("https://fonts.gstatic.com/s/fredoka/v17/X7nP4b87HvSqjb_WIi2yDCRwoQ_k7367_B-i2yQag0-mac3OLyXMFg.ttf"),
   ]);
-  cachedFonts = [await blackResp.arrayBuffer(), await boldResp.arrayBuffer()];
+  cachedFonts = [await boldResp.arrayBuffer(), await semiboldResp.arrayBuffer()];
   return cachedFonts;
 }
+
+// Unlimited Pass contract for 20% discount verification
+const UNLIMITED_PASS_ADDRESS = "0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB" as const;
+const UNLIMITED_PASS_ABI = [
+  { name: "hasUnlimitedPass", type: "function", stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }], outputs: [{ type: "bool" }] },
+] as const;
 
 type Bindings = Env;
 const app = new Hono<{ Bindings: Bindings }>();
@@ -32,9 +42,18 @@ app.use("/api/*", cors({
   origin: (origin) => {
     if (!origin) return "https://hazza.name";
     if (origin === "https://hazza.name" || origin.endsWith(".hazza.name")) return origin;
+    if (origin === "https://hazza-app.pages.dev" || origin.endsWith(".hazza-app.pages.dev")) return origin;
     return "https://hazza.name";
   },
 }));
+
+/** Fetch with a timeout — rejects if the request takes longer than `ms` */
+function fetchWithTimeout(url: string, opts: RequestInit = {}, ms = 5000): Promise<Response> {
+  return Promise.race([
+    fetch(url, opts),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
+  ]);
+}
 
 /** Validate that a URL is safe to fetch (prevents SSRF) */
 function isAllowedUrl(url: string): boolean {
@@ -132,11 +151,47 @@ app.get("/api/quote/:name", async (c) => {
   if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   const wallet = (c.req.query("wallet") || "0x0000000000000000000000000000000000000000") as Address;
   const charCount = Number(c.req.query("charCount") || "0");
-  const ensImport = c.req.query("ensImport") === "true";
+  let ensImport = c.req.query("ensImport") === "true";
   const verifiedPass = c.req.query("verifiedPass") === "true";
   const memberIdStr = c.req.query("memberId") || "0";
   if (!/^\d+$/.test(memberIdStr)) return c.json({ error: "Invalid memberId parameter" }, 400);
   const memberId = BigInt(memberIdStr);
+
+  // Verify ENS ownership on Ethereum mainnet when ensImport discount is claimed
+  // Uses NameWrapper first (handles wrapped names), falls back to Base Registrar (unwrapped)
+  if (ensImport && wallet !== "0x0000000000000000000000000000000000000000") {
+    try {
+      const ethClient = getEthMainnetClient(c.env);
+      const ENS_NAME_WRAPPER = "0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401" as Address;
+      const node = namehash(`${name}.eth`);
+      let ensOwner: string;
+      try {
+        ensOwner = await ethClient.readContract({
+          address: ENS_NAME_WRAPPER,
+          abi: [{ name: "ownerOf", type: "function", stateMutability: "view", inputs: [{ name: "id", type: "uint256" }], outputs: [{ name: "", type: "address" }] }] as const,
+          functionName: "ownerOf",
+          args: [BigInt(node)],
+        });
+      } catch {
+        // Fallback to Base Registrar for unwrapped names
+        const ENS_BASE_REGISTRAR = "0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85" as Address;
+        const labelHash = keccak256(toBytes(name));
+        ensOwner = await ethClient.readContract({
+          address: ENS_BASE_REGISTRAR,
+          abi: [{ name: "ownerOf", type: "function", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ name: "", type: "address" }] }] as const,
+          functionName: "ownerOf",
+          args: [BigInt(labelHash)],
+        });
+      }
+      if (ensOwner.toLowerCase() !== wallet.toLowerCase()) {
+        console.warn(`ENS import rejected: wallet ${wallet} does not own ${name}.eth (owner: ${ensOwner})`);
+        ensImport = false;
+      }
+    } catch (e) {
+      console.warn(`ENS ownership check failed for ${name}.eth, disabling ensImport discount:`, e);
+      ensImport = false;
+    }
+  }
 
   const client = getClient(c.env);
 
@@ -297,7 +352,7 @@ app.get("/api/profile/:name", async (c) => {
     return c.json({ name, registered: false });
   }
 
-  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xmtp"];
+  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xmtp", "message.delegate", "message.mode", "site.key", "agent.uri", "net.profile", "helixa.id", "netlibrary.member", "netlibrary.pass", "com.linkedin", "xyz.farcaster"];
   const [textValues, chash] = await Promise.all([
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
@@ -308,10 +363,56 @@ app.get("/api/profile/:name", async (c) => {
     if (textValues[i]) texts[key] = textValues[i];
   });
 
+  // Fetch enriched data in parallel (all optional, failures silenced)
+  const agentUri = texts["agent.uri"];
+  const netProfileKey = texts["net.profile"];
+  const helixaId = texts["helixa.id"];
+  const safeHelixaId = helixaId && /^\d+$/.test(helixaId) ? helixaId : null;
+  const netProfileUrl = netProfileKey
+    ? (netProfileKey.startsWith("http") ? netProfileKey : `https://storedon.net/net/8453/storage/load/${nameOwner}/${encodeURIComponent(netProfileKey)}`)
+    : null;
+
+  const [agentMetaResult, helixaResult, exoResult, ensResult, bankrResult] = await Promise.allSettled([
+    agentUri && isAllowedUrl(agentUri)
+      ? fetchWithTimeout(agentUri, { headers: { Accept: "application/json" } }).then(r => r.ok ? r.json() : null)
+      : Promise.resolve(null),
+    safeHelixaId
+      ? fetchWithTimeout(`https://api.helixa.xyz/api/v2/agent/${safeHelixaId}`).then(r => r.ok ? r.json() : null)
+      : Promise.resolve(null),
+    (async () => {
+      const mainnet = getMainnetClient(c.env);
+      const bal = await mainnet.readContract({
+        address: EXOSKELETON_ADDRESS, abi: EXOSKELETON_ABI, functionName: "balanceOf", args: [nameOwner],
+      });
+      if (!bal || bal === 0n) return null;
+      const tokenIdExo = await mainnet.readContract({
+        address: EXOSKELETON_ADDRESS, abi: EXOSKELETON_ABI, functionName: "tokenOfOwnerByIndex", args: [nameOwner, 0n],
+      });
+      const uri = await mainnet.readContract({
+        address: EXOSKELETON_ADDRESS, abi: EXOSKELETON_ABI, functionName: "tokenURI", args: [tokenIdExo],
+      });
+      if (uri && typeof uri === "string" && uri.startsWith("data:")) {
+        const b64 = uri.split(",")[1];
+        const json = JSON.parse(atob(b64));
+        return { tokenId: tokenIdExo.toString(), ...json };
+      }
+      return null;
+    })(),
+    (async () => {
+      const ethClient = getEthMainnetClient(c.env);
+      const ensName = await ethClient.getEnsName({ address: nameOwner });
+      return ensName || null;
+    })(),
+    fetchWithTimeout(`https://api.bankr.bot/agent-profiles/${(nameOwner as string).toLowerCase()}`, {
+      headers: { Accept: "application/json" },
+    }).then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+
   return c.json({
     name,
     registered: true,
     owner: nameOwner,
+    ownerEns: ensResult.status === "fulfilled" ? ensResult.value : null,
     tokenId: tokenId.toString(),
     registeredAt: Number(registeredAt),
     operator,
@@ -321,7 +422,105 @@ app.get("/api/profile/:name", async (c) => {
     texts,
     contenthash: chash && chash !== "0x" ? (chash as string) : null,
     url: `https://${name}.hazza.name`,
+    agentMeta: agentMetaResult.status === "fulfilled" ? agentMetaResult.value : null,
+    helixaData: helixaResult.status === "fulfilled" ? helixaResult.value : null,
+    exoData: exoResult.status === "fulfilled" ? exoResult.value : null,
+    bankrData: bankrResult.status === "fulfilled" ? bankrResult.value : null,
   });
+});
+
+// Contact resolution — resolves delegate chain (max 1 hop)
+app.get("/api/contact/:name", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+
+  try {
+    const [nameOwner] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+    });
+    if (nameOwner === "0x0000000000000000000000000000000000000000") {
+      return c.json({ error: "Name not registered" }, 404);
+    }
+
+    const contactKeys = ["xmtp", "message.delegate", "message.mode"];
+    const contactValues = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, contactKeys],
+    });
+    const ownerXmtp = contactValues[0] || "";
+    const delegate = contactValues[1] || "";
+    const mode = contactValues[2] || "all";
+
+    let delegateXmtp = "";
+    let contactName = "";
+
+    if (delegate) {
+      if (delegate.startsWith("0x") && delegate.length === 42) {
+        // Delegate is a raw address — use it directly as XMTP target
+        delegateXmtp = delegate;
+      } else {
+        // Delegate is a hazza name — resolve its XMTP record (1 hop)
+        contactName = delegate.toLowerCase();
+        try {
+          const delegateXmtpValue = await client.readContract({
+            address: addr, abi: REGISTRY_ABI, functionName: "text", args: [contactName, "xmtp"],
+          });
+          delegateXmtp = delegateXmtpValue || "";
+        } catch { /* delegate name doesn't exist or has no xmtp */ }
+      }
+    }
+
+    // Determine the effective contact address based on mode
+    let contactAddress = ownerXmtp;
+    let senderIsAgent: boolean | null = null;
+    if (delegate && delegateXmtp) {
+      if (mode === "delegate-all") {
+        contactAddress = delegateXmtp;
+      } else if (mode === "delegate-agents") {
+        // Check if sender is an agent by looking up ERC-8004 registry
+        const sender = c.req.query("sender");
+        if (sender && /^0x[0-9a-fA-F]{40}$/.test(sender)) {
+          try {
+            const mainnetClient = getMainnetClient(c.env);
+            const agentBalance = await mainnetClient.readContract({
+              address: ERC8004_REGISTRY_ADDRESS,
+              abi: ERC8004_ABI,
+              functionName: "balanceOf",
+              args: [sender as `0x${string}`],
+            });
+            senderIsAgent = agentBalance > 0n;
+            contactAddress = senderIsAgent ? delegateXmtp : ownerXmtp;
+          } catch {
+            // ERC-8004 lookup failed — default to owner (safe fallback)
+            contactAddress = ownerXmtp;
+          }
+        } else {
+          // No valid sender provided — default to owner
+          contactAddress = ownerXmtp;
+        }
+      }
+    }
+
+    const xmtpUrl = contactAddress
+      ? `https://xmtp.chat/production/dm/${contactAddress}`
+      : "";
+
+    return c.json({
+      name,
+      contactAddress,
+      contactName: contactName || null,
+      isDelegated: !!delegate,
+      mode,
+      ownerXmtp,
+      delegateXmtp: delegateXmtp || null,
+      senderIsAgent,
+      xmtpUrl,
+    });
+  } catch (e: any) {
+    console.error("Contact resolution failed:", e?.message || e);
+    return c.json({ error: "Contact resolution failed" }, 500);
+  }
 });
 
 // Single text record
@@ -347,14 +546,67 @@ app.get("/api/text/:name/:key", async (c) => {
 app.get("/api/og/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
   if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+
+  // Escape for SVG
+  const svgEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+  // Branded OG image for site-wide sharing (hazza)
+  if (name === "hazza") {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#F7EBBD"/>
+  <rect x="0" y="0" width="1200" height="8" fill="#4870D4"/>
+  <rect x="0" y="622" width="1200" height="8" fill="#CF3748"/>
+
+  <!-- Nomi avatar -->
+  <image x="60" y="120" width="380" height="380" href="${NOMI_AVATAR_URI}"/>
+
+  <!-- hazza.name -->
+  <text x="740" y="270" font-family="Fredoka, sans-serif" font-weight="700" text-anchor="middle">
+    <tspan font-size="120" fill="#CF3748">hazza</tspan><tspan font-size="120" fill="#4870D4">.name</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="740" y="350" font-family="Fredoka, sans-serif" font-size="42" fill="#131325" font-weight="600" text-anchor="middle">immediately useful names</text>
+
+  <!-- Sub-tagline -->
+  <text x="740" y="420" font-family="Fredoka, sans-serif" font-size="28" fill="#8a7d5a" font-weight="600" text-anchor="middle">pay once, available forever</text>
+
+  <!-- Powered by -->
+  <text x="740" y="520" font-family="Fredoka, sans-serif" font-size="22" fill="#4870D4" text-anchor="middle" font-weight="600">built on Base · powered by x402 and Net Protocol</text>
+</svg>`;
+
+    try {
+      if (!wasmInitialized) {
+        await initWasm(resvgWasm);
+        wasmInitialized = true;
+      }
+      const fontData = await getFonts();
+      const resvg = new Resvg(svg, {
+        fitTo: { mode: "width", value: 1200 },
+        font: {
+          fontBuffers: fontData.map(f => new Uint8Array(f)),
+          defaultFontFamily: "Fredoka",
+        },
+      });
+      const pngData = resvg.render();
+      const pngBuffer = pngData.asPng();
+      return new Response(pngBuffer, {
+        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600" },
+      });
+    } catch {
+      return new Response(svg, {
+        headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+  }
+
+  // Per-name OG image
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
   let subtitle = "available";
-  let statusColor = "#00e676";
+  let statusColor = "#4870D4";
   let ownerText = "";
-  let description = "";
-  let memberBadge = "";
 
   try {
     const [nameOwner, , , , , ,] = await client.readContract({
@@ -363,7 +615,6 @@ app.get("/api/og/:name", async (c) => {
     if (nameOwner !== "0x0000000000000000000000000000000000000000") {
       subtitle = "registered";
       ownerText = nameOwner as string;
-      // Try ENS reverse resolution
       try {
         const ensName = await getEthMainnetClient(c.env).getEnsName({ address: nameOwner as `0x${string}` });
         if (ensName) ownerText = ensName;
@@ -375,45 +626,34 @@ app.get("/api/og/:name", async (c) => {
   const nameFontSize = displayName.length > 10 ? 56 : displayName.length > 6 ? 72 : 88;
   const ownerFontSize = ownerText.length > 30 ? 13 : 16;
 
-  // Escape for SVG
-  const svgEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#F7EBBD"/>
+  <rect x="0" y="0" width="1200" height="8" fill="#4870D4"/>
+  <rect x="0" y="622" width="1200" height="8" fill="#CF3748"/>
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#050a05"/>
-      <stop offset="100%" stop-color="#0a1a0a"/>
-    </linearGradient>
-  </defs>
-  <rect width="1200" height="630" fill="url(#bg)"/>
-  <rect x="0" y="0" width="1200" height="5" fill="#00e676"/>
+  <!-- Nomi avatar -->
+  <image x="40" y="160" width="300" height="300" href="${NOMI_AVATAR_URI}"/>
 
-  <!-- Logo icon (top left) -->
-  <rect x="55" y="45" width="44" height="44" rx="8" fill="#000000" stroke="#00e676" stroke-width="3"/>
-  <text x="77" y="67" font-family="Rubik, sans-serif" font-size="24" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
+  <!-- Logo -->
+  <rect x="60" y="50" width="48" height="48" rx="10" fill="#CF3748"/>
+  <text x="84" y="74" font-family="Fredoka, sans-serif" font-size="26" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
 
-  <!-- Brand (top right) -->
-  <text x="1140" y="78" font-family="Rubik, sans-serif" font-size="20" font-weight="900" text-anchor="end" fill="#ffffff">hazza<tspan fill="#00e676">.name</tspan></text>
+  <!-- Brand -->
+  <text x="1140" y="84" font-family="Fredoka, sans-serif" font-size="22" font-weight="700" text-anchor="end" fill="#131325">hazza<tspan fill="#4870D4">.name</tspan></text>
 
   <!-- Name -->
-  <text x="600" y="${description ? "230" : "260"}" font-family="Rubik, sans-serif" font-size="${nameFontSize}" fill="#ffffff" font-weight="900" text-anchor="middle">${svgEsc(displayName)}</text>
+  <text x="720" y="260" font-family="Fredoka, sans-serif" font-size="${nameFontSize}" fill="#131325" font-weight="700" text-anchor="middle">${svgEsc(displayName)}<tspan fill="#4870D4" font-size="${Math.round(nameFontSize * 0.6)}">.hazza.name</tspan></text>
 
   <!-- Status pill -->
-  <rect x="${600 - (subtitle.length * 6 + 20)}" y="${description ? "260" : "290"}" width="${subtitle.length * 12 + 40}" height="30" rx="15" fill="${statusColor}" opacity="0.15"/>
-  <text x="600" y="${description ? "281" : "311"}" font-family="Rubik, sans-serif" font-size="14" fill="${statusColor}" text-anchor="middle" font-weight="700" letter-spacing="2">${subtitle.toUpperCase()}</text>
+  <rect x="${720 - (subtitle.length * 7 + 24)}" y="290" width="${subtitle.length * 14 + 48}" height="36" rx="18" fill="${statusColor}" opacity="0.12"/>
+  <text x="720" y="314" font-family="Fredoka, sans-serif" font-size="16" fill="${statusColor}" text-anchor="middle" font-weight="600" letter-spacing="3">${subtitle.toUpperCase()}</text>
 
   <!-- Owner -->
-  ${ownerText ? `<text x="600" y="${description ? "330" : "365"}" font-family="Rubik, sans-serif" font-size="${ownerFontSize}" fill="#445544" text-anchor="middle" font-weight="700">${svgEsc(ownerText)}</text>` : ""}
-
-  <!-- Description -->
-  ${description ? `<text x="600" y="380" font-family="Rubik, sans-serif" font-size="18" fill="#6b8f6b" text-anchor="middle" font-weight="700">${svgEsc(description)}</text>` : ""}
-
-  <!-- Member badge -->
-  ${memberBadge ? `<text x="600" y="420" font-family="Rubik, sans-serif" font-size="14" fill="#4a6b4a" text-anchor="middle" font-weight="700">${svgEsc(memberBadge)}</text>` : ""}
+  ${ownerText ? `<text x="720" y="380" font-family="Fredoka, sans-serif" font-size="${ownerFontSize}" fill="#8a7d5a" text-anchor="middle" font-weight="600">${svgEsc(ownerText)}</text>` : ""}
 
   <!-- Footer -->
-  <text x="600" y="555" font-family="Rubik, sans-serif" font-size="22" fill="#ffffff" font-weight="900" text-anchor="middle">immediately useful names</text>
-  <text x="600" y="590" font-family="Rubik, sans-serif" font-size="14" fill="#00e676" text-anchor="middle" font-weight="700">powered by x402 and Net Protocol</text>
+  <text x="720" y="540" font-family="Fredoka, sans-serif" font-size="24" fill="#131325" font-weight="700" text-anchor="middle">immediately useful names</text>
+  <text x="720" y="580" font-family="Fredoka, sans-serif" font-size="16" fill="#4870D4" text-anchor="middle" font-weight="600">built on Base · powered by x402 and Net Protocol</text>
 </svg>`;
 
   // Try PNG conversion via resvg, fall back to SVG
@@ -427,7 +667,7 @@ app.get("/api/og/:name", async (c) => {
       fitTo: { mode: "width", value: 1200 },
       font: {
         fontBuffers: fontData.map(f => new Uint8Array(f)),
-        defaultFontFamily: "Rubik",
+        defaultFontFamily: "Fredoka",
       },
     });
     const pngData = resvg.render();
@@ -453,9 +693,9 @@ app.get("/api/og/:name", async (c) => {
 // 1200x1200 icon PNG for PFP use
 app.get("/api/icon", async (c) => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
-  <rect width="1200" height="1200" fill="#000000"/>
-  <rect x="300" y="300" width="600" height="600" rx="64" ry="64" fill="#000000" stroke="#00e676" stroke-width="12"/>
-  <text x="600" y="600" font-family="Rubik, sans-serif" font-size="360" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
+  <rect width="1200" height="1200" fill="#F7EBBD"/>
+  <rect x="300" y="300" width="600" height="600" rx="64" ry="64" fill="#CF3748"/>
+  <text x="600" y="600" font-family="Fredoka, sans-serif" font-size="360" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
 </svg>`;
 
   try {
@@ -468,7 +708,7 @@ app.get("/api/icon", async (c) => {
       fitTo: { mode: "width", value: 1200 },
       font: {
         fontBuffers: fontData.map(f => new Uint8Array(f)),
-        defaultFontFamily: "Rubik",
+        defaultFontFamily: "Fredoka",
       },
     });
     const pngData = resvg.render();
@@ -511,36 +751,36 @@ app.get("/api/nft-image/:name", async (c) => {
 
   const nsBadge = isNamespace ? `
   <!-- Namespace badge (top right) -->
-  <rect x="436" y="28" width="36" height="36" rx="6" fill="#00e676"/>
-  <text x="454" y="46" font-family="Rubik, sans-serif" font-size="18" fill="#000000" font-weight="900" text-anchor="middle" dominant-baseline="central">N</text>` : '';
+  <rect x="436" y="28" width="36" height="36" rx="6" fill="#4870D4"/>
+  <text x="454" y="46" font-family="Fredoka, sans-serif" font-size="18" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">N</text>` : '';
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="500" y2="500" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#050a05"/>
-      <stop offset="100%" stop-color="#0a1a0a"/>
+      <stop offset="0%" stop-color="#FFF8E1"/>
+      <stop offset="100%" stop-color="#F7EBBD"/>
     </linearGradient>
   </defs>
   <rect width="500" height="500" rx="24" fill="url(#bg)"/>
-  <rect x="0" y="0" width="500" height="4" rx="2" fill="#00e676"/>
+  <rect x="0" y="0" width="500" height="4" rx="2" fill="#4870D4"/>
 
   <!-- Logo icon (top left) -->
-  <rect x="28" y="28" width="36" height="36" rx="6" fill="#000000" stroke="#00e676" stroke-width="2"/>
-  <text x="46" y="46" font-family="Rubik, sans-serif" font-size="20" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
+  <rect x="28" y="28" width="36" height="36" rx="6" fill="#CF3748"/>
+  <text x="46" y="46" font-family="Fredoka, sans-serif" font-size="20" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
   ${nsBadge}
 
   <!-- Name -->
-  <text x="250" y="230" font-family="Rubik, sans-serif" font-size="${fontSize}" fill="#ffffff" font-weight="900" text-anchor="middle">${svgEsc(displayName)}</text>
+  <text x="250" y="230" font-family="Fredoka, sans-serif" font-size="${fontSize}" fill="#131325" font-weight="700" text-anchor="middle">${svgEsc(displayName)}</text>
 
   <!-- .hazza.name suffix -->
-  <text x="250" y="275" font-family="Rubik, sans-serif" font-size="18" fill="#00e676" font-weight="700" text-anchor="middle">.hazza.name</text>
+  <text x="250" y="275" font-family="Fredoka, sans-serif" font-size="18" fill="#4870D4" font-weight="700" text-anchor="middle">.hazza.name</text>
 
   <!-- Accent line -->
-  <rect x="200" y="300" width="100" height="2" rx="1" fill="#1a2e1a"/>
+  <rect x="200" y="300" width="100" height="2" rx="1" fill="#E8DCAB"/>
 
   <!-- Footer -->
-  <text x="250" y="440" font-family="Rubik, sans-serif" font-size="12" fill="#445544" text-anchor="middle" font-weight="700">immediately useful names</text>
-  <text x="250" y="465" font-family="Rubik, sans-serif" font-size="10" fill="#00e676" text-anchor="middle" font-weight="700">built on Base with Net Protocol</text>
+  <text x="250" y="440" font-family="Fredoka, sans-serif" font-size="12" fill="#8a7d5a" text-anchor="middle" font-weight="600">immediately useful names</text>
+  <text x="250" y="465" font-family="Fredoka, sans-serif" font-size="10" fill="#5981E7" text-anchor="middle" font-weight="600">built on Base with Net Protocol</text>
 </svg>`;
 
   try {
@@ -553,7 +793,7 @@ app.get("/api/nft-image/:name", async (c) => {
       fitTo: { mode: "width", value: 500 },
       font: {
         fontBuffers: fontData.map(f => new Uint8Array(f)),
-        defaultFontFamily: "Rubik",
+        defaultFontFamily: "Fredoka",
       },
     });
     const pngData = resvg.render();
@@ -577,19 +817,19 @@ app.get("/api/share", async (c) => {
   if (cached) return cached;
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
-  <rect width="1200" height="1200" fill="#0a0a0a"/>
+  <rect width="1200" height="1200" fill="#F7EBBD"/>
 
   <!-- Icon logo (vertically centered with text group) -->
-  <rect x="556" y="425" width="88" height="88" rx="14" fill="#0a0a0a" stroke="#00e676" stroke-width="5"/>
-  <text x="600" y="469" font-family="Rubik, sans-serif" font-size="48" fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
+  <rect x="548" y="425" width="104" height="104" rx="18" fill="#CF3748"/>
+  <text x="600" y="477" font-family="Fredoka, sans-serif" font-size="58" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
 
   <!-- hazza.name large centered -->
-  <text x="600" y="685" font-family="Rubik, sans-serif" font-weight="900" text-anchor="middle">
-    <tspan font-size="140" fill="#ffffff">hazza</tspan><tspan font-size="140" fill="#00e676">.name</tspan>
+  <text x="600" y="695" font-family="Fredoka, sans-serif" font-weight="700" text-anchor="middle">
+    <tspan font-size="148" fill="#131325">hazza</tspan><tspan font-size="148" fill="#4870D4">.name</tspan>
   </text>
 
   <!-- immediately useful -->
-  <text x="600" y="765" font-family="Rubik, sans-serif" font-size="52" fill="#ffffff" font-weight="700" text-anchor="middle" opacity="0.85">immediately useful</text>
+  <text x="600" y="780" font-family="Fredoka, sans-serif" font-size="56" fill="#131325" font-weight="600" text-anchor="middle" opacity="0.70">immediately useful</text>
 </svg>`;
 
   try {
@@ -602,7 +842,7 @@ app.get("/api/share", async (c) => {
       fitTo: { mode: "width", value: 1200 },
       font: {
         fontBuffers: fontData.map(f => new Uint8Array(f)),
-        defaultFontFamily: "Rubik",
+        defaultFontFamily: "Fredoka",
       },
     });
     const pngData = resvg.render();
@@ -640,7 +880,7 @@ app.get("/api/nfts/:address", async (c) => {
     const apiKey = alchemyMatch[1];
     const alchemyBase = `https://base-mainnet.g.alchemy.com/nft/v3/${apiKey}`;
     try {
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${alchemyBase}/getNFTsForOwner?owner=${address}&withMetadata=true&pageSize=50&excludeFilters[]=SPAM`,
       );
       if (res.ok) {
@@ -697,7 +937,7 @@ app.get("/api/nfts/:address", async (c) => {
           if (uri && uri.startsWith("data:")) {
             try { const json = JSON.parse(atob(uri.split(",")[1])); image = normalizeImage(json.image || ""); nftName = json.name || ""; } catch {}
           } else if (uri) {
-            try { const r = await fetch(normalizeImage(uri)); if (r.ok) { const j = await r.json() as any; image = normalizeImage(j.image || ""); nftName = j.name || ""; } } catch {}
+            try { const r = await fetchWithTimeout(normalizeImage(uri)); if (r.ok) { const j = await r.json() as any; image = normalizeImage(j.image || ""); nftName = j.name || ""; } } catch {}
           }
           if (image) nfts.push({ collection: col.name, contract: col.address, tokenId: tokenId.toString(), name: nftName, image });
         } catch {}
@@ -765,9 +1005,10 @@ app.get("/api/names/:address", async (c) => {
 
     // Batch nameOf calls in chunks to find which tokens exist
     const BATCH_SIZE = 50;
+    const MAX_TOKENS_TO_CHECK = 10000;
     const names: { name: string; tokenId: string; url: string; status: string; isNamespace: boolean }[] = [];
 
-    for (let start = 1; start <= totalCount && names.length < count; start += BATCH_SIZE) {
+    for (let start = 1; start <= Math.min(totalCount, MAX_TOKENS_TO_CHECK) && names.length < count; start += BATCH_SIZE) {
       const end = Math.min(start + BATCH_SIZE - 1, totalCount);
       const ids = Array.from({ length: end - start + 1 }, (_, i) => start + i);
 
@@ -880,6 +1121,119 @@ app.get("/api/ens-names/:address", async (c) => {
 });
 
 // =========================================================================
+//                     API KEY GENERATION (OFF-CHAIN, KV-BACKED)
+// =========================================================================
+
+// Generate API key: user signs a message proving ownership, worker generates key and stores hash in KV
+app.post("/api/keys/:name", async (c) => {
+  const name = c.req.param("name")?.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64);
+  if (!name) return c.json({ error: "Missing name parameter" }, 400);
+
+  const body = await c.req.json();
+  const { address, signature, timestamp } = body;
+  if (!address || !signature || !timestamp) {
+    return c.json({ error: "Missing address, signature, or timestamp" }, 400);
+  }
+
+  // Check timestamp window (5 minutes)
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - Number(timestamp)) > 300) {
+    return c.json({ error: "Signature expired. Try again." }, 400);
+  }
+
+  // Verify signature
+  const message = `generate-api-key:${name}:${timestamp}`;
+  try {
+    const valid = await verifyMessage({
+      address: address as Address,
+      message,
+      signature: signature as `0x${string}`,
+    });
+    if (!valid) return c.json({ error: "Invalid signature" }, 401);
+  } catch {
+    return c.json({ error: "Signature verification failed" }, 400);
+  }
+
+  // Verify signer owns the name
+  const client = getClient(c.env);
+  try {
+    const result = await client.readContract({
+      address: registryAddress(c.env),
+      abi: REGISTRY_ABI,
+      functionName: "resolve",
+      args: [name],
+    }) as [string, bigint, bigint, string, bigint, string];
+    const nameOwner = result[0];
+    if (nameOwner.toLowerCase() !== address.toLowerCase()) {
+      return c.json({ error: "You do not own this name" }, 403);
+    }
+  } catch {
+    return c.json({ error: "Name not found" }, 404);
+  }
+
+  // Generate key: keccak256(name + owner + random salt + timestamp)
+  const salt = crypto.getRandomValues(new Uint8Array(32));
+  const saltHex = "0x" + Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
+  const rawKey = keccak256(toBytes(`${name}${address.toLowerCase()}${saltHex}${timestamp}`));
+
+  // Store hash(rawKey) → nameHash in KV (never expires)
+  const keyHash = keccak256(toBytes(rawKey));
+  const nameHash = keccak256(toBytes(name));
+  await c.env.WATCHLIST_KV.put(`apikey:${keyHash}`, nameHash);
+
+  return c.json({ key: rawKey, name });
+});
+
+// Revoke API key: user signs a message proving ownership
+app.post("/api/keys/:name/revoke", async (c) => {
+  const name = c.req.param("name")?.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64);
+  if (!name) return c.json({ error: "Missing name parameter" }, 400);
+
+  const body = await c.req.json();
+  const { address, signature, timestamp, apiKey } = body;
+  if (!address || !signature || !timestamp || !apiKey) {
+    return c.json({ error: "Missing required fields" }, 400);
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - Number(timestamp)) > 300) {
+    return c.json({ error: "Signature expired. Try again." }, 400);
+  }
+
+  const message = `revoke-api-key:${name}:${timestamp}`;
+  try {
+    const valid = await verifyMessage({
+      address: address as Address,
+      message,
+      signature: signature as `0x${string}`,
+    });
+    if (!valid) return c.json({ error: "Invalid signature" }, 401);
+  } catch {
+    return c.json({ error: "Signature verification failed" }, 400);
+  }
+
+  // Verify ownership
+  const client = getClient(c.env);
+  try {
+    const result = await client.readContract({
+      address: registryAddress(c.env),
+      abi: REGISTRY_ABI,
+      functionName: "resolve",
+      args: [name],
+    }) as [string, bigint, bigint, string, bigint, string];
+    if (result[0].toLowerCase() !== address.toLowerCase()) {
+      return c.json({ error: "You do not own this name" }, 403);
+    }
+  } catch {
+    return c.json({ error: "Name not found" }, 404);
+  }
+
+  const keyHash = keccak256(toBytes(apiKey));
+  await c.env.WATCHLIST_KV.delete(`apikey:${keyHash}`);
+  return c.json({ revoked: true });
+});
+
+// =========================================================================
 //                     WRITE API (API-KEY AUTHENTICATED)
 // =========================================================================
 
@@ -894,34 +1248,26 @@ async function verifyKey(c: any): Promise<{ name: string; nameHash: string } | R
     return c.json({ error: "Invalid API key format (expected bytes32 hex)" }, 401);
   }
 
-  const client = getClient(c.env);
-  try {
-    const nameHash = await client.readContract({
-      address: registryAddress(c.env),
-      abi: REGISTRY_ABI,
-      functionName: "verifyApiKey",
-      args: [rawKey as `0x${string}`],
-    });
-    if (!nameHash || nameHash === "0x0000000000000000000000000000000000000000000000000000000000000000") {
-      return c.json({ error: "Invalid or revoked API key" }, 401);
-    }
-
-    // Resolve nameHash to name string via the name param
-    const requestedName = c.req.param("name")?.toLowerCase();
-    if (!requestedName) {
-      return c.json({ error: "Missing name parameter" }, 400);
-    }
-
-    // Verify the key's nameHash matches the requested name
-    const expectedHash = keccak256(toBytes(requestedName));
-    if (nameHash !== expectedHash) {
-      return c.json({ error: "API key is not authorized for this name" }, 403);
-    }
-
-    return { name: requestedName, nameHash: nameHash as string };
-  } catch (e: any) {
-    return c.json({ error: "API key verification failed" }, 401);
+  const requestedName = c.req.param("name")?.toLowerCase();
+  if (!requestedName) {
+    return c.json({ error: "Missing name parameter" }, 400);
   }
+
+  // Check KV for the key hash
+  const keyHash = keccak256(toBytes(rawKey));
+  const storedNameHash = await c.env.WATCHLIST_KV.get(`apikey:${keyHash}`);
+
+  if (!storedNameHash) {
+    return c.json({ error: "Invalid or revoked API key" }, 401);
+  }
+
+  // Verify the key's nameHash matches the requested name
+  const expectedHash = keccak256(toBytes(requestedName));
+  if (storedNameHash !== expectedHash) {
+    return c.json({ error: "API key is not authorized for this name" }, 403);
+  }
+
+  return { name: requestedName, nameHash: storedNameHash };
 }
 
 // Set a text record — returns unsigned tx
@@ -956,6 +1302,17 @@ app.post("/api/text/:name/batch", async (c) => {
     return c.json({ error: "Maximum 50 records per batch" }, 400);
   }
 
+  // Validate each record has valid key and value
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i];
+    if (!rec || typeof rec.key !== "string" || rec.key.trim().length === 0) {
+      return c.json({ error: `Invalid record at index ${i}: 'key' must be a non-empty string` }, 400);
+    }
+    if (typeof rec.value !== "string") {
+      return c.json({ error: `Invalid record at index ${i}: 'value' must be a string` }, 400);
+    }
+  }
+
   const txs = records.map(({ key, value }: { key: string; value: string }) =>
     ({ key, value, tx: buildTx(c.env, "setText", [result.name, key, value]) })
   );
@@ -977,6 +1334,160 @@ app.post("/api/domain/:name", async (c) => {
   return c.json({ name: result.name, domain, tx });
 });
 
+// =========================================================================
+//                     DNS / DOMAIN MANAGEMENT ENDPOINTS
+// =========================================================================
+
+// NOTE: DNS routes MUST come before /api/domains/:name to avoid
+// Hono matching "dns" as a :name parameter.
+
+// Check DNS records for a domain (DNS-over-HTTPS via Cloudflare)
+app.get("/api/domains/dns/:domain{.+}", async (c) => {
+  const domain = c.req.param("domain").toLowerCase();
+
+  // Validate full domain format (e.g. example.com, sub.example.com)
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(\.[a-z]{2,})+$/.test(domain)) {
+    return c.json({ error: "Invalid domain format" }, 400);
+  }
+
+  const dnsUrl = "https://cloudflare-dns.com/dns-query";
+  const headers = { "Accept": "application/dns-json" };
+
+  try {
+    // Query CNAME, A, and TXT records in parallel
+    const [cnameResp, aResp, txtResp] = await Promise.all([
+      fetchWithTimeout(`${dnsUrl}?name=${encodeURIComponent(domain)}&type=CNAME`, { headers }, 5000)
+        .then(r => r.json()).catch(() => ({ Answer: [] })),
+      fetchWithTimeout(`${dnsUrl}?name=${encodeURIComponent(domain)}&type=A`, { headers }, 5000)
+        .then(r => r.json()).catch(() => ({ Answer: [] })),
+      fetchWithTimeout(`${dnsUrl}?name=${encodeURIComponent(domain)}&type=TXT`, { headers }, 5000)
+        .then(r => r.json()).catch(() => ({ Answer: [] })),
+    ]);
+
+    const cname = ((cnameResp as any).Answer || [])
+      .filter((r: any) => r.type === 5)
+      .map((r: any) => r.data?.replace(/\.$/, "") || r.data);
+    const a = ((aResp as any).Answer || [])
+      .filter((r: any) => r.type === 1)
+      .map((r: any) => r.data);
+    const txt = ((txtResp as any).Answer || [])
+      .filter((r: any) => r.type === 16)
+      .map((r: any) => r.data?.replace(/^"|"$/g, "") || r.data);
+
+    return c.json({
+      domain,
+      records: { cname, a, txt },
+    });
+  } catch (e) {
+    return c.json({ error: "DNS lookup failed" }, 502);
+  }
+});
+
+// Verify DNS setup for a domain (check CNAME points to hazza.name)
+app.post("/api/domains/dns/:domain{.+}", async (c) => {
+  const domain = c.req.param("domain").toLowerCase();
+
+  // Validate full domain format (e.g. example.com, sub.example.com)
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(\.[a-z]{2,})+$/.test(domain)) {
+    return c.json({ error: "Invalid domain format" }, 400);
+  }
+
+  const dnsUrl = "https://cloudflare-dns.com/dns-query";
+  const headers = { "Accept": "application/dns-json" };
+
+  try {
+    const cnameResp: any = await fetchWithTimeout(
+      `${dnsUrl}?name=${encodeURIComponent(domain)}&type=CNAME`,
+      { headers },
+      5000,
+    ).then(r => r.json()).catch(() => ({ Answer: [] }));
+
+    const cnameRecords = (cnameResp.Answer || [])
+      .filter((r: any) => r.type === 5)
+      .map((r: any) => (r.data || "").replace(/\.$/, "").toLowerCase());
+
+    const pointsToHazza = cnameRecords.some((cname: string) => cname === "hazza.name");
+
+    return c.json({
+      domain,
+      verified: pointsToHazza,
+      cname: cnameRecords.length > 0 ? cnameRecords[0] : null,
+      expected: "hazza.name",
+    });
+  } catch (e) {
+    return c.json({ error: "DNS verification failed" }, 502);
+  }
+});
+
+// List custom domains for a name (via contract event logs)
+// This route MUST come after /api/domains/dns/* to avoid route conflicts
+app.get("/api/domains/:name", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+
+  // Verify name exists
+  const [nameOwner] = await client.readContract({
+    address: addr,
+    abi: REGISTRY_ABI,
+    functionName: "resolve",
+    args: [name],
+  });
+
+  if (nameOwner === "0x0000000000000000000000000000000000000000") {
+    return c.json({ error: "Name not registered" }, 404);
+  }
+
+  // Get custom domains from event logs
+  // CustomDomainSet(string name, string domain)
+  // CustomDomainRemoved(string name, string domain)
+  try {
+    const setLogs = await client.getContractEvents({
+      address: addr,
+      abi: [
+        { type: "event", name: "CustomDomainSet", inputs: [{ name: "name", type: "string", indexed: false }, { name: "domain", type: "string", indexed: false }] },
+      ] as const,
+      eventName: "CustomDomainSet",
+      fromBlock: 25000000n,
+    });
+
+    const removedLogs = await client.getContractEvents({
+      address: addr,
+      abi: [
+        { type: "event", name: "CustomDomainRemoved", inputs: [{ name: "name", type: "string", indexed: false }, { name: "domain", type: "string", indexed: false }] },
+      ] as const,
+      eventName: "CustomDomainRemoved",
+      fromBlock: 25000000n,
+    });
+
+    // Merge and sort chronologically to handle set→remove→re-set correctly
+    const allEvents = [
+      ...setLogs.map(log => ({ type: 'set' as const, block: log.blockNumber, logIndex: log.logIndex, args: log.args })),
+      ...removedLogs.map(log => ({ type: 'removed' as const, block: log.blockNumber, logIndex: log.logIndex, args: log.args })),
+    ].sort((a, b) => {
+      if (a.block !== b.block) return Number(a.block - b.block);
+      return (a.logIndex ?? 0) - (b.logIndex ?? 0);
+    });
+
+    const domains = new Set<string>();
+    for (const ev of allEvents) {
+      if (ev.args.name !== name) continue;
+      if (ev.type === 'set') {
+        domains.add(ev.args.domain as string);
+      } else {
+        domains.delete(ev.args.domain as string);
+      }
+    }
+
+    return c.json({ name, domains: Array.from(domains) });
+  } catch (e) {
+    // Fallback: event log query may fail on some providers
+    return c.json({ name, domains: [], note: "Event log query not supported by RPC provider" });
+  }
+});
+
 // Set operator — returns unsigned tx
 app.post("/api/operator/:name", async (c) => {
   const result = await verifyKey(c);
@@ -992,6 +1503,147 @@ app.post("/api/operator/:name", async (c) => {
   return c.json({ name: result.name, operator: operatorAddr, tx });
 });
 
+// Set primary name — returns unsigned tx (user must sign, setPrimaryName requires msg.sender = owner)
+app.post("/api/primary/:name", async (c) => {
+  const auth = await verifyKey(c);
+  if (auth instanceof Response) return auth;
+  const name = c.req.param("name");
+  const tx = buildTx(c.env, "setPrimaryName", [name]);
+  return c.json({ name, tx });
+});
+
+
+// Export all records for a name as a JSON backup
+app.get("/api/export/:name", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name" }, 400);
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+  try {
+    const [nameOwner, tokenId, registeredAt, operator, agentId, agentWallet] =
+      await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] });
+    if (nameOwner === "0x0000000000000000000000000000000000000000") {
+      return c.json({ error: "Name not registered" }, 404);
+    }
+
+    const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xyz.farcaster", "com.linkedin", "site.key", "agent.uri", "agent.endpoint", "agent.model", "agent.status", "net.profile", "xmtp", "helixa.id", "netlibrary.member", "netlibrary.pass", "message.delegate", "message.mode"];
+    const [textValues, chash] = await Promise.all([
+      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
+      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
+    ]);
+
+    const texts: Record<string, string> = {};
+    textKeys.forEach((key, i) => {
+      if (textValues[i]) texts[key] = textValues[i];
+    });
+
+    const backup = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      name,
+      owner: nameOwner,
+      tokenId: tokenId.toString(),
+      registeredAt: Number(registeredAt),
+      operator,
+      agentId: agentId.toString(),
+      agentWallet,
+      contenthash: chash && chash !== "0x" ? chash : null,
+      texts,
+    };
+
+    return new Response(JSON.stringify(backup, null, 2), {
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Disposition": `attachment; filename="${name}.hazza.json"`,
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  } catch (e: any) {
+    console.error("Export failed:", e?.message || e);
+    return c.json({ error: "Export failed" }, 500);
+  }
+});
+
+// Event activity for a name — recent registrations, transfers, text record changes
+app.get("/api/events/:name", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name" }, 400);
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+  try {
+    // Resolve name to get tokenId
+    const [nameOwner, tokenId] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+    });
+    if (nameOwner === "0x0000000000000000000000000000000000000000") {
+      return c.json({ name, events: [] });
+    }
+
+    // Query Transfer events for this tokenId (last 10000 blocks)
+    const currentBlock = await client.getBlockNumber();
+    const fromBlock = currentBlock > 10000n ? currentBlock - 10000n : 0n;
+
+    const transferLogs = await client.getLogs({
+      address: addr,
+      event: {
+        type: "event",
+        name: "Transfer",
+        inputs: [
+          { type: "address", indexed: true, name: "from" },
+          { type: "address", indexed: true, name: "to" },
+          { type: "uint256", indexed: true, name: "tokenId" },
+        ],
+      },
+      args: { tokenId },
+      fromBlock,
+    });
+
+    const events = transferLogs.map((log: any) => ({
+      type: log.args.from === "0x0000000000000000000000000000000000000000" ? "registration" : "transfer",
+      from: log.args.from,
+      to: log.args.to,
+      tokenId: log.args.tokenId?.toString(),
+      blockNumber: log.blockNumber?.toString(),
+      txHash: log.transactionHash,
+    }));
+
+    return c.json({ name, events });
+  } catch (e: any) {
+    console.error("Failed to fetch events:", e?.message || e);
+    return c.json({ error: "Failed to fetch events" }, 500);
+  }
+});
+
+// Preview a site URL before publishing
+app.get("/api/site/preview", async (c) => {
+  const url = c.req.query("url");
+  if (!url) return c.json({ error: "Missing ?url= parameter" }, 400);
+
+  // Rate limit: 10 preview requests per IP per minute
+  const previewIp = c.req.header("cf-connecting-ip") || "unknown";
+  const previewRateKey = `preview-rate:${previewIp}`;
+  const previewRateVal = await c.env.WATCHLIST_KV.get(previewRateKey);
+  const previewCount = previewRateVal ? parseInt(previewRateVal) : 0;
+  if (previewCount >= 10) {
+    return c.json({ error: "Rate limit exceeded. Try again in a minute." }, 429);
+  }
+  await c.env.WATCHLIST_KV.put(previewRateKey, String(previewCount + 1), { expirationTtl: 60 });
+
+  try {
+    if (!isAllowedUrl(url)) return c.json({ error: "URL not allowed" }, 400);
+    const resp = await fetchWithTimeout(url);
+    if (!resp.ok) return c.json({ error: `Failed to fetch: ${resp.status}` }, 502);
+    const html = await resp.text();
+    const banner = `<div style="position:fixed;top:0;left:0;right:0;background:#131325;border-bottom:2px solid #4870D4;padding:0.5rem 1rem;z-index:99999;display:flex;justify-content:space-between;align-items:center;font-family:sans-serif"><span style="color:#CF3748;font-size:0.85rem;font-weight:700">PREVIEW MODE</span><span style="color:#E8DCAB;font-size:0.75rem">This is how your site will look. Changes are not saved yet.</span></div><div style="padding-top:40px">`;
+    const wrapped = html.replace(/<body([^>]*)>/i, `<body$1>${banner}`).replace(/<\/body>/i, `</div></body>`);
+    return new Response(wrapped, {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  } catch (e: any) {
+    console.error("Preview failed:", e?.message || e);
+    return c.json({ error: "Preview failed" }, 500);
+  }
+});
 
 // =========================================================================
 //                         x402 PAYMENT PROTOCOL
@@ -1009,34 +1661,117 @@ async function unmarkPayment(env: Env, txHash: string): Promise<void> {
   await env.WATCHLIST_KV.delete(`payment:${txHash}`);
 }
 
-// Rate limiting for free registrations (per IP + per wallet, 2/hour each with margin for races)
-async function checkFreeRegRateLimit(env: Env, ip: string, owner?: string): Promise<{ allowed: boolean; reason?: string }> {
-  const key = `freerate:${ip}`;
+// ---------------------------------------------------------------------------
+// Rate limiting for free registrations
+//   - 5 free registrations per IP address, PERMANENT (no auto-reset)
+//   - Only resets if GEAUX manually overrides via admin API
+// ---------------------------------------------------------------------------
+const MAX_FREE_PER_IP = 5;
+
+async function checkFreeRegRateLimit(env: Env, ip: string, _owner?: string): Promise<{ allowed: boolean; reason?: string }> {
+  if (ip === "unknown") return { allowed: false, reason: "Cannot identify IP address" };
+  const key = `freeip:${ip}`;
   const val = await env.WATCHLIST_KV.get(key);
   const count = val ? parseInt(val) : 0;
-  if (count >= 2) return { allowed: false, reason: "Rate limit: too many free registrations from this IP" };
-
-  if (owner) {
-    const walletKey = `freerate:wallet:${owner.toLowerCase()}`;
-    const walletVal = await env.WATCHLIST_KV.get(walletKey);
-    if (walletVal && parseInt(walletVal) >= 2) {
-      return { allowed: false, reason: "Rate limit: max 2 free registrations per wallet per hour" };
-    }
+  if (count >= MAX_FREE_PER_IP) {
+    return { allowed: false, reason: `Free registration limit reached for this IP (${MAX_FREE_PER_IP} max). Purchase additional names for $5.` };
   }
-
   return { allowed: true };
 }
-async function incrementFreeRegRate(env: Env, ip: string, owner?: string): Promise<void> {
-  const key = `freerate:${ip}`;
+
+async function incrementFreeRegRate(env: Env, ip: string, _owner?: string): Promise<void> {
+  if (ip === "unknown") return;
+  const key = `freeip:${ip}`;
   const val = await env.WATCHLIST_KV.get(key);
   const count = val ? parseInt(val) + 1 : 1;
-  await env.WATCHLIST_KV.put(key, String(count), { expirationTtl: 3600 }); // 1 hour TTL
+  // No expirationTtl — permanent until manual admin reset
+  await env.WATCHLIST_KV.put(key, String(count));
+}
 
-  if (owner) {
-    const walletKey = `freerate:wallet:${owner.toLowerCase()}`;
-    const walletValInc = await env.WATCHLIST_KV.get(walletKey);
-    const walletCount = walletValInc ? parseInt(walletValInc) + 1 : 1;
-    await env.WATCHLIST_KV.put(walletKey, String(walletCount), { expirationTtl: 3600 });
+// ---------------------------------------------------------------------------
+// Global daily registration cap (all types: free + paid + pass claims)
+//   - Resets at midnight UTC each day
+//   - Sends notification when cap is reached
+// ---------------------------------------------------------------------------
+const GLOBAL_DAILY_CAP = 1000;
+
+function dailyCapKey(): string {
+  const d = new Date();
+  return `dailycap:${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+async function checkGlobalDailyCap(env: Env): Promise<{ allowed: boolean; count: number }> {
+  const val = await env.WATCHLIST_KV.get(dailyCapKey());
+  const count = val ? parseInt(val) : 0;
+  return { allowed: count < GLOBAL_DAILY_CAP, count };
+}
+
+async function incrementGlobalDailyCap(env: Env): Promise<number> {
+  const key = dailyCapKey();
+  const val = await env.WATCHLIST_KV.get(key);
+  const count = val ? parseInt(val) + 1 : 1;
+  // TTL 48 hours — auto-cleans after the day passes
+  await env.WATCHLIST_KV.put(key, String(count), { expirationTtl: 172800 });
+  return count;
+}
+
+// ---------------------------------------------------------------------------
+// Registration analytics — logs every registration for tracking
+// ---------------------------------------------------------------------------
+async function logRegistration(env: Env, data: {
+  name: string; owner: string; ip: string; type: "free" | "paid" | "pass_claim";
+  txHash: string; timestamp: number;
+}): Promise<void> {
+  // Per-registration log entry (30-day TTL)
+  const entryKey = `reglog:${data.timestamp}:${data.name}`;
+  await env.WATCHLIST_KV.put(entryKey, JSON.stringify(data), { expirationTtl: 86400 * 30 });
+
+  // Append to daily summary list (keeps last entry key for listing)
+  const dateStr = new Date(data.timestamp).toISOString().slice(0, 10);
+  const listKey = `reglist:${dateStr}`;
+  const existing = await env.WATCHLIST_KV.get(listKey);
+  const entries: string[] = existing ? JSON.parse(existing) : [];
+  entries.push(entryKey);
+  await env.WATCHLIST_KV.put(listKey, JSON.stringify(entries), { expirationTtl: 86400 * 30 });
+
+  // Per-wallet lifetime counter
+  const walletKey = `regcount:wallet:${data.owner.toLowerCase()}`;
+  const wVal = await env.WATCHLIST_KV.get(walletKey);
+  const wCount = wVal ? parseInt(wVal) + 1 : 1;
+  await env.WATCHLIST_KV.put(walletKey, String(wCount));
+
+  // Per-IP lifetime counter (all registration types, not just free)
+  const ipKey = `regcount:ip:${data.ip}`;
+  const iVal = await env.WATCHLIST_KV.get(ipKey);
+  const iCount = iVal ? parseInt(iVal) + 1 : 1;
+  await env.WATCHLIST_KV.put(ipKey, String(iCount));
+}
+
+// ---------------------------------------------------------------------------
+// Notification helper — sends alerts via webhook (Telegram or Discord)
+// ---------------------------------------------------------------------------
+async function sendNotification(env: Env, message: string): Promise<void> {
+  if (!env.NOTIFICATION_WEBHOOK) return;
+  try {
+    const url = env.NOTIFICATION_WEBHOOK;
+    // Support both Telegram Bot API and Discord webhook formats
+    if (url.includes("api.telegram.org")) {
+      // Telegram: expects ?chat_id=XXX at the end of the webhook URL
+      await fetchWithTimeout(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: message, parse_mode: "HTML" }),
+      });
+    } else {
+      // Discord / generic webhook
+      await fetchWithTimeout(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: message }),
+      });
+    }
+  } catch {
+    // Notification failure is non-fatal
   }
 }
 
@@ -1065,6 +1800,13 @@ app.post("/x402/register", async (c) => {
   if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
   if (!isAddress(owner)) return c.json({ error: "Invalid owner address" }, 400);
 
+  // Global daily registration cap
+  const { allowed: dailyAllowed, count: dailyCount } = await checkGlobalDailyCap(c.env);
+  if (!dailyAllowed) {
+    await sendNotification(c.env, `🚨 <b>hazza daily registration cap reached</b>\n${GLOBAL_DAILY_CAP} registrations today. New registrations blocked until midnight UTC.`);
+    return c.json({ error: "Daily registration limit reached. Please try again tomorrow." }, 429);
+  }
+
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
   const relayerAddr = c.env.RELAYER_ADDRESS as Address;
@@ -1075,10 +1817,26 @@ app.post("/x402/register", async (c) => {
   });
   if (!available) return c.json({ error: "Name not available" }, 409);
 
+  // Verify Unlimited Pass ownership on-chain if claimed
+  let verifiedPass = false;
+  if (body.hasPass) {
+    try {
+      const ownsPass = await client.readContract({
+        address: UNLIMITED_PASS_ADDRESS,
+        abi: UNLIMITED_PASS_ABI,
+        functionName: "hasUnlimitedPass",
+        args: [owner],
+      });
+      verifiedPass = !!ownsPass;
+    } catch {
+      // Pass check failure is non-fatal — proceed without discount
+    }
+  }
+
   // Get quote — for first-time wallets, _adjustedPrice() returns 0 (first name free)
   const [totalCost] = await client.readContract({
     address: addr, abi: REGISTRY_ABI, functionName: "quoteName",
-    args: [name, owner, 0, false, false],
+    args: [name, owner, 0, false, verifiedPass],
   });
 
   // --- First registration free: contract returns $0 for first-time wallets ---
@@ -1124,6 +1882,16 @@ app.post("/x402/register", async (c) => {
       } catch { /* non-critical */ }
 
       await incrementFreeRegRate(c.env, clientIp, owner);
+      const newDailyCount = await incrementGlobalDailyCap(c.env);
+      await logRegistration(c.env, { name, owner, ip: clientIp, type: "free", txHash: regTxHash, timestamp: Date.now() });
+
+      // Alert at 80% and 95% of daily cap
+      if (newDailyCount === Math.floor(GLOBAL_DAILY_CAP * 0.8)) {
+        await sendNotification(c.env, `⚠️ <b>hazza registrations at 80%</b>\n${newDailyCount}/${GLOBAL_DAILY_CAP} today.`);
+      } else if (newDailyCount === Math.floor(GLOBAL_DAILY_CAP * 0.95)) {
+        await sendNotification(c.env, `🔴 <b>hazza registrations at 95%</b>\n${newDailyCount}/${GLOBAL_DAILY_CAP} today.`);
+      }
+
       return c.json({
         name, owner, tokenId,
         registrationTx: regTxHash,
@@ -1141,7 +1909,7 @@ app.post("/x402/register", async (c) => {
   const nlApiUrl = c.env.NET_LIBRARY_API_URL;
   if (nlApiUrl) {
     try {
-      const nlResp = await fetch(`${nlApiUrl}/api/membership?address=${owner}`);
+      const nlResp = await fetchWithTimeout(`${nlApiUrl}/api/membership?address=${owner}`);
       const nlData: any = await nlResp.json();
       if (nlData?.isMember && nlData?.member?.hasUnlimitedPass && nlData.member.memberId > 0) {
         const claimed = await client.readContract({
@@ -1196,6 +1964,10 @@ app.post("/x402/register", async (c) => {
         });
         tokenId = tid.toString();
       } catch { /* non-critical */ }
+
+      const passIp = c.req.header("cf-connecting-ip") || "unknown";
+      await incrementGlobalDailyCap(c.env);
+      await logRegistration(c.env, { name, owner, ip: passIp, type: "pass_claim", txHash: regTxHash, timestamp: Date.now() });
 
       return c.json({
         name, owner, tokenId,
@@ -1269,12 +2041,12 @@ app.post("/x402/register", async (c) => {
     try {
       receipt = await client.getTransactionReceipt({ hash: txHash });
     } catch {
+      // RPC failure or tx not yet indexed — unmark payment so user can retry
       await unmarkPayment(c.env, txHash);
-      return c.json({ error: "Transaction not found or not confirmed" }, 400);
+      return c.json({ error: "Transaction not found or not confirmed. Please try again." }, 400);
     }
 
     if (receipt.status !== "success") {
-      await unmarkPayment(c.env, txHash);
       return c.json({ error: "Transaction failed" }, 400);
     }
 
@@ -1331,7 +2103,7 @@ app.post("/x402/register", async (c) => {
         "0x0000000000000000000000000000000000000000" as Address, // agentWallet
         "",     // agentURI
         false,  // ensImport
-        false,  // verifiedPass
+        verifiedPass,  // verifiedPass — 20% discount if Unlimited Pass holder
       ],
     });
 
@@ -1370,6 +2142,10 @@ app.post("/x402/register", async (c) => {
       tokenId = tid.toString();
     } catch { /* non-critical */ }
 
+    const paidIp = c.req.header("cf-connecting-ip") || "unknown";
+    await incrementGlobalDailyCap(c.env);
+    await logRegistration(c.env, { name, owner, ip: paidIp, type: "paid", txHash: regTxHash, timestamp: Date.now() });
+
     return new Response(JSON.stringify({
       name,
       owner,
@@ -1386,8 +2162,141 @@ app.post("/x402/register", async (c) => {
 
   } catch (e: any) {
     console.error("Registration failed:", e?.shortMessage || e?.message || e);
+    // Un-consume payment so user can retry (sendTransaction failed before on-chain execution)
+    await unmarkPayment(c.env, payment.txHash);
     return c.json({ error: "Registration failed. Please try again." }, 500);
   }
+});
+
+// =========================================================================
+//                         REFUND API
+// =========================================================================
+
+// Rate limit: 3 refund requests per IP per hour
+async function checkRefundRateLimit(env: Env, ip: string): Promise<boolean> {
+  if (ip === "unknown") return false;
+  const key = `refund-rl:${ip}`;
+  const val = await env.WATCHLIST_KV.get(key);
+  const count = val ? parseInt(val) : 0;
+  return count < 3;
+}
+
+async function incrementRefundRateLimit(env: Env, ip: string): Promise<void> {
+  if (ip === "unknown") return;
+  const key = `refund-rl:${ip}`;
+  const val = await env.WATCHLIST_KV.get(key);
+  const count = val ? parseInt(val) + 1 : 1;
+  await env.WATCHLIST_KV.put(key, String(count), { expirationTtl: 3600 }); // 1 hour TTL
+}
+
+// USDC transfer function ABI for sending refunds
+const USDC_TRANSFER_FUNC_ABI = [
+  {
+    name: "transfer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
+] as const;
+
+app.post("/api/refund", async (c) => {
+  const clientIp = c.req.header("cf-connecting-ip") || "unknown";
+
+  // Rate limit
+  if (!(await checkRefundRateLimit(c.env, clientIp))) {
+    return c.json({ error: "Too many refund requests. Try again later." }, 429);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  if (!body || !body.txHash || !body.wallet) {
+    return c.json({ error: "Missing required fields: txHash, wallet" }, 400);
+  }
+
+  const txHash = body.txHash as string;
+  const wallet = body.wallet as string;
+
+  // Validate formats
+  if (!txHash.startsWith("0x") || txHash.length !== 66) {
+    return c.json({ error: "Invalid transaction hash format" }, 400);
+  }
+  if (!isAddress(wallet)) {
+    return c.json({ error: "Invalid wallet address" }, 400);
+  }
+
+  // Check for double refund
+  const refundKey = `refund:${txHash}`;
+  const alreadyRefunded = await c.env.WATCHLIST_KV.get(refundKey);
+  if (alreadyRefunded) {
+    return c.json({ error: "Refund already processed for this transaction" }, 400);
+  }
+
+  // If payment is marked as used, registration succeeded — no refund
+  if (await isPaymentUsed(c.env, txHash)) {
+    return c.json({ error: "This payment was used for a successful registration. No refund available." }, 400);
+  }
+
+  // Verify the USDC transfer on-chain
+  const client = getClient(c.env);
+  const relayerAddr = c.env.RELAYER_ADDRESS as Address;
+
+  let receipt;
+  try {
+    receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+  } catch {
+    return c.json({ error: "Transaction not found on-chain" }, 400);
+  }
+
+  if (receipt.status !== "success") {
+    return c.json({ error: "Original transaction failed on-chain — no USDC was transferred" }, 400);
+  }
+
+  // Find the USDC transfer to relayer from this wallet
+  const usdcAddr = c.env.USDC_ADDRESS.toLowerCase();
+  const transferTopic = keccak256(toBytes("Transfer(address,address,uint256)"));
+  let refundAmount = 0n;
+
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== usdcAddr) continue;
+    if (log.topics[0] !== transferTopic) continue;
+
+    const fromAddr = ("0x" + (log.topics[1] || "").slice(26)).toLowerCase();
+    const toAddr = ("0x" + (log.topics[2] || "").slice(26)).toLowerCase();
+
+    if (fromAddr !== wallet.toLowerCase()) continue;
+    if (toAddr !== relayerAddr.toLowerCase()) continue;
+
+    refundAmount = BigInt(log.data);
+    break;
+  }
+
+  if (refundAmount === 0n) {
+    return c.json({ error: "No matching USDC transfer found from your wallet to the relayer" }, 400);
+  }
+
+  await incrementRefundRateLimit(c.env, clientIp);
+
+  // Mark as pending refund and notify admin (treasury is a Bankr/SIWA wallet — no auto-send)
+  await c.env.WATCHLIST_KV.put(refundKey, JSON.stringify({
+    originalTx: txHash,
+    wallet,
+    amount: refundAmount.toString(),
+    status: "pending",
+    timestamp: Date.now(),
+  }), { expirationTtl: 86400 * 90 }); // 90 day TTL
+
+  await sendNotification(c.env,
+    `💸 <b>hazza refund requested</b>\nWallet: <code>${wallet}</code>\nAmount: ${formatUnits(refundAmount, 6)} USDC\nOriginal tx: <code>${txHash}</code>\n\nSend ${formatUnits(refundAmount, 6)} USDC from treasury to the wallet above.`
+  );
+
+  return c.json({
+    message: "Refund request validated and submitted. You will receive your USDC shortly.",
+    amount: formatUnits(refundAmount, 6),
+    currency: "USDC",
+  });
 });
 
 // =========================================================================
@@ -1398,6 +2307,12 @@ app.post("/x402/register", async (c) => {
 function getBazaarClient(env: Env) {
   const chainId = Number(env.CHAIN_ID);
   return new BazaarClient({ chainId, rpcUrl: env.RPC_URL });
+}
+
+// Helper: create StorageClient for Net Protocol
+function getStorageClient(env: Env) {
+  const chainId = Number(env.CHAIN_ID);
+  return new StorageClient({ chainId, overrides: { rpcUrls: [env.RPC_URL] } });
 }
 
 // Enrich a listing with name data from the registry
@@ -1487,22 +2402,89 @@ async function enrichListing(listing: any, client: any, addr: Address) {
 //                        MESSAGE BOARD
 // =========================================================================
 
-const BOARD_KV_KEY = "board:messages";
-const BOARD_MAX_MESSAGES = 200;
-const BOARD_MAX_LENGTH = 500;
-const BOARD_RATE_LIMIT_TTL = 60; // 1 post per minute per IP
+const FORUM_STORAGE_KEY = "hazza-forum";
+const FORUM_MAX_MESSAGES = 200;
+const FORUM_MAX_LENGTH = 500;
+const FORUM_RATE_LIMIT_TTL = 60; // 1 post per minute per IP
 
-// GET /api/board — fetch board messages
-app.get("/api/board", async (c) => {
+// GET /api/bounty/:tokenId — check for active agent bounty
+const BOUNTY_ABI = [
+  { name: "getActiveBounty", type: "function", stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [
+      { name: "bountyId", type: "uint256" },
+      { name: "amount", type: "uint256" },
+      { name: "agent", type: "address" },
+      { name: "expiresAt", type: "uint64" },
+      { name: "seller", type: "address" },
+    ],
+  },
+] as const;
+
+app.get("/api/bounty/:tokenId", async (c) => {
+  const bountyAddress = c.env.BOUNTY_ADDRESS;
+  if (!bountyAddress) {
+    return c.json({ active: false, message: "Bounty contract not deployed yet" });
+  }
+  const tokenIdParam = c.req.param("tokenId");
+  // Validate tokenId is a valid positive integer
+  if (!/^\d+$/.test(tokenIdParam) || tokenIdParam === "0") {
+    return c.json({ error: "Invalid tokenId: must be a positive integer" }, 400);
+  }
+  const tokenId = tokenIdParam;
   try {
-    const data = await c.env.WATCHLIST_KV.get(BOARD_KV_KEY, "json") as any[] | null;
-    return c.json({ messages: data || [] });
+    const client = getClient(c.env);
+    const [bountyId, amount, agent, expiresAt, seller] = await client.readContract({
+      address: bountyAddress as `0x${string}`,
+      abi: BOUNTY_ABI,
+      functionName: "getActiveBounty",
+      args: [BigInt(tokenId)],
+    });
+    if (bountyId === 0n) {
+      return c.json({ active: false });
+    }
+    return c.json({
+      active: true,
+      bountyId: bountyId.toString(),
+      amount: formatEther(amount),
+      amountWei: amount.toString(),
+      agent: agent === "0x0000000000000000000000000000000000000000" ? null : agent,
+      expiresAt: Number(expiresAt),
+      seller,
+    });
   } catch (e: any) {
-    return c.json({ messages: [], error: e.message });
+    console.error("Bounty lookup failed:", e?.message || e);
+    return c.json({ active: false, error: "Bounty lookup failed" });
   }
 });
 
-// POST /api/board — post a message (requires wallet signature)
+// GET /api/board — fetch forum messages from Net Protocol storage
+app.get("/api/board", async (c) => {
+  try {
+    const storage = getStorageClient(c.env);
+    const relayerAddr = c.env.RELAYER_ADDRESS as `0x${string}`;
+    const result = await storage.get({ key: FORUM_STORAGE_KEY, operator: relayerAddr });
+    if (result && result.value) {
+      try {
+        const messages = JSON.parse(result.value);
+        return c.json({ messages: Array.isArray(messages) ? messages : [] });
+      } catch {
+        return c.json({ messages: [] });
+      }
+    }
+    return c.json({ messages: [] });
+  } catch (e: any) {
+    // Fallback: try KV for any legacy messages during migration
+    try {
+      const data = await c.env.WATCHLIST_KV.get("board:messages", "json") as any[] | null;
+      if (data && data.length > 0) return c.json({ messages: data });
+    } catch {}
+    console.error("Board fetch failed:", e?.message || e);
+    return c.json({ messages: [], error: "Failed to load messages" });
+  }
+});
+
+// POST /api/board — post a forum message, stored onchain via Net Protocol
 app.post("/api/board", async (c) => {
   try {
     const body = await c.req.json();
@@ -1511,8 +2493,8 @@ app.post("/api/board", async (c) => {
     if (!text || typeof text !== "string" || text.trim().length === 0) {
       return c.json({ error: "Message text required" }, 400);
     }
-    if (text.length > BOARD_MAX_LENGTH) {
-      return c.json({ error: `Message too long (max ${BOARD_MAX_LENGTH} chars)` }, 400);
+    if (text.length > FORUM_MAX_LENGTH) {
+      return c.json({ error: `Message too long (max ${FORUM_MAX_LENGTH} chars)` }, 400);
     }
     if (!author || !isAddress(author)) {
       return c.json({ error: "Valid wallet address required" }, 400);
@@ -1521,12 +2503,19 @@ app.post("/api/board", async (c) => {
       return c.json({ error: "Signature required" }, 400);
     }
 
-    // Rate limit by IP
+    // Rate limit by IP (still use KV for ephemeral rate data)
     const ip = c.req.header("cf-connecting-ip") || "unknown";
-    const rateKey = `board-rate:${ip}`;
+    const rateKey = `forum-rate:${ip}`;
     const lastPost = await c.env.WATCHLIST_KV.get(rateKey);
     if (lastPost) {
       return c.json({ error: "Please wait before posting again" }, 429);
+    }
+
+    // Rate limit by wallet address
+    const walletRateKey = `board-rate:${author.toLowerCase()}`;
+    const walletRateVal = await c.env.WATCHLIST_KV.get(walletRateKey);
+    if (walletRateVal) {
+      return c.json({ error: "Rate limit: 1 post per minute per wallet" }, 429);
     }
 
     // Verify signature
@@ -1554,8 +2543,17 @@ app.post("/api/board", async (c) => {
       if (name) authorName = name;
     } catch {}
 
-    // Load existing messages
-    const messages = (await c.env.WATCHLIST_KV.get(BOARD_KV_KEY, "json") as any[] | null) || [];
+    // Load existing messages from Net Protocol
+    const storage = getStorageClient(c.env);
+    const relayerAddr = c.env.RELAYER_ADDRESS as `0x${string}`;
+    let messages: any[] = [];
+    try {
+      const result = await storage.get({ key: FORUM_STORAGE_KEY, operator: relayerAddr });
+      if (result && result.value) {
+        const parsed = JSON.parse(result.value);
+        if (Array.isArray(parsed)) messages = parsed;
+      }
+    } catch {}
 
     // Add new message at the top
     messages.unshift({
@@ -1566,16 +2564,37 @@ app.post("/api/board", async (c) => {
     });
 
     // Cap at max
-    if (messages.length > BOARD_MAX_MESSAGES) {
-      messages.length = BOARD_MAX_MESSAGES;
+    if (messages.length > FORUM_MAX_MESSAGES) {
+      messages.length = FORUM_MAX_MESSAGES;
     }
 
-    await c.env.WATCHLIST_KV.put(BOARD_KV_KEY, JSON.stringify(messages));
-    await c.env.WATCHLIST_KV.put(rateKey, "1", { expirationTtl: BOARD_RATE_LIMIT_TTL });
+    // Write to Net Protocol via relayer wallet
+    const txConfig = storage.preparePut({
+      key: FORUM_STORAGE_KEY,
+      text: "hazza forum messages",
+      value: JSON.stringify(messages),
+    });
+
+    const chainId = Number(c.env.CHAIN_ID);
+    const chain = chainId === 8453 ? base : baseSepolia;
+    const account = privateKeyToAccount(c.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const walletClient = createWalletClient({ account, chain, transport: http(c.env.RPC_URL) });
+
+    await walletClient.writeContract({
+      address: txConfig.to as `0x${string}`,
+      abi: txConfig.abi,
+      functionName: txConfig.functionName,
+      args: txConfig.args as any[],
+    });
+
+    // Set rate limit (ephemeral, KV is fine for this)
+    await c.env.WATCHLIST_KV.put(rateKey, "1", { expirationTtl: FORUM_RATE_LIMIT_TTL });
+    await c.env.WATCHLIST_KV.put(walletRateKey, "1", { expirationTtl: 60 });
 
     return c.json({ ok: true });
   } catch (e: any) {
-    return c.json({ error: e.message || "Failed to post" }, 500);
+    console.error("Board post failed:", e?.message || e);
+    return c.json({ error: "Failed to post message" }, 500);
   }
 });
 
@@ -1598,7 +2617,8 @@ app.get("/api/marketplace/listings", async (c) => {
       total: enriched.filter(Boolean).length,
     });
   } catch (e: any) {
-    return c.json({ listings: [], total: 0, error: e.message });
+    console.error("Marketplace listings failed:", e?.message || e);
+    return c.json({ listings: [], total: 0, error: "Failed to fetch listings" });
   }
 });
 
@@ -1621,7 +2641,8 @@ app.get("/api/marketplace/offers", async (c) => {
       total: rawOffers.length,
     });
   } catch (e: any) {
-    return c.json({ offers: [], total: 0, error: e.message });
+    console.error("Marketplace offers failed:", e?.message || e);
+    return c.json({ offers: [], total: 0, error: "Failed to fetch offers" });
   }
 });
 
@@ -1667,7 +2688,8 @@ app.get("/api/marketplace/sales", async (c) => {
 
     return c.json({ sales: enrichedSales, total: enrichedSales.length });
   } catch (e: any) {
-    return c.json({ sales: [], total: 0, error: e.message });
+    console.error("Marketplace sales failed:", e?.message || e);
+    return c.json({ sales: [], total: 0, error: "Failed to fetch sales" });
   }
 });
 
@@ -1693,11 +2715,12 @@ app.post("/api/marketplace/watch", async (c) => {
     const addr = body.address.toLowerCase();
     if (!existing.includes(addr)) {
       existing.push(addr);
-      await c.env.WATCHLIST_KV.put(key, JSON.stringify(existing));
+      await c.env.WATCHLIST_KV.put(key, JSON.stringify(existing), { expirationTtl: 86400 * 90 });
     }
     return c.json({ orderHash: body.orderHash, count: existing.length });
   } catch (e: any) {
-    return c.json({ error: e.message }, 500);
+    console.error("Watch add failed:", e?.message || e);
+    return c.json({ error: "Failed to update watchlist" }, 500);
   }
 });
 
@@ -1711,10 +2734,15 @@ app.delete("/api/marketplace/watch", async (c) => {
     const existing = (await c.env.WATCHLIST_KV.get(key, "json") as string[] | null) || [];
     const addr = body.address.toLowerCase();
     const filtered = existing.filter((a: string) => a !== addr);
-    await c.env.WATCHLIST_KV.put(key, JSON.stringify(filtered));
+    if (filtered.length === 0) {
+      await c.env.WATCHLIST_KV.delete(key);
+    } else {
+      await c.env.WATCHLIST_KV.put(key, JSON.stringify(filtered), { expirationTtl: 86400 * 90 });
+    }
     return c.json({ orderHash: body.orderHash, count: filtered.length });
   } catch (e: any) {
-    return c.json({ error: e.message }, 500);
+    console.error("Watch remove failed:", e?.message || e);
+    return c.json({ error: "Failed to update watchlist" }, 500);
   }
 });
 
@@ -1752,7 +2780,8 @@ app.post("/api/marketplace/fulfill", async (c) => {
       },
     });
   } catch (e: any) {
-    return c.json({ error: e.message }, 500);
+    console.error("Fulfill listing failed:", e?.message || e);
+    return c.json({ error: "Failed to prepare fulfillment" }, 500);
   }
 });
 
@@ -1788,7 +2817,8 @@ app.post("/api/marketplace/fulfill-offer", async (c) => {
       },
     });
   } catch (e: any) {
-    return c.json({ error: e.message }, 500);
+    console.error("Fulfill offer failed:", e?.message || e);
+    return c.json({ error: "Failed to prepare offer fulfillment" }, 500);
   }
 });
 
@@ -1800,12 +2830,12 @@ const ALLOWED_OFFER_CURRENCIES = ["ETH", "WETH", "USDC"];
 const MAX_OFFERS_PER_NAME = 50;
 const MAX_OFFER_DURATION_SECS = 30 * 86400; // 30 days max
 const ALLOWED_BROKERS: Record<string, number> = {
-  // Cheryl — 1% broker fee, 1% platform fee
-  "0xaf5e770478e45650e36805d1ccaab240309f4a20": 100,
+  // hazza agent (TBD) — 1% broker fee, 1% platform fee
+  "0xa6eb678f607bb811a25e2071a7aae6f53e674e7d": 100,
 };
 
 // POST /api/marketplace/offer — submit a signed offer for a specific name
-// Stores Seaport order data in KV. Supports broker fee split (e.g. Cheryl 1% + hazza 1%).
+// Stores Seaport order data in KV. Supports broker fee split (e.g. agent 1% + hazza 1%).
 app.post("/api/marketplace/offer", async (c) => {
   // Rate limit: 10 offers per IP per hour
   const offerIp = c.req.header("cf-connecting-ip") || "unknown";
@@ -1843,7 +2873,7 @@ app.post("/api/marketplace/offer", async (c) => {
     if (ALLOWED_BROKERS[brokerAddr] !== undefined) {
       broker = brokerAddr;
       brokerFeeBps = ALLOWED_BROKERS[brokerAddr];
-      platformFeeBps = platformFeeBps - brokerFeeBps; // split: e.g. 200 total → 100 platform + 100 broker
+      platformFeeBps = Math.max(0, platformFeeBps - brokerFeeBps); // split: e.g. 200 total → 100 platform + 100 broker
     }
     // Unapproved brokers are silently ignored — full fee goes to platform
   }
@@ -2021,6 +3051,141 @@ app.delete("/api/marketplace/offer", async (c) => {
 });
 
 // =========================================================================
+//                       ADMIN API (analytics + overrides)
+// =========================================================================
+
+function isAdminAuthed(c: any): boolean {
+  const key = c.req.header("x-admin-key") || "";
+  return !!c.env.ADMIN_API_KEY && key === c.env.ADMIN_API_KEY;
+}
+
+// Admin brute-force protection middleware — rate limit failed auth attempts
+app.use("/api/admin/*", async (c, next) => {
+  const ip = c.req.header("cf-connecting-ip") || "unknown";
+  const adminRateKey = `admin-rate:${ip}`;
+  const adminAttempts = parseInt(await c.env.WATCHLIST_KV.get(adminRateKey) || "0");
+  if (adminAttempts >= 5) {
+    return c.json({ error: "Too many attempts" }, 429);
+  }
+  if (!isAdminAuthed(c)) {
+    await c.env.WATCHLIST_KV.put(adminRateKey, String(adminAttempts + 1), { expirationTtl: 300 });
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  await next();
+});
+
+// GET /api/admin/stats — daily registration stats
+app.get("/api/admin/stats", async (c) => {
+
+  const today = new Date().toISOString().slice(0, 10);
+  const dateParam = c.req.query("date") || today;
+
+  // Daily count
+  const capKey = `dailycap:${dateParam}`;
+  const capVal = await c.env.WATCHLIST_KV.get(capKey);
+  const dailyCount = capVal ? parseInt(capVal) : 0;
+
+  // Daily registration list
+  const listKey = `reglist:${dateParam}`;
+  const listVal = await c.env.WATCHLIST_KV.get(listKey);
+  const entryKeys: string[] = listVal ? JSON.parse(listVal) : [];
+
+  // Fetch all entries (up to 100 most recent)
+  const recentKeys = entryKeys.slice(-100);
+  const entries = await Promise.all(
+    recentKeys.map(async (k) => {
+      const v = await c.env.WATCHLIST_KV.get(k);
+      return v ? JSON.parse(v) : null;
+    })
+  );
+
+  // Aggregate by type, IP, wallet
+  const byType: Record<string, number> = {};
+  const byIp: Record<string, number> = {};
+  const byWallet: Record<string, number> = {};
+  for (const e of entries) {
+    if (!e) continue;
+    byType[e.type] = (byType[e.type] || 0) + 1;
+    byIp[e.ip] = (byIp[e.ip] || 0) + 1;
+    byWallet[e.owner?.toLowerCase()] = (byWallet[e.owner?.toLowerCase()] || 0) + 1;
+  }
+
+  return c.json({
+    date: dateParam,
+    totalRegistrations: dailyCount,
+    dailyCap: GLOBAL_DAILY_CAP,
+    remaining: GLOBAL_DAILY_CAP - dailyCount,
+    breakdown: byType,
+    topIps: Object.entries(byIp).sort((a, b) => b[1] - a[1]).slice(0, 20),
+    topWallets: Object.entries(byWallet).sort((a, b) => b[1] - a[1]).slice(0, 20),
+    recentRegistrations: entries.filter(Boolean).slice(-20).reverse(),
+  });
+});
+
+// GET /api/admin/ip/:ip — stats for a specific IP
+app.get("/api/admin/ip/:ip", async (c) => {
+
+  const ip = c.req.param("ip");
+
+  const freeCount = await c.env.WATCHLIST_KV.get(`freeip:${ip}`);
+  const totalCount = await c.env.WATCHLIST_KV.get(`regcount:ip:${ip}`);
+
+  return c.json({
+    ip,
+    freeRegistrations: freeCount ? parseInt(freeCount) : 0,
+    freeLimit: MAX_FREE_PER_IP,
+    totalRegistrations: totalCount ? parseInt(totalCount) : 0,
+  });
+});
+
+// GET /api/admin/wallet/:address — stats for a specific wallet
+app.get("/api/admin/wallet/:address", async (c) => {
+
+  const addr = c.req.param("address").toLowerCase();
+
+  const totalCount = await c.env.WATCHLIST_KV.get(`regcount:wallet:${addr}`);
+
+  return c.json({
+    wallet: addr,
+    totalRegistrations: totalCount ? parseInt(totalCount) : 0,
+  });
+});
+
+// POST /api/admin/reset-ip — reset free registration count for an IP (GEAUX override)
+app.post("/api/admin/reset-ip", async (c) => {
+
+  const body = await c.req.json().catch(() => null);
+  if (!body?.ip) return c.json({ error: "Missing ip field" }, 400);
+
+  const ip = body.ip;
+  const key = `freeip:${ip}`;
+  const oldVal = await c.env.WATCHLIST_KV.get(key);
+  await c.env.WATCHLIST_KV.delete(key);
+
+  return c.json({
+    ip,
+    previousFreeCount: oldVal ? parseInt(oldVal) : 0,
+    newFreeCount: 0,
+    message: `Free registration limit reset for IP ${ip}`,
+  });
+});
+
+// POST /api/admin/set-daily-cap — override daily cap (temporary, for current day only)
+app.post("/api/admin/set-daily-cap", async (c) => {
+
+  const body = await c.req.json().catch(() => null);
+  if (!body?.count || typeof body.count !== "number") return c.json({ error: "Missing count (number)" }, 400);
+
+  // Reset the daily counter to allow more registrations
+  const key = dailyCapKey();
+  await c.env.WATCHLIST_KV.put(key, String(body.count), { expirationTtl: 172800 });
+
+  return c.json({
+    message: `Daily counter set to ${body.count}. Cap is ${GLOBAL_DAILY_CAP}, so ${GLOBAL_DAILY_CAP - body.count} more registrations allowed today.`,
+  });
+});
+
+// =========================================================================
 //                         CCIP-READ GATEWAY (ERC-3668)
 // =========================================================================
 
@@ -2040,38 +3205,65 @@ app.get("*", async (c) => {
 
   // Apex domain → landing page
   if (host === "hazza.name" || host === "www.hazza.name" || host.includes("localhost")) {
-    if (path === "/" || path === "") {
-      return c.html(landingPage(c.env.CHAIN_ID));
+    // SPA routes — serve HTML shell with SEO meta, React loads from Cloudflare Pages
+    const spaRoutes = ["/", "/register", "/dashboard", "/manage", "/marketplace", "/pricing", "/pricing/protections", "/pricing/details", "/about", "/docs", "/nomi", "/domains"];
+    if (spaRoutes.includes(path) || path === "") {
+      return c.html(spaShell(path || "/"));
     }
-    if (path === "/about") {
-      return c.html(aboutPage());
+    if (path === "/admin/set-base-uri") {
+      const registry = c.env.REGISTRY_ADDRESS;
+      return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Set Base URI</title></head>
+<body style="font-family:sans-serif;max-width:500px;margin:2rem auto;padding:1rem">
+<h2>Set Base URI</h2>
+<p style="color:#666;margin:1rem 0">Sets tokenURI base to <code>https://hazza.name/api/metadata/</code></p>
+<p style="color:#888;font-size:0.85rem">Open this page in your wallet's built-in browser (Rainbow → Browser tab → paste URL)</p>
+<button id="btn" style="padding:0.75rem 1.5rem;background:#CF3748;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;margin-top:1rem">Connect & Send</button>
+<pre id="status" style="margin-top:1rem;color:#333;white-space:pre-wrap;word-break:break-all"></pre>
+<script>
+document.getElementById('btn').onclick = async function() {
+  var s = document.getElementById('status');
+  var p = window.ethereum || (window.__hazza_provider);
+  if (!p) { s.textContent = 'No wallet detected. Open this page in Rainbow wallet browser.'; return; }
+  try {
+    s.textContent = 'Connecting...';
+    var accounts = await p.request({ method: 'eth_requestAccounts' });
+    var from = accounts[0];
+    s.textContent = 'Connected: ' + from + '\\nSending setBaseURI tx...';
+    var txHash = await p.request({
+      method: 'eth_sendTransaction',
+      params: [{ from: from, to: '${registry}', data: '0x55f804b30000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002068747470733a2f2f68617a7a612e6e616d652f6170692f6d657461646174612f', value: '0x0' }]
+    });
+    s.textContent = 'Tx sent: ' + txHash + '\\n\\nWaiting for confirmation...';
+    for (var i = 0; i < 60; i++) {
+      await new Promise(function(r) { setTimeout(r, 3000); });
+      try {
+        var receipt = await p.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+        if (receipt && receipt.blockNumber) { s.textContent = 'Done! Block: ' + parseInt(receipt.blockNumber,16) + '\\nTx: ' + txHash; return; }
+      } catch(e2) {}
     }
-    if (path === "/pricing") {
-      return c.html(pricingPage());
+    s.textContent = 'Tx sent but not confirmed yet: ' + txHash;
+  } catch(e) { s.textContent = 'Error: ' + (e.message || e); }
+};
+</script></body></html>`);
     }
-    if (path === "/pricing/protections") {
-      return c.html(pricingProtectionsPage());
+    if (path === "/favicon.ico" || path === "/favicon.svg") {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="16" fill="#CF3748"/><text x="50" y="50" font-family="sans-serif" font-size="55" fill="#fff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text></svg>`;
+      return new Response(svg, {
+        headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" },
+      });
     }
-    if (path === "/pricing/details") {
-      return c.html(pricingDetailsPage());
+    if (path === "/robots.txt") {
+      return new Response("User-agent: *\nAllow: /\nSitemap: https://hazza.name/sitemap.xml\n", {
+        headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=86400" },
+      });
     }
-    if (path === "/docs") {
-      return c.html(docsPage());
-    }
-    if (path === "/domains") {
-      return c.html(domainsPage());
-    }
-    if (path === "/register") {
-      return c.html(registerPage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID));
-    }
-    if (path === "/manage") {
-      return c.html(managePage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID));
-    }
-    if (path === "/dashboard") {
-      return c.html(dashboardPage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID));
-    }
-    if (path === "/marketplace") {
-      return c.html(marketplacePage(c.env.REGISTRY_ADDRESS, c.env.USDC_ADDRESS, c.env.CHAIN_ID, c.env.SEAPORT_ADDRESS, c.env.BAZAAR_ADDRESS, c.env.BATCH_EXECUTOR_ADDRESS || '', c.env.HAZZA_TREASURY, c.env.MARKETPLACE_FEE_BPS || '200', c.env.WETH_ADDRESS || '0x4200000000000000000000000000000000000006'));
+    if (path === "/sitemap.xml") {
+      const pages = ["/", "/about", "/nomi", "/pricing", "/pricing/details", "/pricing/protections", "/register", "/dashboard", "/manage", "/marketplace", "/docs", "/domains"];
+      const urls = pages.map(p => `<url><loc>https://hazza.name${p}</loc></url>`).join("\n");
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`;
+      return new Response(xml, {
+        headers: { "Content-Type": "application/xml", "Cache-Control": "public, max-age=3600" },
+      });
     }
     if (path === "/.well-known/farcaster.json") {
       return c.json({
@@ -2088,10 +3280,10 @@ app.get("*", async (c) => {
           homeUrl: "https://hazza.name",
           iconUrl: "https://hazza.name/api/icon",
           splashImageUrl: "https://hazza.name/api/icon",
-          splashBackgroundColor: "#0a0a0a",
+          splashBackgroundColor: "#F7EBBD",
           primaryCategory: "utility",
           tags: ["names", "identity", "onchain", "base"],
-          requiredChains: [`eip155:${c.env.CHAIN_ID || "84532"}`],
+          requiredChains: [`eip155:${c.env.CHAIN_ID || "8453"}`],
           requiredCapabilities: ["wallet.getEthereumProvider"],
         },
       });
@@ -2100,12 +3292,33 @@ app.get("*", async (c) => {
   }
 
   // Subdomain routing: alice.hazza.name → resolve "alice"
+  // Also supports custom domains via resolveCustomDomain
+  let name: string;
   const subdomain = host.replace(/\.hazza\.name$/, "");
-  if (!subdomain || subdomain === host) {
-    return c.json({ error: "Invalid subdomain" }, 400);
+  if (subdomain && subdomain !== host) {
+    if (!/^[a-z0-9-]+$/.test(subdomain)) {
+      return c.text("Invalid name", 400);
+    }
+    name = subdomain.toLowerCase();
+  } else {
+    // Not a hazza.name subdomain — try custom domain resolution
+    const client = getClient(c.env);
+    const addr = registryAddress(c.env);
+    try {
+      const resolved = await client.readContract({
+        address: addr, abi: REGISTRY_ABI, functionName: "resolveCustomDomain", args: [host],
+      });
+      if (resolved && resolved !== "") {
+        name = (resolved as string).toLowerCase();
+      } else {
+        return c.json({ error: "Unknown domain" }, 404);
+      }
+    } catch {
+      return c.json({ error: "Unknown domain" }, 404);
+    }
   }
 
-  const name = subdomain.toLowerCase();
+  // Check for custom site (site.key) — always serve these directly
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
@@ -2113,141 +3326,64 @@ app.get("*", async (c) => {
     const [nameOwner, tokenId, registeredAt, operator, agentId, agentWallet] =
       await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] });
 
-    if (nameOwner === "0x0000000000000000000000000000000000000000") {
-      return c.html(profilePage(name, null, c.env.CHAIN_ID));
-    }
-
-    const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "site.key", "agent.uri", "net.profile", "xmtp"];
-    const [textValues, chash] = await Promise.all([
-      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
-      client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
-    ]);
-
-    const texts: Record<string, string> = {};
-    textKeys.forEach((key, i) => {
-      if (textValues[i]) texts[key] = textValues[i];
-    });
-
-    const status = "active" as const;
-
-    // Serve custom site from Net Protocol if site.key is set and requesting root
-    const siteKey = texts["site.key"];
-    if (siteKey && (path === "/" || path === "")) {
-      try {
-        const ownerAddr = (nameOwner as string).toLowerCase();
-        const cdnUrl = `https://storedon.net/net/8453/storage/load/${ownerAddr}/${encodeURIComponent(siteKey)}`;
-        if (isAllowedUrl(cdnUrl)) {
-          const siteResp = await fetch(cdnUrl);
-          if (siteResp.ok) {
-            const html = await siteResp.text();
-            return new Response(html, {
-              headers: { "Content-Type": "text/html; charset=utf-8" },
-            });
+    // Custom site check — must happen before bot/SPA routing
+    if (nameOwner !== "0x0000000000000000000000000000000000000000") {
+      const siteKeyResult = await client.readContract({
+        address: addr, abi: REGISTRY_ABI, functionName: "text", args: [name, "site.key"],
+      });
+      const siteKey = siteKeyResult as string;
+      if (siteKey) {
+        try {
+          const cdnUrl = siteKey.startsWith("https://")
+            ? siteKey
+            : `https://storedon.net/net/8453/storage/load/${(nameOwner as string).toLowerCase()}/${encodeURIComponent(siteKey)}`;
+          if (isAllowedUrl(cdnUrl)) {
+            const siteResp = await fetchWithTimeout(cdnUrl);
+            if (siteResp.ok) {
+              const html = await siteResp.text();
+              return new Response(html, {
+                headers: {
+                  "Content-Type": "text/html; charset=utf-8",
+                  "Content-Security-Policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval' https:; img-src * data:; font-src *;",
+                  "X-Frame-Options": "SAMEORIGIN",
+                  "X-Content-Type-Options": "nosniff",
+                },
+              });
+            }
           }
+        } catch {
+          // Fall through to profile
         }
-      } catch {
-        // Fall through to normal profile page
       }
     }
 
-    // Fetch external identity data in parallel (all optional, failures silenced)
-    const agentUri = texts["agent.uri"];
-    const netProfileKey = texts["net.profile"];
+    // Bot detection — serve lightweight OG-only page for crawlers
+    const ua = (c.req.header("user-agent") || "").toLowerCase();
+    const isBot = /twitterbot|facebookexternalhit|discordbot|linkedinbot|slackbot|telegrambot|whatsapp|googlebot|bingbot|yandex|baiduspider|duckduckbot|applebot|ia_archiver|embedly|quora|pinterest|redditbot|mastodon/i.test(ua);
 
-    // Validate helixa.id is a numeric token ID
-    const helixaId = texts["helixa.id"];
-    const safeHelixaId = helixaId && /^\d+$/.test(helixaId) ? helixaId : null;
-
-    // Build safe net profile URL
-    const netProfileUrl = netProfileKey
-      ? (netProfileKey.startsWith("http") ? netProfileKey : `https://storedon.net/net/8453/storage/load/${nameOwner}/${encodeURIComponent(netProfileKey)}`)
-      : null;
-
-    const [agentMetaResult, netProfileResult, helixaResult, exoResult, ensResult, bankrResult] = await Promise.allSettled([
-      // ERC-8004 agent metadata (SSRF-checked)
-      agentUri && isAllowedUrl(agentUri)
-        ? fetch(agentUri, { headers: { Accept: "application/json" } }).then(r => r.ok ? r.json() : null)
-        : Promise.resolve(null),
-      // Net Protocol profile (SSRF-checked)
-      netProfileUrl && isAllowedUrl(netProfileUrl)
-        ? fetch(netProfileUrl, { headers: { Accept: "application/json" } }).then(r => r.ok ? r.json() : null)
-        : Promise.resolve(null),
-      // Helixa AgentDNA (validated numeric token ID)
-      safeHelixaId
-        ? fetch(`https://api.helixa.xyz/api/v2/agent/${safeHelixaId}`)
-            .then(r => r.ok ? r.json() : null)
-        : Promise.resolve(null),
-      // Exoskeleton NFT
-      (async () => {
-        const mainnet = getMainnetClient(c.env);
-        const bal = await mainnet.readContract({
-          address: EXOSKELETON_ADDRESS,
-          abi: EXOSKELETON_ABI,
-          functionName: "balanceOf",
-          args: [nameOwner],
-        });
-        if (!bal || bal === 0n) return null;
-        const tokenIdExo = await mainnet.readContract({
-          address: EXOSKELETON_ADDRESS,
-          abi: EXOSKELETON_ABI,
-          functionName: "tokenOfOwnerByIndex",
-          args: [nameOwner, 0n],
-        });
-        const uri = await mainnet.readContract({
-          address: EXOSKELETON_ADDRESS,
-          abi: EXOSKELETON_ABI,
-          functionName: "tokenURI",
-          args: [tokenIdExo],
-        });
-        // tokenURI is data:application/json;base64,...
-        if (uri && typeof uri === "string" && uri.startsWith("data:")) {
-          const b64 = uri.split(",")[1];
-          const json = JSON.parse(atob(b64));
-          return { tokenId: tokenIdExo.toString(), ...json };
-        }
-        return null;
-      })(),
-      // ENS reverse resolution (owner address → .eth name)
-      (async () => {
-        const ethClient = getEthMainnetClient(c.env);
-        const ensName = await ethClient.getEnsName({ address: nameOwner });
-        return ensName || null;
-      })(),
-      // Bankr agent profile
-      fetch(`https://api.bankr.bot/agent-profiles/${(nameOwner as string).toLowerCase()}`, {
-        headers: { Accept: "application/json" },
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-    ]);
-
-    const agentMeta = agentMetaResult.status === "fulfilled" ? agentMetaResult.value : null;
-    const netProfile = netProfileResult.status === "fulfilled" ? netProfileResult.value : null;
-    const helixaData = helixaResult.status === "fulfilled" ? helixaResult.value : null;
-    const exoData = exoResult.status === "fulfilled" ? exoResult.value : null;
-    const ownerEns = ensResult.status === "fulfilled" ? ensResult.value : null;
-    const bankrData = bankrResult.status === "fulfilled" ? bankrResult.value : null;
-
-    return c.html(
-      profilePage(name, {
+    if (isBot) {
+      // Bots get a lightweight page with OG meta tags only
+      if (nameOwner === "0x0000000000000000000000000000000000000000") {
+        return c.html(profileBotPage(name, null));
+      }
+      const textKeys = ["avatar", "description"];
+      const textValues = await client.readContract({
+        address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys],
+      });
+      const texts: Record<string, string> = {};
+      textKeys.forEach((key, i) => { if (textValues[i]) texts[key] = textValues[i]; });
+      return c.html(profileBotPage(name, {
         owner: nameOwner,
-        ownerEns,
-        tokenId: tokenId.toString(),
-        registeredAt: Number(registeredAt),
-        operator,
-        agentId: agentId.toString(),
-        agentWallet,
-        status,
-        texts,
-        contenthash: chash && chash !== "0x" ? (chash as string) : null,
-        agentMeta,
-        netProfile,
-        helixaData,
-        exoData,
-        bankrData,
-      }, c.env.CHAIN_ID)
-    );
+        description: texts["description"] || "",
+        avatar: texts["avatar"] || "",
+      }));
+    }
+
+    // Real users get the React SPA shell — React detects subdomain and renders Profile
+    return c.html(spaShell("/__profile__", name));
   } catch (err) {
     console.error(`Profile page error for ${name}:`, err);
-    return c.html(profilePage(name, null, c.env.CHAIN_ID));
+    return c.html(spaShell("/__profile__", name));
   }
 });
 

@@ -20,11 +20,8 @@ contract DeployHazza is Script {
         address netLibMembership = vm.envOr("NET_LIB_MEMBERSHIP", address(0));
         address unlimitedPass = vm.envOr("UNLIMITED_PASS", address(0));
 
-        // Cheryl's Bankr wallet (relayer)
-        address cherylWallet = vm.envOr("CHERYL_WALLET", address(0));
-
-        // Website relayer (0% commission)
-        address websiteRelayer = vm.envOr("WEBSITE_RELAYER", address(0));
+        // Relayer wallet (handles x402 registrations, XMTP/botchan agent, marketplace)
+        address relayerWallet = vm.envOr("RELAYER_WALLET", address(0));
 
         address usdc = isTestnet ? USDC_BASE_SEPOLIA : USDC_BASE;
 
@@ -38,14 +35,9 @@ contract DeployHazza is Script {
             unlimitedPass
         );
 
-        // Set Cheryl as relayer with 25% commission
-        if (cherylWallet != address(0)) {
-            registry.setRelayer(cherylWallet, true, 2500);
-        }
-
-        // Set website relayer with 0% commission
-        if (websiteRelayer != address(0)) {
-            registry.setRelayer(websiteRelayer, true, 0);
+        // Set relayer with 0% commission (handles x402, agent, marketplace)
+        if (relayerWallet != address(0)) {
+            registry.setRelayer(relayerWallet, true, 0);
         }
 
         vm.stopBroadcast();
@@ -57,7 +49,7 @@ contract DeployHazza is Script {
         console.log("Treasury:", treasury);
         console.log("Net Library Membership:", netLibMembership);
         console.log("Unlimited Pass:", unlimitedPass);
-        console.log("Cheryl (relayer):", cherylWallet);
+        console.log("Relayer:", relayerWallet);
         console.log("Network:", isTestnet ? "Base Sepolia" : "Base Mainnet");
     }
 }

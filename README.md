@@ -29,15 +29,20 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 
 ### Pricing
 
-| Name Length | Price |
-|-------------|-------|
-| 3 characters | $100 |
-| 4 characters | $25 |
-| 5+ characters | $5 |
+**All names: $5 flat.** Pay once, available forever — no renewals, no expiration.
 
-**Pay once, available forever.** No renewals, no expiration. First name free — everyone's first registration is free (just pay gas). Pricing above applies to additional names.
+**First name free** — everyone's first registration costs nothing (just pay gas).
 
-Progressive pricing applies for bulk registrations. ENS-verified imports get 50% off.
+Progressive anti-squat pricing applies to bulk registrations within a 90-day window:
+
+| Names in window | Multiplier | Price |
+|-----------------|------------|-------|
+| 1–3 | 1x | $5 |
+| 4–5 | 2.5x | $12.50 |
+| 6–7 | 5x | $25 |
+| 8+ | 10x | $50 |
+
+Unlimited Pass holders get 20% off all paid registrations.
 
 ## Unlimited Pass
 
@@ -111,7 +116,7 @@ npx wrangler deploy  # deploy to Cloudflare
 cd /root/hazza-contracts
 MOCK_USDC=0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
 HAZZA_TREASURY=0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a \
-CHERYL_WALLET=0xaf5e770478e45650e36805d1ccaab240309f4a20 \
+RELAYER_WALLET=0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d \
 forge script script/DeployMock.s.sol --rpc-url https://sepolia.base.org --private-key $PK --broadcast
 ```
 
@@ -156,5 +161,4 @@ cast send 0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
 |------|---------|
 | Owner (GEAUX) | `0x96168ACf7f3925e7A9eAA08Ddb21e59643da8097` |
 | Treasury | `0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a` |
-| Cheryl (relayer, 25%) | `0xaf5e770478e45650e36805d1ccaab240309f4a20` |
-| Website relayer (25%) | `0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d` |
+| Relayer | `0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d` |

@@ -1,10 +1,10 @@
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const config = require('./config');
 const output = require('./output');
 
 function castAvailable() {
   try {
-    execSync('cast --version', { stdio: 'pipe' });
+    execFileSync('cast', ['--version'], { stdio: 'pipe' });
     return true;
   } catch {
     return false;
@@ -30,9 +30,10 @@ function getRpcUrl() {
 }
 
 function cast(args, opts = {}) {
-  const cmd = `cast ${args}`;
+  // Accept either a string (split into array) or an array of args
+  const argsArray = Array.isArray(args) ? args : args.split(/\s+/);
   try {
-    const result = execSync(cmd, {
+    const result = execFileSync('cast', argsArray, {
       encoding: 'utf8',
       stdio: ['inherit', 'pipe', 'pipe'],
       timeout: 120000,
@@ -52,16 +53,21 @@ function transferUSDC(to, amount, rpcUrl) {
   const rpc = rpcUrl || getRpcUrl();
   // amount is in raw units (6 decimals for USDC)
   output.info(`Sending ${formatUSDC(amount)} USDC to ${to}...`);
-  const txHash = cast(
-    `send ${usdcAddress} "transfer(address,uint256)" ${to} ${amount} --rpc-url ${rpc} --json`,
+  const txResult = cast(
+    ['send', usdcAddress, 'transfer(address,uint256)', to, String(amount), '--rpc-url', rpc, '--json'],
   );
+  let txHash;
   try {
-    const parsed = JSON.parse(txHash);
-    return parsed.transactionHash || parsed.hash;
+    const parsed = JSON.parse(txResult);
+    txHash = parsed.transactionHash || parsed.hash;
   } catch {
     // cast sometimes returns just the hash
-    return txHash;
+    txHash = txResult;
   }
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    throw new Error('Invalid transaction hash returned: ' + txHash);
+  }
+  return txHash;
 }
 
 // Approve USDC spending
@@ -70,39 +76,47 @@ function approveUSDC(spender, amount, rpcUrl) {
   const usdcAddress = config.get('usdcAddress');
   const rpc = rpcUrl || getRpcUrl();
   output.info(`Approving ${formatUSDC(amount)} USDC...`);
-  const txHash = cast(
-    `send ${usdcAddress} "approve(address,uint256)" ${spender} ${amount} --rpc-url ${rpc} --json`,
+  const txResult = cast(
+    ['send', usdcAddress, 'approve(address,uint256)', spender, String(amount), '--rpc-url', rpc, '--json'],
   );
+  let txHash;
   try {
-    const parsed = JSON.parse(txHash);
-    return parsed.transactionHash || parsed.hash;
+    const parsed = JSON.parse(txResult);
+    txHash = parsed.transactionHash || parsed.hash;
   } catch {
-    return txHash;
+    txHash = txResult;
   }
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    throw new Error('Invalid transaction hash returned: ' + txHash);
+  }
+  return txHash;
 }
 
 // Call a contract function (write)
 function contractSend(contractAddr, sig, args, rpcUrl) {
   requireCast();
   const rpc = rpcUrl || getRpcUrl();
-  const argsStr = args.join(' ');
-  const txHash = cast(
-    `send ${contractAddr} "${sig}" ${argsStr} --rpc-url ${rpc} --json`,
+  const txResult = cast(
+    ['send', contractAddr, sig, ...args.map(String), '--rpc-url', rpc, '--json'],
   );
+  let txHash;
   try {
-    const parsed = JSON.parse(txHash);
-    return parsed.transactionHash || parsed.hash;
+    const parsed = JSON.parse(txResult);
+    txHash = parsed.transactionHash || parsed.hash;
   } catch {
-    return txHash;
+    txHash = txResult;
   }
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    throw new Error('Invalid transaction hash returned: ' + txHash);
+  }
+  return txHash;
 }
 
 // Call a contract function (read)
 function contractCall(contractAddr, sig, args, rpcUrl) {
   requireCast();
   const rpc = rpcUrl || getRpcUrl();
-  const argsStr = args.join(' ');
-  return cast(`call ${contractAddr} "${sig}" ${argsStr} --rpc-url ${rpc}`);
+  return cast(['call', contractAddr, sig, ...args.map(String), '--rpc-url', rpc]);
 }
 
 // Build x402 payment header

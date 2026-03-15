@@ -7,13 +7,14 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULTS = {
   baseUrl: 'https://hazza.name',
-  rpcUrl: 'https://sepolia.base.org',
-  registryAddress: '0xDd6672dc20820C59e026EC6751e508b3d9f13479',
-  usdcAddress: '0x06A096A051906dEDd05Ef22dCF61ca1199bb038c',
-  chainId: '84532',
+  rpcUrl: 'https://mainnet.base.org',
+  registryAddress: '0xaA27d926F057B72D006883785FC03DB1d9d6E3AC',
+  usdcAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  treasuryAddress: '0x62B7399B2ac7e938Efad06EF8746fDBA3B351900',
+  chainId: '8453',
 };
 
-const VALID_KEYS = ['wallet', 'baseUrl', 'rpcUrl', 'registryAddress', 'usdcAddress', 'chainId'];
+const VALID_KEYS = ['wallet', 'baseUrl', 'rpcUrl', 'registryAddress', 'usdcAddress', 'treasuryAddress', 'chainId'];
 
 // Runtime overrides (from --rpc-url, --wallet flags)
 const overrides = {};
@@ -44,7 +45,7 @@ function save(config) {
       clean[k] = v;
     }
   }
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(clean, null, 2) + '\n');
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(clean, null, 2) + '\n', { mode: 0o600 });
 }
 
 function get(key) {

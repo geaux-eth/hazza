@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@net-protocol/bazaar": "^0.1.12",
+    "@net-protocol/storage": "^0.1.15",
     "@resvg/resvg-wasm": "^2.6.2",
     "hono": "^4.7.0",
     "viem": "^2.23.0"

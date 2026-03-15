@@ -109,7 +109,7 @@ contract HazzaRegistryV2 is ERC721, Ownable, ReentrancyGuard {
     // Reverse resolution
     mapping(address => bytes32) public primaryName;
 
-    // Relayers (Cheryl, etc.)
+    // Relayers
     mapping(address => bool) public relayers;
     mapping(address => uint256) public relayerCommission; // basis points (2500 = 25%)
 
@@ -328,7 +328,7 @@ contract HazzaRegistryV2 is ERC721, Ownable, ReentrancyGuard {
         }));
     }
 
-    /// @notice Direct registration (relayer / owner only — for x402 Worker and Cheryl)
+    /// @notice Direct registration (relayer / owner only — for x402 Worker and hazza agent)
     /// @dev Supports ENSIP-15 Unicode names via charCount, ENS import discounts, cross-wallet pass
     function registerDirect(
         string calldata name,

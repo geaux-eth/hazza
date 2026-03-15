@@ -14,7 +14,7 @@ GoDaddy without servers. Names registered via x402 (HTTP-native USDC payments), 
 - **Gateway:** Cloudflare Worker (wildcard subdomains + custom domain routing)
 - **Agent registry:** ERC-8004 Identity Registry (`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`)
 - **Website:** Onchain via Net Protocol (dogfooding)
-- **Blog:** Cheryl-authored, SEO-optimized, auto-published to Net Library FS stack
+- **Blog:** hazza agent-authored, SEO-optimized, auto-published to Net Library FS stack
 
 ---
 
@@ -180,7 +180,7 @@ All pages stored in Net Protocol storage, served by the Worker. Dogfooding HAZZA
 **Pages:**
 - **Landing** (`/`) — hero, value prop, "register your name" CTA, pricing table
 - **Search** (`/search`) — clean search bar, availability checker, ownership lookup
-- **Blog** (`/blog`) — index of Cheryl-authored posts
+- **Blog** (`/blog`) — index of hazza agent-authored posts
 - **Blog post** (`/blog/:slug`) — individual articles
 - **Docs** (`/docs`) — API reference, CLI guide, integration examples
 
@@ -201,7 +201,7 @@ All pages stored in Net Protocol storage, served by the Worker. Dogfooding HAZZA
 ## Phase 4: Blog Engine + Net Library Integration
 
 **Content strategy:**
-- Cheryl writes under the HAZZA brand (not as "Cheryl")
+- hazza agent writes under the HAZZA brand (not as "hazza agent")
 - Educational, comparative, data-driven posts
 - Topics: "HAZZA vs ENS vs Basenames," "Why onchain hosting matters," "x402 explained,"
   "How agents use HAZZA names," "Custom domains on the blockchain," etc.
@@ -318,7 +318,7 @@ cli/
 npm install -g hazza
 ```
 
-**Blog content calendar (Cheryl writes, HAZZA brand publishes):**
+**Blog content calendar (hazza agent writes, HAZZA brand publishes):**
 1. "What is HAZZA? Permanent onchain names explained"
 2. "HAZZA vs ENS vs Basenames: A complete comparison"
 3. "Why your AI agent needs an onchain identity"
@@ -510,7 +510,7 @@ Rightful owners can claim names from squatters with verified identity.
 | DNS reseller markup | $5/domain over wholesale | Per registration + annual |
 | Namespace registration | $50-100 per namespace | One-time |
 | Name challenge claims | 2x original price goes through system | Per claim |
-| Farcaster registration (Cheryl's cut) | 25% of registration fee | Per Cheryl-originated sale |
+| Farcaster registration (hazza agent's cut) | 25% of registration fee | Per hazza agent-originated sale |
 
 ### Default Profile Page (ship with launch)
 
@@ -578,29 +578,29 @@ Organizations, projects, and agent swarms can register a parent name and issue s
 - `revokeSubname(string namespace, string subname)` — namespace admin removes a subname
 - `transferNamespace(string namespace, address newAdmin)` — transfer namespace control
 
-### Cheryl as Social Registrar
+### hazza agent as Social Registrar
 
 **Farcaster registration via mention:**
-- User casts: "@cherylfromnet register toolbelts"
-- Cheryl checks availability, replies with a Farcaster Frame
+- User casts: "@hazza (TBD) register toolbelts"
+- hazza agent checks availability, replies with a Farcaster Frame
 - Frame includes ALL registration options:
   - Name + duration (1 year, 3 years, 5 years, etc.)
   - With/without ERC-8004 agent identity
   - Agent wallet address (optional)
   - With/without DNS domain purchase
-- User pays in-frame, Cheryl calls `registerDirect()`, confirms in thread
-- Contract needs `relayer` role — Cheryl's Bankr wallet as authorized relayer
+- User pays in-frame, hazza agent calls `registerDirect()`, confirms in thread
+- Contract needs `relayer` role — hazza agent's Bankr wallet as authorized relayer
 
-**Cheryl's commission:**
-- Cheryl earns **25% of the registration fee** for every sale she originates via Farcaster
-- Commission paid automatically to Cheryl's Bankr wallet (`0xaf5e...`)
+**hazza agent's commission:**
+- hazza agent earns **25% of the registration fee** for every sale she originates via Farcaster
+- Commission paid automatically to hazza agent's Bankr wallet (`0xaf5e...`)
 - Tracked onchain: `relayerCommission[relayer] = 2500` (basis points)
 - Contract splits payment: 75% to treasury, 25% to relayer wallet
 - Only applies to relayer-originated registrations, not direct contract calls or website purchases
 
 **Hourly highlights cron job:**
 - Every hour: query `NameRegistered` events, count registrations
-- Cheryl picks top 5 favorites (personality-driven selection)
+- hazza agent picks top 5 favorites (personality-driven selection)
 - Posts to Farcaster + Botchan `hazza-registrations` feed
 - Cross-posts to Twitter/X
 
@@ -663,7 +663,7 @@ Organizations, projects, and agent swarms can register a parent name and issue s
 Major additions to HazzaRegistry.sol before mainnet deploy:
 
 1. **Annual renewal + expiry** — `expiresAt` field in NameRecord, `renew(string name, uint256 years)`, grace period logic, redemption period, name release after full expiry
-2. **Relayer role + commission** — `mapping(address => bool) public relayers`, `mapping(address => uint256) public relayerCommission`, payment split logic (75/25 for Cheryl), `onlyRelayer` modifier
+2. **Relayer role + commission** — `mapping(address => bool) public relayers`, `mapping(address => uint256) public relayerCommission`, payment split logic (75/25 for hazza agent), `onlyRelayer` modifier
 3. **Rate limiting by membership tier** — Net Library member NFT check, Unlimited Pass check, per-wallet daily + total limits, time-based tier progression
 4. **Progressive pricing** — `_adjustedPrice(string name, address buyer)` that applies 2.5x/5x/10x multipliers based on wallet registration count, 20% discount for Unlimited Pass
 5. **Name challenge system** — `challengeName(string name, bytes proof)` with identity verification, 2x original price claim, auto-cancel marketplace listings, payout to current holder

@@ -20,7 +20,9 @@ contract OffchainResolverTest is Test {
     // ── Initial State ─────────────────────────────────────────────────────
 
     function test_initial_state() public view {
-        assertEq(resolver.url(), GATEWAY_URL);
+        string[] memory gatewayUrls = resolver.urls();
+        assertEq(gatewayUrls.length, 1);
+        assertEq(gatewayUrls[0], GATEWAY_URL);
         assertTrue(resolver.signers(signer));
         assertEq(resolver.owner(), address(this));
     }
@@ -179,25 +181,44 @@ contract OffchainResolverTest is Test {
         resolver.setSigner(address(0x1234), true);
     }
 
-    // ── setUrl ────────────────────────────────────────────────────────────
+    // ── URL management ─────────────────────────────────────────────────────
 
-    function test_setUrl() public {
+    function test_addUrl() public {
         string memory newUrl = "https://new-gateway.example.com/{sender}/{data}.json";
-        resolver.setUrl(newUrl);
-        assertEq(resolver.url(), newUrl);
+        resolver.addUrl(newUrl);
+        string[] memory allUrls = resolver.urls();
+        assertEq(allUrls.length, 2);
+        assertEq(allUrls[1], newUrl);
     }
 
-    function test_setUrl_emits_event() public {
-        string memory newUrl = "https://new.example.com";
-        vm.expectEmit(false, false, false, true);
-        emit OffchainResolver.UrlUpdated(newUrl);
-        resolver.setUrl(newUrl);
+    function test_removeUrl() public {
+        resolver.addUrl("https://second.example.com");
+        assertEq(resolver.urlCount(), 2);
+        resolver.removeUrl(0);
+        string[] memory allUrls = resolver.urls();
+        assertEq(allUrls.length, 1);
+        assertEq(allUrls[0], "https://second.example.com");
     }
 
-    function test_setUrl_only_owner() public {
+    function test_removeUrl_must_keep_one() public {
+        vm.expectRevert("Must keep at least one URL");
+        resolver.removeUrl(0);
+    }
+
+    function test_setUrls() public {
+        string[] memory newUrls = new string[](2);
+        newUrls[0] = "https://a.example.com";
+        newUrls[1] = "https://b.example.com";
+        resolver.setUrls(newUrls);
+        string[] memory allUrls = resolver.urls();
+        assertEq(allUrls.length, 2);
+        assertEq(allUrls[0], "https://a.example.com");
+    }
+
+    function test_addUrl_only_owner() public {
         vm.prank(address(0xBAD));
         vm.expectRevert();
-        resolver.setUrl("https://evil.com");
+        resolver.addUrl("https://evil.com");
     }
 
     // ── supportsInterface ─────────────────────────────────────────────────

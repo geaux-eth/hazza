@@ -79,11 +79,11 @@ describe("Offer validation", () => {
 
 describe("Broker validation", () => {
   const ALLOWED_BROKERS: Record<string, number> = {
-    "0xaf5e770478e45650e36805d1ccaab240309f4a20": 100,
+    "0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d": 100,
   };
 
   it("recognizes allowed brokers", () => {
-    expect(ALLOWED_BROKERS["0xaf5e770478e45650e36805d1ccaab240309f4a20"]).toBe(100);
+    expect(ALLOWED_BROKERS["0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d"]).toBe(100);
   });
 
   it("rejects unknown brokers", () => {

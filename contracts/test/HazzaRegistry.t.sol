@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../src/HazzaRegistry.sol";
+import "../src/HazzaValidation.sol";
 
 contract MockUSDC {
     mapping(address => uint256) public balanceOf;
@@ -62,6 +63,7 @@ contract MockMembership {
     }
 }
 
+
 contract HazzaRegistryTest is Test {
     HazzaRegistry public registry;
     MockUSDC public usdc;
@@ -73,7 +75,7 @@ contract HazzaRegistryTest is Test {
     address public treasury = address(0xBEEF);
     address public alice = address(0xA11CE);
     address public bob = address(0xB0B);
-    address public cheryl = address(0xC4E1);
+    address public relayer = address(0xC4E1);
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -93,16 +95,16 @@ contract HazzaRegistryTest is Test {
         usdc.mint(deployer, 100000e6);
         usdc.mint(alice, 100000e6);
         usdc.mint(bob, 100000e6);
-        usdc.mint(cheryl, 100000e6);
+        usdc.mint(relayer, 100000e6);
 
         // Approve
         usdc.approve(address(registry), type(uint256).max);
         vm.prank(alice); usdc.approve(address(registry), type(uint256).max);
         vm.prank(bob); usdc.approve(address(registry), type(uint256).max);
-        vm.prank(cheryl); usdc.approve(address(registry), type(uint256).max);
+        vm.prank(relayer); usdc.approve(address(registry), type(uint256).max);
 
-        // Set Cheryl as relayer with 25% commission
-        registry.setRelayer(cheryl, true, 2500);
+        // Set relayer with 25% commission (for testing commission logic)
+        registry.setRelayer(relayer, true, 2500);
     }
 
     // =========================================================================
@@ -336,7 +338,7 @@ contract HazzaRegistryTest is Test {
     // =========================================================================
 
     function test_relayerCanRegister() public {
-        vm.prank(cheryl);
+        vm.prank(relayer);
         registry.registerDirect("relayed", alice, 0, false, address(0), "", false, false);
 
         (address resolvedOwner,,,,,) = registry.resolve("relayed");
@@ -347,10 +349,10 @@ contract HazzaRegistryTest is Test {
         _burnFirstFree(alice, "rc");
 
         uint256 treasuryBefore = usdc.balanceOf(treasury);
-        uint256 cherylBefore = usdc.balanceOf(cheryl);
+        uint256 relayerBefore = usdc.balanceOf(relayer);
 
         vm.warp(block.timestamp + 1 days);
-        vm.prank(cheryl);
+        vm.prank(relayer);
         registry.registerDirect("commission", alice, 0, false, address(0), "", false, false);
 
         uint256 totalPaid = 5e6; // $5 registration (renewal is separate)
@@ -358,7 +360,7 @@ contract HazzaRegistryTest is Test {
         uint256 expectedTreasury = totalPaid - expectedCommission;
 
         assertEq(usdc.balanceOf(treasury) - treasuryBefore, expectedTreasury);
-        assertEq(cherylBefore - usdc.balanceOf(cheryl), totalPaid - expectedCommission);
+        assertEq(relayerBefore - usdc.balanceOf(relayer), totalPaid - expectedCommission);
     }
 
     function test_nonRelayerCannotRegisterDirect() public {
@@ -563,23 +565,6 @@ contract HazzaRegistryTest is Test {
     //                        API KEYS
     // =========================================================================
 
-    function test_apiKeyLifecycle() public {
-        _register("keytest", alice);
-
-        vm.prank(alice);
-        bytes32 rawKey = registry.generateApiKey("keytest", bytes32(uint256(42)));
-        assertTrue(rawKey != bytes32(0));
-
-        bytes32 nameHash = registry.verifyApiKey(rawKey);
-        assertEq(nameHash, keccak256(bytes("keytest")));
-
-        bytes32 keyHash = keccak256(abi.encodePacked(rawKey));
-        vm.prank(alice);
-        registry.revokeApiKey(keyHash);
-
-        vm.expectRevert(HazzaRegistry.ApiKeyNotFound.selector);
-        registry.verifyApiKey(rawKey);
-    }
 
     // =========================================================================
     //                      NAME VALIDATION
@@ -588,46 +573,46 @@ contract HazzaRegistryTest is Test {
     function test_validNames() public {
         _register("abc", alice);
         _register("hello-world", bob);
-        _register("test123", cheryl); // different wallet to avoid alice's daily limit
+        _register("test123", relayer); // different wallet to avoid alice's daily limit
     }
 
     function test_tooShort() public {
-        vm.expectRevert(HazzaRegistry.NameTooShort.selector);
+        vm.expectRevert(HazzaValidation.NameTooShort.selector);
         _register("ab", alice);
     }
 
     function test_leadingHyphen() public {
         bytes32 salt = _commitAndWarp("-abc", alice);
         vm.prank(alice);
-        vm.expectRevert(HazzaRegistry.LeadingHyphen.selector);
+        vm.expectRevert(HazzaValidation.LeadingHyphen.selector);
         registry.register("-abc", alice, salt, false, address(0), "");
     }
 
     function test_trailingHyphen() public {
         bytes32 salt = _commitAndWarp("abc-", alice);
         vm.prank(alice);
-        vm.expectRevert(HazzaRegistry.TrailingHyphen.selector);
+        vm.expectRevert(HazzaValidation.TrailingHyphen.selector);
         registry.register("abc-", alice, salt, false, address(0), "");
     }
 
     function test_consecutiveHyphens() public {
         bytes32 salt = _commitAndWarp("ab--cd", alice);
         vm.prank(alice);
-        vm.expectRevert(HazzaRegistry.ConsecutiveHyphens.selector);
+        vm.expectRevert(HazzaValidation.ConsecutiveHyphens.selector);
         registry.register("ab--cd", alice, salt, false, address(0), "");
     }
 
     function test_uppercase() public {
         bytes32 salt = _commitAndWarp("Hello", alice);
         vm.prank(alice);
-        vm.expectRevert(HazzaRegistry.InvalidCharacter.selector);
+        vm.expectRevert(HazzaValidation.InvalidCharacter.selector);
         registry.register("Hello", alice, salt, false, address(0), "");
     }
 
     function test_specialChars() public {
         bytes32 salt = _commitAndWarp("hello!", alice);
         vm.prank(alice);
-        vm.expectRevert(HazzaRegistry.InvalidCharacter.selector);
+        vm.expectRevert(HazzaValidation.InvalidCharacter.selector);
         registry.register("hello!", alice, salt, false, address(0), "");
     }
 
@@ -771,12 +756,12 @@ contract HazzaRegistryTest is Test {
     }
 
     function test_permissiveRejectsEmpty() public {
-        vm.expectRevert(HazzaRegistry.NameTooShort.selector);
+        vm.expectRevert(HazzaValidation.NameTooShort.selector);
         registry.registerDirect("", alice, 0, false, address(0), "", false, false);
     }
 
     function test_permissiveRejectsShortCharCount() public {
-        vm.expectRevert(HazzaRegistry.NameTooShort.selector);
+        vm.expectRevert(HazzaValidation.NameTooShort.selector);
         registry.registerDirect("some-name", alice, 2, false, address(0), "", false, false);
     }
 
@@ -894,5 +879,275 @@ contract HazzaRegistryTest is Test {
         assertEq(resolvedOwner, alice);
         assertGt(agentId, 0);
         assertEq(agentWallet, alice);
+    }
+
+    // =========================================================================
+    //                   ERC-5192: SOULBOUND LOCK
+    // =========================================================================
+
+    function test_lockName() public {
+        _register("locktest", alice);
+        vm.prank(alice);
+        registry.lockName("locktest");
+        (,,uint256 tokenId) = _getTokenId("locktest");
+        assertTrue(registry.locked(tokenId));
+    }
+
+    function test_unlockName() public {
+        _register("unlocktest", alice);
+        vm.startPrank(alice);
+        registry.lockName("unlocktest");
+        registry.unlockName("unlocktest");
+        vm.stopPrank();
+        (,,uint256 tokenId) = _getTokenId("unlocktest");
+        assertFalse(registry.locked(tokenId));
+    }
+
+    function test_lockedNameCannotTransfer() public {
+        _register("soulbound", alice);
+        (,,uint256 tokenId) = _getTokenId("soulbound");
+        vm.startPrank(alice);
+        registry.lockName("soulbound");
+        vm.expectRevert(HazzaRegistry.NameLocked.selector);
+        registry.transferFrom(alice, bob, tokenId);
+        vm.stopPrank();
+    }
+
+    function test_lockOnlyOwner() public {
+        _register("notbobs", alice);
+        vm.prank(bob);
+        vm.expectRevert(HazzaRegistry.NotNameOwner.selector);
+        registry.lockName("notbobs");
+    }
+
+    function test_cannotDoubleLock() public {
+        _register("doublelock", alice);
+        vm.startPrank(alice);
+        registry.lockName("doublelock");
+        vm.expectRevert(HazzaRegistry.AlreadyLocked.selector);
+        registry.lockName("doublelock");
+        vm.stopPrank();
+    }
+
+    function test_cannotUnlockIfNotLocked() public {
+        _register("notlocked", alice);
+        vm.prank(alice);
+        vm.expectRevert(HazzaRegistry.NotLocked.selector);
+        registry.unlockName("notlocked");
+    }
+
+    function test_lockedEmitsEvent() public {
+        _register("lockevt", alice);
+        (,,uint256 tokenId) = _getTokenId("lockevt");
+        vm.prank(alice);
+        vm.expectEmit(false, false, false, true);
+        emit HazzaRegistry.Locked(tokenId);
+        registry.lockName("lockevt");
+    }
+
+    function test_unlockedEmitsEvent() public {
+        _register("unlockevt", alice);
+        (,,uint256 tokenId) = _getTokenId("unlockevt");
+        vm.startPrank(alice);
+        registry.lockName("unlockevt");
+        vm.expectEmit(false, false, false, true);
+        emit HazzaRegistry.Unlocked(tokenId);
+        registry.unlockName("unlockevt");
+        vm.stopPrank();
+    }
+
+    function test_unlockThenTransfer() public {
+        _register("relock", alice);
+        (,,uint256 tokenId) = _getTokenId("relock");
+        vm.startPrank(alice);
+        registry.lockName("relock");
+        registry.unlockName("relock");
+        registry.transferFrom(alice, bob, tokenId);
+        vm.stopPrank();
+        assertEq(registry.ownerOf(tokenId), bob);
+    }
+
+    // =========================================================================
+    //                    ERC-6147: GUARD OF NFT
+    // =========================================================================
+
+    function test_setGuard() public {
+        _register("guarded", alice);
+        (,,uint256 tokenId) = _getTokenId("guarded");
+        vm.prank(alice);
+        registry.setGuard("guarded", bob);
+        assertEq(registry.guardOf(tokenId), bob);
+    }
+
+    function test_guardBlocksTransfer() public {
+        _register("guardblock", alice);
+        (,,uint256 tokenId) = _getTokenId("guardblock");
+        vm.prank(alice);
+        registry.setGuard("guardblock", bob);
+        vm.prank(alice);
+        vm.expectRevert(HazzaRegistry.GuardRestricted.selector);
+        registry.transferFrom(alice, bob, tokenId);
+    }
+
+    function test_ownerCanRemoveGuard() public {
+        _register("guardremove", alice);
+        (,,uint256 tokenId) = _getTokenId("guardremove");
+        vm.prank(alice);
+        registry.setGuard("guardremove", bob);
+        vm.prank(alice);
+        registry.removeGuard("guardremove");
+        assertEq(registry.guardOf(tokenId), address(0));
+    }
+
+    function test_guardCanRemoveItself() public {
+        _register("guardself", alice);
+        (,,uint256 tokenId) = _getTokenId("guardself");
+        vm.prank(alice);
+        registry.setGuard("guardself", bob);
+        vm.prank(bob);
+        registry.removeGuard("guardself");
+        assertEq(registry.guardOf(tokenId), address(0));
+    }
+
+    function test_randomCannotRemoveGuard() public {
+        _register("guardrandom", alice);
+        vm.prank(alice);
+        registry.setGuard("guardrandom", bob);
+        vm.prank(relayer);
+        vm.expectRevert(HazzaRegistry.NotOwnerOrGuard.selector);
+        registry.removeGuard("guardrandom");
+    }
+
+    function test_removeGuardThenTransfer() public {
+        _register("guardtransfer", alice);
+        (,,uint256 tokenId) = _getTokenId("guardtransfer");
+        vm.prank(alice);
+        registry.setGuard("guardtransfer", bob);
+        // Guard removes itself
+        vm.prank(bob);
+        registry.removeGuard("guardtransfer");
+        // Now transfer works
+        vm.prank(alice);
+        registry.transferFrom(alice, bob, tokenId);
+        assertEq(registry.ownerOf(tokenId), bob);
+    }
+
+    function test_guardSetOnlyByOwner() public {
+        _register("guardowner", alice);
+        vm.prank(bob);
+        vm.expectRevert(HazzaRegistry.NotNameOwner.selector);
+        registry.setGuard("guardowner", relayer);
+    }
+
+    function test_cannotSetZeroGuard() public {
+        _register("guardzero", alice);
+        vm.prank(alice);
+        vm.expectRevert(HazzaRegistry.ZeroAddress.selector);
+        registry.setGuard("guardzero", address(0));
+    }
+
+    function test_guardEmitsEvent() public {
+        _register("guardevt", alice);
+        (,,uint256 tokenId) = _getTokenId("guardevt");
+        vm.prank(alice);
+        vm.expectEmit(true, true, false, true);
+        emit HazzaRegistry.UpdateGuardLog(tokenId, bob);
+        registry.setGuard("guardevt", bob);
+    }
+
+
+    // =========================================================================
+    //                   SUPPORTS INTERFACE
+    // =========================================================================
+
+    function test_supportsERC721() public view {
+        assertTrue(registry.supportsInterface(0x80ac58cd)); // ERC-721
+    }
+
+
+    function test_supportsERC4906() public view {
+        assertTrue(registry.supportsInterface(0x49064906)); // ERC-4906
+    }
+
+    function test_supportsERC5192() public view {
+        assertTrue(registry.supportsInterface(0xb45a3c0e)); // ERC-5192
+    }
+
+    function test_supportsERC6147() public view {
+        assertTrue(registry.supportsInterface(0xb4611517)); // ERC-6147
+    }
+
+    function test_supportsERC165() public view {
+        assertTrue(registry.supportsInterface(0x01ffc9a7)); // ERC-165
+    }
+
+    // =========================================================================
+    //                  SECURITY: GUARD OVERWRITE
+    // =========================================================================
+
+    function test_cannotOverwriteGuard() public {
+        _register("guardoverwrite", alice);
+        vm.startPrank(alice);
+        registry.setGuard("guardoverwrite", bob);
+        // Cannot set a new guard without removing the old one
+        vm.expectRevert(HazzaRegistry.GuardAlreadySet.selector);
+        registry.setGuard("guardoverwrite", relayer);
+        vm.stopPrank();
+    }
+
+    function test_canReplaceGuardAfterRemoval() public {
+        _register("guardreplce", alice);
+        vm.startPrank(alice);
+        registry.setGuard("guardreplce", bob);
+        registry.removeGuard("guardreplce");
+        // Now can set a new guard
+        registry.setGuard("guardreplce", relayer);
+        vm.stopPrank();
+        (,,uint256 tokenId) = _getTokenId("guardreplce");
+        assertEq(registry.guardOf(tokenId), relayer);
+    }
+
+
+    // =========================================================================
+    //               LOCK + GUARD INTERACTION
+    // =========================================================================
+
+    function test_lockAndGuardBothBlock() public {
+        _register("bothblock", alice);
+        (,,uint256 tokenId) = _getTokenId("bothblock");
+        vm.startPrank(alice);
+        registry.setGuard("bothblock", bob);
+        registry.lockName("bothblock");
+        vm.stopPrank();
+
+        // Even after guard is removed, lock still blocks
+        vm.prank(bob);
+        registry.removeGuard("bothblock");
+        vm.prank(alice);
+        vm.expectRevert(HazzaRegistry.NameLocked.selector);
+        registry.transferFrom(alice, bob, tokenId);
+    }
+
+    function test_lockPreventsGuardedTransfer() public {
+        // Lock is checked first, so NameLocked error even if guarded
+        _register("lockfirst", alice);
+        (,,uint256 tokenId) = _getTokenId("lockfirst");
+        vm.startPrank(alice);
+        registry.lockName("lockfirst");
+        registry.setGuard("lockfirst", bob);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        vm.expectRevert(HazzaRegistry.NameLocked.selector);
+        registry.transferFrom(alice, bob, tokenId);
+    }
+
+    // =========================================================================
+    //                          HELPERS
+    // =========================================================================
+
+    function _getTokenId(string memory name) internal view returns (address nameOwner, bytes32 nameHash, uint256 tokenId) {
+        nameHash = keccak256(bytes(name));
+        (nameOwner, tokenId,,,,) = registry.resolve(name);
     }
 }

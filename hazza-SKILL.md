@@ -275,11 +275,13 @@ hazza.name is a Farcaster Mini App — all pages work in Warpcast and Base App w
 
 ## Brand Kit
 
-See **[BRAND.md](BRAND.md)** for the full brand reference — colors, typography, logo specs, image templates, and naming rules. Key points:
+See **[BRAND.md](BRAND.md)** for the full brand reference — colors, typography, logo specs, Nomi mascot guidelines, and naming rules. Key points:
 
-- **Colors:** green `#00e676` on black `#0a0a0a`, white text, Rubik font
-- **Logo:** white "h" in green-bordered rounded rect
-- **Wordmark:** "hazza" white + ".name" green, Rubik Black
+- **Colorway:** Moonlit B — cream `#F7EBBD` background, bandana red `#CF3748` accent, hat blue `#4870D4` secondary, navy `#131325` text
+- **Font:** Fredoka (Bold 700, SemiBold 600, Regular 400)
+- **Logo:** white "h" in red filled rounded rect (no border)
+- **Wordmark:** "hazza" navy + ".name" blue, Fredoka Bold
+- **Mascot:** Nomi (Nibble #4240) — complements the brand, not the brand itself
 - **Image endpoints:** `/api/share` (1200x1200 square), `/api/icon` (1200x1200 icon), `/api/og/:name` (1200x630 per-name)
 
 When creating hazza-branded assets (images, pages, embeds), always reference BRAND.md for exact specs.

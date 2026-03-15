@@ -55,7 +55,21 @@ export async function handleCcipRead(c: Context<{ Bindings: Env }>) {
     if (labels.length < 2) {
       return ccipError(c, "Invalid DNS name: too few labels", 400);
     }
-    const hazzaName = labels[0].toLowerCase();
+    // Verify this is a hazza.name query
+    const tld = labels[labels.length - 1]?.toLowerCase();
+    const sld = labels[labels.length - 2]?.toLowerCase();
+    if (sld !== "hazza" || tld !== "name") {
+      return ccipError(c, "Invalid DNS name: not a hazza.name domain", 400);
+    }
+    // Join all labels before "hazza.name" to form the hazza name
+    // e.g., ["alice", "hazza", "name"] → "alice"
+    // e.g., ["sub", "alice", "hazza", "name"] → "sub.alice"
+    const nameLabels = labels.slice(0, labels.length - 2).map(l => l.toLowerCase());
+    const hazzaName = nameLabels.join(".");
+    // Detect subnames: "sub.alice" → namespace="alice", subname="sub"
+    const isSubname = nameLabels.length > 1;
+    const namespace = isSubname ? nameLabels[nameLabels.length - 1] : "";
+    const subname = isSubname ? nameLabels.slice(0, nameLabels.length - 1).join(".") : "";
 
     // Decode inner resolver call by selector
     const innerHex = innerData as string;
@@ -66,15 +80,30 @@ export async function handleCcipRead(c: Context<{ Bindings: Env }>) {
     const addr = registryAddress(c.env);
     let result: Hex;
 
+    // Helper: resolve owner address for both top-level names and subnames
+    async function resolveOwner(): Promise<Address> {
+      if (isSubname) {
+        const [subnameOwner] = await client.readContract({
+          address: addr,
+          abi: REGISTRY_ABI,
+          functionName: "resolveSubname",
+          args: [namespace, subname],
+        });
+        return subnameOwner as Address;
+      }
+      const [nameOwner] = await client.readContract({
+        address: addr,
+        abi: REGISTRY_ABI,
+        functionName: "resolve",
+        args: [hazzaName],
+      });
+      return nameOwner as Address;
+    }
+
     switch (selector) {
       case ADDR_SELECTOR: {
         // addr(bytes32) → return owner address
-        const [nameOwner] = await client.readContract({
-          address: addr,
-          abi: REGISTRY_ABI,
-          functionName: "resolve",
-          args: [hazzaName],
-        });
+        const nameOwner = await resolveOwner();
         result = encodeAbiParameters(
           [{ type: "address" }],
           [nameOwner as Address],
@@ -84,36 +113,59 @@ export async function handleCcipRead(c: Context<{ Bindings: Env }>) {
 
       case ADDR_COIN_SELECTOR: {
         // addr(bytes32, uint256) → multichain address as bytes
-        const [nameOwner] = await client.readContract({
-          address: addr,
-          abi: REGISTRY_ABI,
-          functionName: "resolve",
-          args: [hazzaName],
-        });
-        // Return 20-byte address as bytes (EIP-2304)
-        result = encodeAbiParameters(
-          [{ type: "bytes" }],
-          [nameOwner as Hex],
+        const [, coinType] = decodeAbiParameters(
+          [{ type: "bytes32" }, { type: "uint256" }],
+          innerParams,
         );
+        // coinType 60 = ETH, 2147492101 = Base (0x80000000 + 8453)
+        if (coinType === 60n || coinType === 2147492101n) {
+          const nameOwner = await resolveOwner();
+          // Return 20-byte address as bytes (EIP-2304)
+          result = encodeAbiParameters(
+            [{ type: "bytes" }],
+            [nameOwner as Hex],
+          );
+        } else {
+          // Unsupported coin type — return empty bytes
+          result = encodeAbiParameters(
+            [{ type: "bytes" }],
+            ["0x" as Hex],
+          );
+        }
         break;
       }
 
       case TEXT_SELECTOR: {
         // text(bytes32, string) → text record value
-        // HazzaRegistry has no text() function — return empty string
+        // Decode the text key from inner calldata: abi.encode(bytes32 node, string key)
+        const [, textKey] = decodeAbiParameters(
+          [{ type: "bytes32" }, { type: "string" }],
+          innerParams,
+        );
+        const textValue = await client.readContract({
+          address: addr,
+          abi: REGISTRY_ABI,
+          functionName: "text",
+          args: [hazzaName, textKey as string],
+        });
         result = encodeAbiParameters(
           [{ type: "string" }],
-          [""],
+          [(textValue as string) || ""],
         );
         break;
       }
 
       case CONTENTHASH_SELECTOR: {
         // contenthash(bytes32) → content hash bytes
-        // HazzaRegistry has no contenthash() function — return empty bytes
+        const chash = await client.readContract({
+          address: addr,
+          abi: REGISTRY_ABI,
+          functionName: "contenthash",
+          args: [hazzaName],
+        });
         result = encodeAbiParameters(
           [{ type: "bytes" }],
-          ["0x"],
+          [(chash as `0x${string}`) || "0x"],
         );
         break;
       }

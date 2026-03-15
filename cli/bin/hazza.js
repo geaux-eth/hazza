@@ -28,6 +28,48 @@ program.addCommand(require('../commands/profile'));
 program.addCommand(require('../commands/records'));
 program.addCommand(require('../commands/stats'));
 program.addCommand(require('../commands/marketplace'));
+program.addCommand(require('../commands/transfer'));
+program.addCommand(require('../commands/site'));
+program.addCommand(require('../commands/domain'));
+program.addCommand(require('../commands/export'));
+program.addCommand(require('../commands/contact'));
+
+// hazza primary <name> — set primary name for reverse resolution
+program
+  .command('primary <name>')
+  .description('Set your primary hazza name (for reverse resolution: address → name)')
+  .action(async (name) => {
+    const out = require('../lib/output');
+    const conf = require('../lib/config');
+    const payment = require('../lib/payment');
+    const api = require('../lib/api');
+    try {
+      payment.requireCast();
+      const wallet = conf.get('wallet');
+      if (!wallet) {
+        out.error('No wallet configured. Run: hazza config set wallet <address>');
+        process.exit(1);
+      }
+      const resolved = await api.resolve(name);
+      if (!resolved || !resolved.owner) {
+        out.error(`"${name}" is not registered`);
+        process.exit(1);
+      }
+      if (resolved.owner.toLowerCase() !== wallet.toLowerCase()) {
+        out.error(`You don't own "${name}". Owner: ${resolved.owner}`);
+        process.exit(1);
+      }
+      out.info(`Setting "${name}" as your primary name...`);
+      const registry = conf.get('registryAddress');
+      const txHash = payment.contractSend(registry, 'setPrimaryName(string)', [name]);
+      out.success(`Primary name set to "${name}"`);
+      out.info(`Tx: ${txHash}`);
+      out.info(`Reverse resolution: ${wallet} → ${name}.hazza.name`);
+    } catch (e) {
+      out.error(e.message);
+      process.exit(1);
+    }
+  });
 
 // Alias: hazza set <name> <key> <value> → hazza records set
 program

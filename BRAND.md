@@ -18,82 +18,139 @@ Reference guide for creating on-brand hazza assets — images, pages, embeds, an
 - **OK:** "hazza — immediately useful names"
 - **OK:** "hazza.name — immediately useful"
 - **NOT OK:** "hazza.name — immediately useful names"
+- "built on Base" and "powered by x402 and Net Protocol" always on **separate lines**, never combined
 - Always include "powered by x402 and Net Protocol" in footers/about sections
 
-## Colors
+## Colorway — Moonlit B
+
+Derived from Nomi (Nibble #4240): bandana red for the icon, hat blue for accents, cream from the Nibbles palette.
+
+### Colors
 
 | Name | Hex | Usage |
 |------|-----|-------|
-| Green | `#00e676` | Primary accent — buttons, badges, links, .name suffix, borders |
-| Black | `#0a0a0a` | Background — all pages, cards, inputs |
-| White | `#ffffff` | Primary text, headings, "hazza" in wordmark |
-| Muted green | `#6b8f6b` | Secondary text — meta info, nav links, descriptions |
-| Dark green | `#1a2e1a` | Borders — cards, inputs, dividers |
-| Card bg | `#111111` | Card/panel backgrounds |
-| Deep bg | `#050a05` to `#0a1a0a` | Gradient for OG images |
+| Moon cream | `#F7EBBD` | Primary background, cards, inputs |
+| Moon cream light | `#FFF8E1` | Gradient start (subtle warmth) |
+| Bandana red | `#CF3748` | Primary accent — icon, buttons, CTA pills, active states |
+| Bandana red hover | `#B82E3E` | Button hover state |
+| Hat blue | `#4870D4` | Secondary accent — `.name` suffix, links, decorative lines |
+| Hat blue light | `#5981E7` | "powered by" text, link hover |
+| Deep navy | `#131325` | Primary text — headings, body, wordmark |
+| Warm muted | `#8a7d5a` | Secondary text — "built on Base", meta info, footer |
+| Card white | `#fff` / `#FFFDF5` | Card/panel backgrounds on cream |
+| Shirt gold | `#F2CE62` | Nomi's shirt color — reference only, not a UI color |
+| Cream border | `#E8DCAB` | Borders — cards, inputs, dividers |
+| Error red | `#D32F2F` | Error states, validation failures |
 
 ### Color Roles
 
-- **Buttons:** `background: #00e676; color: #000` (black text on green)
-- **Hover:** `#00c853` (slightly darker green)
-- **Links:** `color: #00e676`
-- **Active/selected states:** green border or green text
-- **Currency badges:** green `#00e676` for USDC, blue `#3b82f6` for ETH
+- **Buttons:** `background: #CF3748; color: #fff` (white text on red)
+- **Hover:** `#B82E3E` (slightly darker red)
+- **Links:** `color: #4870D4` (hat blue)
+- **Active/selected states:** red border or red text
+- **`.name` suffix:** hat blue `#4870D4` everywhere
+- **Decorative top/bottom bars:** hat blue `#4870D4`, 6px
+- **Currency badges:** blue `#4870D4` for USDC, `#131325` for ETH
+
+### Background
+
+All pages use cream `#F7EBBD` (or gradient `#FFF8E1` → `#F7EBBD` for images). This is a **light theme** — text is dark, backgrounds are warm.
 
 ## Typography
 
-**Font family:** [Rubik](https://fonts.google.com/specimen/Rubik) (Google Fonts)
+**Font family:** [Fredoka](https://fonts.google.com/specimen/Fredoka) (Google Fonts)
 
 | Weight | Name | Usage |
 |--------|------|-------|
-| 900 | Black | Logo wordmark, page headings, name display, prices |
-| 700 | Bold | Subheadings, buttons, labels, tagline |
-| 500 | Medium | Nav links, secondary UI |
+| 700 | Bold | Logo wordmark, page headings, name display, prices, buttons |
+| 600 | SemiBold | Tagline, subheadings, nav links, labels |
 | 400 | Regular | Body text, descriptions |
 
 ### CSS Import
 
 ```css
-@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;900&display=swap');
-font-family: 'Rubik', -apple-system, BlinkMacSystemFont, sans-serif;
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap');
+font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, sans-serif;
 ```
 
 ## Logo
 
 ### Icon (the "h" mark)
 
-A white **h** in Rubik Black inside a rounded rectangle with a green border on black background.
+A white **h** in Fredoka Bold inside a **red filled** rounded rectangle. No border — the red fill IS the icon.
 
 ```
 ┌──────────┐
-│          │  border: #00e676, 2-3px
-│    h     │  fill: #ffffff (Rubik 900)
-│          │  background: #0a0a0a
-└──────────┘  border-radius: 6-14px (scales with size)
+│          │  fill: #CF3748 (bandana red)
+│    h     │  text: #ffffff (Fredoka 700)
+│          │  border-radius: 10-14px (scales with size)
+└──────────┘  no border/stroke
 ```
 
 **Sizes:**
-- Nav: 30x30px, 2px border, 6px radius, 1rem font
-- OG image: 44x44px, 3px border, 8px radius, 24px font
-- App icon: 600x600px (centered in 1200x1200), 12px border, 64px radius, 360px font
-- Share image: 88x88px, 5px border, 14px radius, 48px font
+- Nav: 30x30px, 10px radius, 1rem font
+- OG image: 64x64px, 12px radius, 36px font
+- Share image: 104x104px, 18px radius, 58px font
 
 ### Wordmark
 
 ```
 hazza.name
 ```
-- "hazza" in white (`#ffffff`), Rubik Black (900)
-- ".name" in green (`#00e676`), Rubik Black (900)
-- Always on dark background
+- "hazza" in deep navy (`#131325`), Fredoka Bold (700)
+- ".name" in hat blue (`#4870D4`), Fredoka Bold (700)
+- Always on cream background
 
 ### SVG Icon Template
 
 ```svg
-<rect x="0" y="0" width="88" height="88" rx="14" fill="#0a0a0a" stroke="#00e676" stroke-width="5"/>
-<text x="44" y="44" font-family="Rubik, sans-serif" font-size="48"
-      fill="#ffffff" font-weight="900" text-anchor="middle" dominant-baseline="central">h</text>
+<rect x="0" y="0" width="64" height="64" rx="12" fill="#CF3748"/>
+<text x="32" y="32" font-family="'Fredoka', sans-serif" font-size="36"
+      fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
 ```
+
+## Nomi — The Mascot
+
+Nomi is hazza's mascot and most active user. He is **not** the brand — he complements it. hazza is the product; Nomi gives it personality.
+
+### Origin
+
+- **NFT:** Nibble #4240 from The Nibbles by Lonely Lily Studios (Franky The Frog ecosystem)
+- **Character:** Gnome with pale skin, blue moons hat, gnome glasses, grey mustache/beard, yellow bandana
+- **Background:** Originally peach `#FFC088` — removed for transparent PNG
+- **Contract:** `0x5e52d41f0e40d7cdb204db0d9659846f7404547` (Ethereum mainnet)
+
+### Visual Identity
+
+- **Transparent PNG:** `colorways/nomi-transparent.png` (1048x1054) — background removed via chroma-key
+- **Base64:** `colorways/nomi-transparent-b64.txt` — for embedding in SVGs
+- **Direction:** Nomi faces **right** — always place him on the **left** so he faces INTO adjacent text
+- **Grey details:** Beard and eyebrows are warm grey — protected during background removal (saturation < 20% = always opaque)
+
+### Nomi's PFP
+
+- Cream background `#F7EBBD` with extra bleed for circle crop
+- Small red "h" badge in bottom-right corner
+- 500x500 viewBox, Nomi centered at 400x400
+
+### Brand PFP (for @hazzaname)
+
+- Red circle with white "h" on cream background — the "h" mark only, no Nomi
+- Cream bleed ensures clean circle crop on Twitter
+
+### Nomi in Compositions
+
+- **Ads/banners:** Nomi on the left, text on the right (he faces right, into the copy)
+- **Square formats:** Nomi centered, text above and below
+- **Copy pattern:** Brand line + Nomi's take (or vice versa). Example: "immediately useful names." + "pay once. yours forever."
+- **Never:** Nomi with his back to the text. Never Nomi alone without hazza branding.
+
+### What Nomi Is NOT
+
+- Not the brand itself — hazza exists independently
+- Not a logo — the "h" mark is the logo
+- Not required on every asset — some assets are brand-only (the "h" mark)
+- Not a mascot who speaks FOR the brand — he speaks ABOUT it, as its biggest fan
 
 ## Image Endpoints
 
@@ -105,41 +162,26 @@ Live image endpoints for use in embeds, social, and integrations:
 | `/api/icon` | 1200x1200 | PNG | App icon, PFP, splash screen |
 | `/api/og/:name` | 1200x630 | PNG | Per-name OG/Twitter card (landscape) |
 
-### Share Image Layout (1200x1200)
-
-```
-┌────────────────────────────────┐
-│                                │
-│                                │
-│            ┌────┐              │
-│            │ h  │  icon        │
-│            └────┘              │
-│                                │
-│       hazza.name               │  96px Rubik Black
-│                                │  (hazza white, .name green)
-│     immediately useful         │  42px Rubik Bold, white
-│                                │
-│                                │
-└────────────────────────────────┘  bg: #0a0a0a
-```
-
 ### OG Image Layout (1200x630)
 
+Split layout: Nomi on the left (faces right), brand text on the right.
+
 ```
-┌────────────────────────────────────────────────────┐
-│ ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ green top bar ▬▬▬ │
-│ ┌──┐                              hazza.name       │
-│ │h │ icon                         (top right)       │
-│ └──┘                                                │
-│                                                     │
-│                    alice                             │  name (Rubik Black)
-│                 REGISTERED                           │  status pill
-│              owner / ENS name                        │  muted
-│              description text                        │
-│                                                     │
-│           immediately useful names                   │  footer
-│        powered by x402 and Net Protocol              │
-└─────────────────────────────────────────────────────┘  bg: gradient #050a05→#0a1a0a
+┌──────────────────────────────────────────────────┐
+│ ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ hat blue top bar ▬▬▬▬▬▬ │
+│                                                   │
+│  [Nomi]        ┌──┐                               │
+│  faces →       │h │  red icon                     │
+│  into text     └──┘                               │
+│                                                   │
+│              hazza.name                           │  Fredoka Bold
+│              immediately useful names              │  SemiBold, 0.70 opacity
+│                                                   │
+│              built on Base                        │  warm muted
+│              powered by x402 and Net Protocol     │  hat blue light
+│                                                   │
+│ ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ hat blue bottom bar ▬▬▬ │
+└──────────────────────────────────────────────────┘  bg: #F7EBBD
 ```
 
 ## Page Layout
@@ -152,45 +194,64 @@ body:   centered content, max-width 720px
 footer: Powered by x402 and Net Protocol on Base
 ```
 
-- Nav logo: icon + "hazza" white + ".name" green
-- Nav links: muted green (`#6b8f6b`), 0.85rem, medium weight
+- Nav logo: red icon + "hazza" navy + ".name" blue
+- Nav links: warm muted (`#8a7d5a`), 0.85rem, semibold
 - Container: `max-width: 720px; margin: 0 auto; padding: 2rem 1.5rem`
+- Background: cream `#F7EBBD`
 
 ## UI Components
 
 ### Buttons
 
 ```css
-/* Primary (green) */
-background: #00e676; color: #000;
+/* Primary (red) */
+background: #CF3748; color: #fff;
 border: none; border-radius: 8px;
-font-weight: 700; font-family: 'Rubik', sans-serif;
+font-weight: 700; font-family: 'Fredoka', sans-serif;
 
 /* Secondary (outline) */
-background: transparent; color: #00e676;
-border: 1px solid #00e676; border-radius: 8px;
+background: transparent; color: #CF3748;
+border: 1px solid #CF3748; border-radius: 8px;
 ```
 
 ### Cards
 
 ```css
-background: #111;
-border: 1px solid #1a2e1a;
+background: #fff;
+border: 1px solid #E8DCAB;
 border-radius: 10px;
 padding: 1.25rem;
-/* hover: border-color: #00e676 */
+/* hover: border-color: #CF3748 */
 ```
 
 ### Inputs
 
 ```css
-background: #111;
-border: 1px solid #1a2e1a;
+background: #fff;
+border: 1px solid #E8DCAB;
 border-radius: 8px;
-color: #fff;
-font-family: 'Rubik', sans-serif;
-/* focus: border-color: #00e676; outline: none */
+color: #131325;
+font-family: 'Fredoka', sans-serif;
+/* focus: border-color: #4870D4; outline: none */
 ```
+
+## Social Assets
+
+All social assets are generated from `hazza-agent/colorways/build-social.js` and output to `social-assets.html`.
+
+### Available Assets
+
+| Asset | Size | Description |
+|-------|------|-------------|
+| Centered banner | 1500x500 | Brand only — icon, wordmark, tagline |
+| Split banner | 1500x500 | Nomi left, brand right |
+| Landscape ad | 1200x675 | "immediately useful names" with Nomi |
+| Square ad | 1080x1080 | "first name free" with Nomi |
+| Announcement card | 1200x675 | "gm. i'm nomi." intro |
+| Intro post | 1080x1080 | "gm. i'm nomi." square |
+| Nomi PFP | 500x500 | For Nomi's own profiles |
+| Brand PFP | 500x500 | Red "h" mark for @hazzaname |
+| OG image | 1200x630 | Split layout for link previews |
 
 ## Farcaster Mini App
 
@@ -198,8 +259,8 @@ font-family: 'Rubik', sans-serif;
 - **Name:** "hazza"
 - **Subtitle:** "immediately useful"
 - **Description:** "register and trade onchain names on Base, powered by x402 and Net Protocol"
-- **Splash background:** `#0a0a0a`
-- **Icon:** `/api/icon` (1200x1200 green-bordered h)
+- **Splash background:** `#F7EBBD`
+- **Icon:** `/api/icon` (1200x1200 red h on cream)
 - **Embed image:** `/api/share` (1200x1200 square with wordmark)
 - **Category:** utility
 
@@ -207,11 +268,13 @@ font-family: 'Rubik', sans-serif;
 
 When generating hazza-branded content:
 
-1. **Background:** always `#0a0a0a` (or gradient `#050a05`→`#0a1a0a` for images)
-2. **Primary color:** `#00e676` for accents, buttons, highlights
-3. **Text:** white `#fff` for headings, `#e0e0e0` for body, `#6b8f6b` for meta
-4. **Font:** Rubik — Black (900) for headings, Bold (700) for labels, Regular (400) for body
-5. **Logo:** white "h" in green-bordered rounded rect on black
-6. **Wordmark:** "hazza" white + ".name" green, Rubik Black
-7. **Never:** uppercase HAZZA, "HAZZA Names", "hazza.name immediately useful names"
-8. **Always:** "powered by x402 and Net Protocol" somewhere
+1. **Background:** always cream `#F7EBBD` (or gradient `#FFF8E1`→`#F7EBBD` for images)
+2. **Primary accent:** `#CF3748` (bandana red) for buttons, icons, CTAs
+3. **Secondary accent:** `#4870D4` (hat blue) for links, `.name` suffix, decorative bars
+4. **Text:** navy `#131325` for headings, `#131325` for body, `#8a7d5a` for meta
+5. **Font:** Fredoka — Bold (700) for headings, SemiBold (600) for labels, Regular (400) for body
+6. **Logo:** white "h" in red filled rounded rect (no border)
+7. **Wordmark:** "hazza" navy + ".name" blue, Fredoka Bold
+8. **Nomi:** Place on LEFT (faces right), transparent PNG, never alone without hazza branding
+9. **Never:** uppercase HAZZA, "HAZZA Names", "hazza.name immediately useful names"
+10. **Always:** "powered by x402 and Net Protocol" somewhere, on its own line

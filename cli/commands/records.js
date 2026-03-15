@@ -32,8 +32,20 @@ cmd
   .action(async (name, key, value) => {
     try {
       payment.requireCast();
+      const wallet = payment.getWallet();
       const registryAddress = conf.get('registryAddress');
       const rpcUrl = conf.get('rpcUrl');
+
+      // Verify ownership before sending tx
+      const resolved = await api.resolve(name);
+      if (!resolved || !resolved.owner) {
+        out.error(`Name "${name}" not found`);
+        process.exit(1);
+      }
+      if (resolved.owner.toLowerCase() !== wallet.toLowerCase()) {
+        out.error(`You don't own "${name}" — owner is ${resolved.owner}`);
+        process.exit(1);
+      }
 
       out.info(`Setting ${key} = "${value}" for ${name}...`);
       const txHash = payment.contractSend(

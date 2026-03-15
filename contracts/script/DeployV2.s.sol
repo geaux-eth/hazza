@@ -19,8 +19,7 @@ contract DeployV2 is Script {
 
         address netLibMembership = vm.envOr("NET_LIB_MEMBERSHIP", address(0));
         address unlimitedPassAddr = vm.envOr("UNLIMITED_PASS", address(0));
-        address cherylWallet = vm.envOr("CHERYL_WALLET", address(0));
-        address websiteRelayer = vm.envOr("WEBSITE_RELAYER", address(0));
+        address relayerWallet = vm.envOr("RELAYER_WALLET", address(0));
 
         address usdc = isTestnet ? USDC_BASE_SEPOLIA : USDC_BASE;
 
@@ -39,12 +38,9 @@ contract DeployV2 is Script {
             unlimitedPassAddr
         );
 
-        // Set relayers
-        if (cherylWallet != address(0)) {
-            registry.setRelayer(cherylWallet, true, 2500);
-        }
-        if (websiteRelayer != address(0)) {
-            registry.setRelayer(websiteRelayer, true, 0);
+        // Set relayer with 0% commission
+        if (relayerWallet != address(0)) {
+            registry.setRelayer(relayerWallet, true, 0);
         }
 
         vm.stopBroadcast();
@@ -57,7 +53,7 @@ contract DeployV2 is Script {
         console.log("Treasury:", treasury);
         console.log("Net Library Membership:", netLibMembership);
         console.log("Unlimited Pass:", unlimitedPassAddr);
-        console.log("Cheryl (relayer):", cherylWallet);
+        console.log("Relayer:", relayerWallet);
         console.log("Network:", isTestnet ? "Base Sepolia" : "Base Mainnet");
     }
 }

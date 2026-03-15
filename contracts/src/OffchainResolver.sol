@@ -6,10 +6,14 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 /**
  * @title OffchainResolver
- * @notice CCIP-Read (ERC-3668) resolver for HAZZA names on ENS.
+ * @notice CCIP-Read (ERC-3668) resolver for hazza names on ENS.
  *         Deployed on Ethereum. All resolve() calls revert with OffchainLookup,
- *         directing ENS clients to the HAZZA gateway which reads from the
- *         registry on Base and returns signed responses.
+ *         directing ENS clients to hazza gateway(s) which read from the
+ *         registry on Base and return signed responses.
+ *
+ *         Supports multiple gateway URLs and multiple signers for
+ *         decentralized operation. Any approved signer's response is accepted.
+ *         ENS clients try URLs in order until one succeeds (ERC-3668 spec).
  */
 contract OffchainResolver is Ownable {
     using ECDSA for bytes32;
@@ -24,23 +28,22 @@ contract OffchainResolver is Ownable {
     );
 
     // ── EIP-165 / ENSIP-10 ─────────────────────────────────────────────
-    // IExtendedResolver interface ID
     bytes4 private constant EXTENDED_RESOLVER_IFACE = 0x9061b923;
-    // EIP-165
     bytes4 private constant EIP165_IFACE = 0x01ffc9a7;
 
     // ── State ───────────────────────────────────────────────────────────
-    string public url;
+    string[] private _urls;
     mapping(address => bool) public signers;
 
     // ── Events ──────────────────────────────────────────────────────────
     event SignerUpdated(address indexed signer, bool authorized);
-    event UrlUpdated(string newUrl);
+    event UrlAdded(string url);
+    event UrlRemoved(string url);
 
     constructor(string memory _url, address _signer) Ownable(msg.sender) {
-        url = _url;
+        _urls.push(_url);
         signers[_signer] = true;
-        emit UrlUpdated(_url);
+        emit UrlAdded(_url);
         emit SignerUpdated(_signer, true);
     }
 
@@ -48,7 +51,8 @@ contract OffchainResolver is Ownable {
 
     /**
      * @notice Called by ENS universal resolver. Always reverts with
-     *         OffchainLookup to redirect the client to the CCIP gateway.
+     *         OffchainLookup to redirect the client to the CCIP gateway(s).
+     *         ENS clients try each URL in order until one returns a valid response.
      * @param name  DNS-encoded name (e.g. \x05alice\x05hazza\x04name\x00)
      * @param data  ABI-encoded resolver call (addr, text, contenthash, etc.)
      */
@@ -61,15 +65,12 @@ contract OffchainResolver is Ownable {
             this.resolve.selector, name, data
         );
 
-        string[] memory urls = new string[](1);
-        urls[0] = url;
-
         revert OffchainLookup(
             address(this),
-            urls,
+            _urls,
             callData,
             this.resolveWithProof.selector,
-            callData // extraData = the original request, used for sig verification
+            callData
         );
     }
 
@@ -123,16 +124,48 @@ contract OffchainResolver is Ownable {
         );
     }
 
-    // ── Admin ───────────────────────────────────────────────────────────
+    // ── Admin: Signers ──────────────────────────────────────────────────
 
     function setSigner(address signer, bool authorized) external onlyOwner {
         signers[signer] = authorized;
         emit SignerUpdated(signer, authorized);
     }
 
-    function setUrl(string calldata _url) external onlyOwner {
-        url = _url;
-        emit UrlUpdated(_url);
+    // ── Admin: Gateway URLs ─────────────────────────────────────────────
+
+    /// @notice Add a gateway URL. ENS clients try URLs in order.
+    function addUrl(string calldata _url) external onlyOwner {
+        _urls.push(_url);
+        emit UrlAdded(_url);
+    }
+
+    /// @notice Remove a gateway URL by index.
+    function removeUrl(uint256 index) external onlyOwner {
+        require(index < _urls.length, "Index out of bounds");
+        require(_urls.length > 1, "Must keep at least one URL");
+        string memory removed = _urls[index];
+        _urls[index] = _urls[_urls.length - 1];
+        _urls.pop();
+        emit UrlRemoved(removed);
+    }
+
+    /// @notice Replace all URLs at once (for bulk updates).
+    function setUrls(string[] calldata urls_) external onlyOwner {
+        require(urls_.length > 0, "Must provide at least one URL");
+        delete _urls;
+        for (uint256 i = 0; i < urls_.length; i++) {
+            _urls.push(urls_[i]);
+        }
+    }
+
+    /// @notice Get all gateway URLs.
+    function urls() external view returns (string[] memory) {
+        return _urls;
+    }
+
+    /// @notice Get the number of gateway URLs.
+    function urlCount() external view returns (uint256) {
+        return _urls.length;
     }
 
     // ── EIP-165 ─────────────────────────────────────────────────────────
