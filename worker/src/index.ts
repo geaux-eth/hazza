@@ -372,12 +372,23 @@ app.get("/api/profile/:name", async (c) => {
     ? (netProfileKey.startsWith("http") ? netProfileKey : `https://storedon.net/net/8453/storage/load/${nameOwner}/${encodeURIComponent(netProfileKey)}`)
     : null;
 
-  const [agentMetaResult, helixaResult, exoResult, ensResult, bankrResult] = await Promise.allSettled([
+  // Wrap all enrichment fetches in a 6s global timeout so the endpoint always responds
+  const enrichmentTimeout = new Promise<[PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>]>((resolve) =>
+    setTimeout(() => resolve([
+      { status: "rejected", reason: "timeout" } as PromiseRejectedResult,
+      { status: "rejected", reason: "timeout" } as PromiseRejectedResult,
+      { status: "rejected", reason: "timeout" } as PromiseRejectedResult,
+      { status: "rejected", reason: "timeout" } as PromiseRejectedResult,
+      { status: "rejected", reason: "timeout" } as PromiseRejectedResult,
+    ]), 6000)
+  );
+
+  const enrichmentWork = Promise.allSettled([
     agentUri && isAllowedUrl(agentUri)
-      ? fetchWithTimeout(agentUri, { headers: { Accept: "application/json" } }).then(r => r.ok ? r.json() : null)
+      ? fetchWithTimeout(agentUri, { headers: { Accept: "application/json" } }, 4000).then(r => r.ok ? r.json() : null)
       : Promise.resolve(null),
     safeHelixaId
-      ? fetchWithTimeout(`https://api.helixa.xyz/api/v2/agent/${safeHelixaId}`).then(r => r.ok ? r.json() : null)
+      ? fetchWithTimeout(`https://api.helixa.xyz/api/v2/agent/${safeHelixaId}`, {}, 4000).then(r => r.ok ? r.json() : null)
       : Promise.resolve(null),
     (async () => {
       const mainnet = getMainnetClient(c.env);
@@ -405,8 +416,10 @@ app.get("/api/profile/:name", async (c) => {
     })(),
     fetchWithTimeout(`https://api.bankr.bot/agent-profiles/${(nameOwner as string).toLowerCase()}`, {
       headers: { Accept: "application/json" },
-    }).then(r => r.ok ? r.json() : null).catch(() => null),
+    }, 4000).then(r => r.ok ? r.json() : null).catch(() => null),
   ]);
+
+  const [agentMetaResult, helixaResult, exoResult, ensResult, bankrResult] = await Promise.race([enrichmentWork, enrichmentTimeout]);
 
   return c.json({
     name,

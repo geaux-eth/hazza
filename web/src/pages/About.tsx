@@ -141,7 +141,7 @@ export default function About() {
           <div className="info-row">
             <span className="label">XMTP</span>
             <span className="value">
-              <a href="http://xmtp.chat/production/dm/0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d">
+              <a href="https://xmtp.chat/production/dm/0x55B251E202938E562E7384bD998215885b80162e">
                 Message Nomi
               </a>
             </span>
@@ -169,6 +169,12 @@ export default function About() {
               <a href="https://netprotocol.app">Net Protocol</a>
             </span>
             <span className="value">Onchain content hosting</span>
+          </div>
+          <div className="info-row">
+            <span className="label">
+              <a href="https://xmtp.org">XMTP</a>
+            </span>
+            <span className="value">Decentralized messaging</span>
           </div>
           <div className="info-row">
             <span className="label">

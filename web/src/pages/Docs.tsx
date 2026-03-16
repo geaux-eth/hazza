@@ -101,8 +101,8 @@ export default function Docs() {
           <code style={{ color: '#CF3748', fontSize: '0.85rem' }}>GET /api/quote/myname?wallet=0x...&amp;ensImport=true</code>
           <pre style={{ color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.5rem', whiteSpace: 'pre-wrap' }}>
 {`{
-  "total": "6.50",
-  "registrationFee": "2.50",
+  "total": "5.00",
+  "registrationFee": "5.00",
   "lineItems": [...]
 }`}
           </pre>
@@ -259,9 +259,9 @@ cast send $TO $DATA --private-key $KEY --rpc-url $RPC`}
   "x402Version": "1",
   "accepts": [{
     "scheme": "exact",
-    "network": "base-sepolia",
+    "network": "base",
     "maxAmountRequired": "5000000",
-    "asset": "0x06A0...USDC",
+    "asset": "0x8335...USDC",
     "payTo": "0xa6eB...relayer"
   }],
   "name": "alice",
@@ -284,7 +284,7 @@ cast send $TO $DATA --private-key $KEY --rpc-url $RPC`}
 {`# cast (foundry)
 cast send $USDC "transfer(address,uint256)" \\
   $RELAYER_ADDRESS 5000000 \\
-  --rpc-url https://sepolia.base.org \\
+  --rpc-url https://mainnet.base.org \\
   --private-key $KEY`}
           </pre>
         </div>
