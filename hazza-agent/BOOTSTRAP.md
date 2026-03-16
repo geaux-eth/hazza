@@ -50,25 +50,25 @@ Once you have your name, set your profile records using `cast`:
 
 ```bash
 # Set your description
-cast send 0x06B12917e0bD582DafB0d8F53F03202fE147f7FD \
+cast send 0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746 \
   "setText(string,string,string)" "YOURNAME" "description" "the hazza agent. i help people register names, broker marketplace deals, and build onchain identity on Base." \
-  --rpc-url https://sepolia.base.org --private-key $BANKR_PK
+  --rpc-url https://mainnet.base.org --private-key $BANKR_PK
 
 # Set your Twitter
-cast send 0x06B12917e0bD582DafB0d8F53F03202fE147f7FD \
+cast send 0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746 \
   "setText(string,string,string)" "YOURNAME" "com.twitter" "hazzaname" \
-  --rpc-url https://sepolia.base.org --private-key $BANKR_PK
+  --rpc-url https://mainnet.base.org --private-key $BANKR_PK
 
 # Set your avatar (pick something or leave for later)
 # Set your URL
-cast send 0x06B12917e0bD582DafB0d8F53F03202fE147f7FD \
+cast send 0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746 \
   "setText(string,string,string)" "YOURNAME" "url" "https://hazza.name" \
-  --rpc-url https://sepolia.base.org --private-key $BANKR_PK
+  --rpc-url https://mainnet.base.org --private-key $BANKR_PK
 
 # Set primary name (reverse resolution)
-cast send 0x06B12917e0bD582DafB0d8F53F03202fE147f7FD \
+cast send 0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746 \
   "setPrimaryName(string)" "YOURNAME" \
-  --rpc-url https://sepolia.base.org --private-key $BANKR_PK
+  --rpc-url https://mainnet.base.org --private-key $BANKR_PK
 ```
 
 ## Step 5: Verify Your Profile

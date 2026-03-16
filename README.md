@@ -6,26 +6,27 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 
 ## Architecture
 
-- **Contract:** Solidity (Foundry), deployed on Base Sepolia
+- **Contract:** Solidity (Foundry), deployed on Base mainnet
 - **Worker:** Cloudflare Worker (TypeScript/Hono), serves the site + API + x402 payment protocol
 - **Resolution:** CCIP-Read (ERC-3668) gateway for ENS-compatible `.hazza.name` resolution
 
-## Contract (Base Sepolia)
+## Contract (Base Mainnet)
 
-**Registry:** `0xDd6672dc20820C59e026EC6751e508b3d9f13479`
-**MockUSDC:** `0x06A096A051906dEDd05Ef22dCF61ca1199bb038c`
+**Registry:** `0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746`
+**USDC:** `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
 
 ### Key Functions
 
 | Function | Description |
 |----------|-------------|
-| `registerDirect(...)` | Relayer-only registration (9 params) |
-| `registerDirectWithMember(...)` | Registration with Net Library member ID for free claim (10 params) |
+| `registerDirect(...)` | Relayer-only registration (8 params) |
+| `registerDirectWithMember(...)` | Registration with Net Library member ID for free claim (9 params) |
 | `quoteName(...)` | Get registration price |
 | `quoteNameWithMember(...)` | Get price with free claim check |
 | `hasClaimedFreeName(uint256)` | Check if member already claimed free name |
-| `resolve(string)` | Resolve name to owner, token ID, expiry, agent |
+| `resolve(string)` | Resolve name to owner, token ID, agent |
 | `reverseResolve(address)` | Wallet to primary name |
+| `contractURI()` | Collection-level metadata for marketplaces |
 
 ### Pricing
 
@@ -33,10 +34,12 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 
 **First name free** — everyone's first registration costs nothing (just pay gas).
 
-Progressive anti-squat pricing applies to bulk registrations within a 90-day window:
+**Free names do NOT count toward progressive pricing tiers.**
 
-| Names in window | Multiplier | Price |
-|-----------------|------------|-------|
+Progressive anti-squat pricing applies to paid registrations within a 90-day window:
+
+| Paid names in window | Multiplier | Price |
+|----------------------|------------|-------|
 | 1–3 | 1x | $5 |
 | 4–5 | 2.5x | $12.50 |
 | 6–7 | 5x | $25 |
@@ -57,7 +60,6 @@ Unlimited Pass holders get 20% off all paid registrations.
 Free names are tracked by **Net Library member ID** (not wallet address). Each member number can claim exactly 1 free name, ever. Transferring the Unlimited Pass NFT to another wallet doesn't help — the new wallet needs its own Net Library membership with a different member ID.
 
 **Unlimited Pass (Base):** `0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB`
-**Unlimited Pass (Base Sepolia):** `0xC6440c27c3c18A931241A65d237a155889a7B1c7`
 
 ## API
 
@@ -72,6 +74,7 @@ All endpoints at `hazza.name`.
 | `/api/reverse/:address` | GET | Wallet to primary name |
 | `/api/names/:address` | GET | All names owned by wallet |
 | `/api/free-claim/:address` | GET | Check free claim eligibility (NL membership + Unlimited Pass + unclaimed) |
+| `/api/collection-metadata` | GET | Collection-level metadata (contractURI) |
 | `/x402/register` | POST | Register a name via x402 payment protocol |
 | `/api/ens-names/:address` | GET | ENS name suggestions for wallet |
 
@@ -109,23 +112,14 @@ npx wrangler dev     # local dev
 npx wrangler deploy  # deploy to Cloudflare
 ```
 
-### Deploy Contract (Base Sepolia)
+### Deploy Contract (Base Mainnet)
 
 ```bash
-# On droplet with Foundry installed
-cd /root/hazza-contracts
-MOCK_USDC=0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
+cd contracts
 HAZZA_TREASURY=0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a \
+UNLIMITED_PASS=0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB \
 RELAYER_WALLET=0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d \
-forge script script/DeployMock.s.sol --rpc-url https://sepolia.base.org --private-key $PK --broadcast
-```
-
-### Deploy BatchExecutor (Optional — enables batch marketplace buys)
-
-```bash
-cd /root/hazza-contracts
-forge script script/DeployBatchExecutor.s.sol --rpc-url https://sepolia.base.org --private-key $PK --broadcast
-# Then set BATCH_EXECUTOR_ADDRESS in wrangler.toml to the deployed address
+forge script script/Deploy.s.sol:DeployHazza --rpc-url https://mainnet.base.org --private-key $PK --broadcast
 ```
 
 ### Approve Relayer for USDC
@@ -133,11 +127,11 @@ forge script script/DeployBatchExecutor.s.sol --rpc-url https://sepolia.base.org
 After deploying, each relayer must approve the registry to spend USDC:
 
 ```bash
-cast send 0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
+cast send 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \
   "approve(address,uint256)" \
-  0xDd6672dc20820C59e026EC6751e508b3d9f13479 \
+  0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746 \
   115792089237316195423570985008687907853269984665640564039457584007913129639935 \
-  --rpc-url https://sepolia.base.org --private-key $RELAYER_PK
+  --rpc-url https://mainnet.base.org --private-key $RELAYER_PK
 ```
 
 ## Pages
@@ -162,3 +156,5 @@ cast send 0x06A096A051906dEDd05Ef22dCF61ca1199bb038c \
 | Owner (GEAUX) | `0x96168ACf7f3925e7A9eAA08Ddb21e59643da8097` |
 | Treasury | `0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a` |
 | Relayer | `0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d` |
+
+Powered by x402, XMTP and Net Protocol. Built on Base.

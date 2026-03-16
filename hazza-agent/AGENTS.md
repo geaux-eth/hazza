@@ -149,16 +149,16 @@ Per wallet within 90-day window:
 - 3-63 characters
 - No leading/trailing hyphens, no consecutive hyphens
 
-## Contract (Base Sepolia — testnet)
+## Contract (Base Mainnet)
 
-- **Registry:** `0x06B12917e0bD582DafB0d8F53F03202fE147f7FD`
-- **MockUSDC:** `0x06A096A051906dEDd05Ef22dCF61ca1199bb038c`
+- **Registry:** `0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746`
+- **MockUSDC:** `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
 - **ERC-8004 Registry:** `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`
-- **Unlimited Pass (Sepolia):** `0xC6440c27c3c18A931241A65d237a155889a7B1c7`
+- **Unlimited Pass (Sepolia):** `0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB`
 - **Owner:** `0x96168ACf7f3925e7A9eAA08Ddb21e59643da8097` (GEAUX)
 - **Treasury:** `0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a`
-- **Chain ID:** 84532
-- **RPC:** `https://sepolia.base.org`
+- **Chain ID:** 8453
+- **RPC:** `https://mainnet.base.org`
 
 ### Relayers
 
@@ -232,9 +232,9 @@ You have a **Bankr wallet** (ERC-4337 smart contract account). No private key. A
 1. **Simulate first** (optional but smart):
 ```bash
 cast call --from 0x62b7399b2ac7e938efad06ef8746fdba3b351900 \
-  0x06B12917e0bD582DafB0d8F53F03202fE147f7FD \
+  0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746 \
   "available(string)" "somename" \
-  --rpc-url https://sepolia.base.org
+  --rpc-url https://mainnet.base.org
 ```
 
 2. **Encode the calldata:**
@@ -244,7 +244,7 @@ cast calldata 'setText(string,string,string)' "nomi" "description" "the hazza ag
 
 3. **Submit via Bankr:**
 ```bash
-bankr submit '{"to":"0x06B12917e0bD582DafB0d8F53F03202fE147f7FD","data":"0x...encoded...","value":"0","chainId":84532}'
+bankr submit '{"to":"0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746","data":"0x...encoded...","value":"0","chainId":8453}'
 ```
 
 ### Common Operations
@@ -259,7 +259,7 @@ curl -s https://hazza.name/api/available/somename
 # Encode
 cast calldata 'setText(string,string,string)' "nomi" "description" "the hazza agent. immediately useful names on Base."
 # Submit via bankr
-bankr submit '{"to":"0x06B12917e0bD582DafB0d8F53F03202fE147f7FD","data":"0x...","value":"0","chainId":84532}'
+bankr submit '{"to":"0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746","data":"0x...","value":"0","chainId":8453}'
 ```
 
 **Set primary name:**
