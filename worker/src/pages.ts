@@ -136,7 +136,7 @@ export function spaShell(path: string, profileName?: string): string {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>${esc(route.title)}</title>
   <meta name="description" content="${esc(route.description)}">
   <meta property="og:title" content="${esc(route.title)}">
@@ -161,7 +161,7 @@ export function spaShell(path: string, profileName?: string): string {
 <body>
   <div id="root">loading...</div>
   <script>window.onerror=function(m,s,l,c,e){document.getElementById('root').innerHTML='<pre style="color:red;padding:2rem">'+m+'\\n'+s+':'+l+'\\n'+(e&&e.stack||'')+'</pre>';}</script>
-  <script type="module" crossorigin src="${SPA_ASSET_BASE}/assets/index-Cxw512Hz.js"></script>
+  <script type="module" crossorigin src="${SPA_ASSET_BASE}/assets/index-BGpaO0jH.js"></script>
 </body>
 </html>`;
 }

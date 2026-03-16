@@ -8,7 +8,7 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const DEFAULTS = {
   baseUrl: 'https://hazza.name',
   rpcUrl: 'https://mainnet.base.org',
-  registryAddress: '0xaA27d926F057B72D006883785FC03DB1d9d6E3AC',
+  registryAddress: '0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746',
   usdcAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
   treasuryAddress: '0x62B7399B2ac7e938Efad06EF8746fDBA3B351900',
   chainId: '8453',

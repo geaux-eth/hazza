@@ -572,7 +572,7 @@ app.get("/api/og/:name", async (c) => {
   <text x="740" y="420" font-family="Fredoka, sans-serif" font-size="28" fill="#8a7d5a" font-weight="600" text-anchor="middle">pay once, available forever</text>
 
   <!-- Powered by -->
-  <text x="740" y="520" font-family="Fredoka, sans-serif" font-size="22" fill="#4870D4" text-anchor="middle" font-weight="600">built on Base · powered by x402 and Net Protocol</text>
+  <text x="740" y="520" font-family="Fredoka, sans-serif" font-size="22" fill="#4870D4" text-anchor="middle" font-weight="600">built on Base · powered by x402, XMTP and Net Protocol</text>
 </svg>`;
 
     try {
@@ -653,7 +653,7 @@ app.get("/api/og/:name", async (c) => {
 
   <!-- Footer -->
   <text x="720" y="540" font-family="Fredoka, sans-serif" font-size="24" fill="#131325" font-weight="700" text-anchor="middle">immediately useful names</text>
-  <text x="720" y="580" font-family="Fredoka, sans-serif" font-size="16" fill="#4870D4" text-anchor="middle" font-weight="600">built on Base · powered by x402 and Net Protocol</text>
+  <text x="720" y="580" font-family="Fredoka, sans-serif" font-size="16" fill="#4870D4" text-anchor="middle" font-weight="600">built on Base · powered by x402, XMTP and Net Protocol</text>
 </svg>`;
 
   // Try PNG conversion via resvg, fall back to SVG
@@ -780,7 +780,7 @@ app.get("/api/nft-image/:name", async (c) => {
 
   <!-- Footer -->
   <text x="250" y="440" font-family="Fredoka, sans-serif" font-size="12" fill="#8a7d5a" text-anchor="middle" font-weight="600">immediately useful names</text>
-  <text x="250" y="465" font-family="Fredoka, sans-serif" font-size="10" fill="#5981E7" text-anchor="middle" font-weight="600">built on Base with Net Protocol</text>
+  <text x="250" y="465" font-family="Fredoka, sans-serif" font-size="10" fill="#5981E7" text-anchor="middle" font-weight="600">powered by x402, XMTP and Net Protocol</text>
 </svg>`;
 
   try {
@@ -983,6 +983,19 @@ app.get("/api/metadata/:name", async (c) => {
     image: `https://hazza.name/api/nft-image/${name}`,
     external_url: `https://${name}.hazza.name`,
     attributes,
+  });
+});
+
+// Collection-level metadata for marketplaces (contractURI)
+app.get("/api/collection-metadata", (c) => {
+  return c.json({
+    name: "hazza.name",
+    description: "Immediately useful names on Base. Powered by x402, XMTP and Net Protocol.",
+    image: "https://hazza.name/api/icon",
+    banner_image: "https://hazza.name/api/share",
+    external_link: "https://hazza.name",
+    seller_fee_basis_points: 0,
+    fee_recipient: "0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a",
   });
 });
 
@@ -3276,7 +3289,7 @@ document.getElementById('btn').onclick = async function() {
           version: "1",
           name: "hazza",
           subtitle: "immediately useful",
-          description: "register and trade onchain names on Base, powered by x402 and Net Protocol",
+          description: "register and trade onchain names on Base, powered by x402, XMTP and Net Protocol",
           homeUrl: "https://hazza.name",
           iconUrl: "https://hazza.name/api/icon",
           splashImageUrl: "https://hazza.name/api/icon",

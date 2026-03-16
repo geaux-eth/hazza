@@ -351,8 +351,8 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
           <div className="info-row">
             <span className="label">Registry</span>
             <span className="value" style={{ fontSize: '0.75rem' }}>
-              <a href="https://basescan.org/address/0xaA27d926F057B72D006883785FC03DB1d9d6E3AC">
-                0xaA27d926F057B72D006883785FC03DB1d9d6E3AC
+              <a href="https://basescan.org/address/0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746">
+                0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746
               </a>
             </span>
           </div>

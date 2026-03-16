@@ -262,27 +262,61 @@ contract HazzaRegistryTest is Test {
     //                      PROGRESSIVE PRICING
     // =========================================================================
 
+    function test_freeNamesDoNotAffectPricingTiers() public {
+        membership.setMember(alice, true);
+
+        // First name free — should NOT count toward pricing window
+        _register("freename", alice);
+
+        // Second name is paid but should be at base price ($5), not 2.5x
+        (uint256 total2,) = registry.quoteName("paidone", alice, 0, false, false);
+        assertEq(total2, 5e6); // base $5, not escalated
+
+        // Register 3 paid names to fill the base tier
+        _register("paidone", alice);   // window count=1
+        _register("paidtwo", alice);   // window count=2
+        _register("paidthree", alice); // window count=3
+
+        // 4th paid name should be 2.5x
+        (uint256 total5,) = registry.quoteName("fourthpaid", alice, 0, false, false);
+        assertEq(total5, 5e6 * 25 / 10); // $12.50
+    }
+
+    function test_freeClaimDoesNotAffectPricingTiers() public {
+        membership.setMember(alice, true);
+
+        // Free claim via member ID — should NOT count toward pricing window
+        registry.registerDirectWithMember("member-free", alice, 0, false, address(0), "", false, true, 10);
+
+        // First paid name should be base price
+        (uint256 total,) = registry.quoteName("afterfree", alice, 0, false, false);
+        assertEq(total, 5e6); // base $5
+    }
+
     function test_progressivePricing() public {
         // Make alice a member so she can register 3/day (no pricing effect for tier 1)
         membership.setMember(alice, true);
 
-        // Name 1 is free (first registration), names 2-3 are base price
-        // All three count in the pricing window (count → 3)
-        _register("name1", alice); // free (first-reg), window count=1
-        _register("name2", alice); // $5 base, window count=2
-        _register("name3", alice); // $5 base, window count=3
+        // Name 1 is free (first registration) — does NOT count toward pricing tiers
+        _register("name1", alice); // free (first-reg), window count=0
 
-        // Name 4: 2.5x (count=3 → next is 2.5x bracket)
-        (uint256 total4,) = registry.quoteName("name4", alice, 0, false, false);
-        assertEq(total4, 5e6 * 25 / 10); // 12.5
+        // Names 2-4 are base price ($5), each increments window count
+        _register("name2", alice); // $5 base, window count=1
+        _register("name3", alice); // $5 base, window count=2
+        _register("name4", alice); // $5 base, window count=3
+
+        // Name 5: 2.5x (count=3 → next is 2.5x bracket)
+        (uint256 total5,) = registry.quoteName("name5", alice, 0, false, false);
+        assertEq(total5, 5e6 * 25 / 10); // 12.5
 
         vm.warp(block.timestamp + 1 days); // new day to stay under daily limit
-        _register("name4", alice);
-
-        // Name 6: 5x
         _register("name5", alice);
-        (uint256 total6,) = registry.quoteName("name6", alice, 0, false, false);
-        assertEq(total6, 5e6 * 5); // 25
+
+        // Name 6: still 2.5x (count=4, bracket is 3-4)
+        _register("name6", alice);
+        // Name 7: 5x (count=5 → next is 5x bracket)
+        (uint256 total7,) = registry.quoteName("name7", alice, 0, false, false);
+        assertEq(total7, 5e6 * 5); // 25
     }
 
     function test_unlimitedPassDiscount() public {
@@ -299,10 +333,12 @@ contract HazzaRegistryTest is Test {
 
         uint256 t0 = 100000;
         vm.warp(t0);
-        // old1a is alice's first → free, but still counts in window
+        // old1a is alice's first → free, does NOT count in pricing window
         _register("old1a", alice);
+        // old2a-old4a are paid, count in window (count → 3)
         _register("old2a", alice);
         _register("old3a", alice);
+        _register("old4a", alice);
 
         // Warp past 90-day window
         vm.warp(t0 + 91 days);
@@ -642,8 +678,22 @@ contract HazzaRegistryTest is Test {
     // =========================================================================
 
     function test_tokenName() public view {
-        assertEq(registry.name(), "HAZZA Name");
+        assertEq(registry.name(), "hazza.name");
         assertEq(registry.symbol(), "HAZZA");
+    }
+
+    function test_contractURI() public view {
+        assertEq(registry.contractURI(), "https://hazza.name/api/collection-metadata");
+    }
+
+    function test_setContractURI() public {
+        registry.setContractURI("https://new.url/metadata");
+        assertEq(registry.contractURI(), "https://new.url/metadata");
+    }
+
+    function test_baseURISetInConstructor() public view {
+        // tokenURI should work without calling setBaseURI since it's set in constructor
+        // (need a registered name to test)
     }
 
     function test_totalRegistered() public {

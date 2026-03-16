@@ -30,9 +30,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     function pause() external onlyOwner { _paused = true; }
     function unpause() external onlyOwner { _paused = false; }
 
-    // =========================================================================
-    //                              TYPES
-    // =========================================================================
+    // --- TYPES ---
 
     struct NameRecord {
         uint256 tokenId;
@@ -77,9 +75,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         address relayer;
     }
 
-    // =========================================================================
-    //                              STATE
-    // =========================================================================
+    // --- STATE ---
 
     IERC20 public immutable usdc;
     IERC8004Registry public immutable agentRegistry;
@@ -93,6 +89,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
 
     // Token metadata
     string private _baseTokenURI;
+    string private _contractURI;
 
     // Core name storage
     mapping(bytes32 => NameRecord) private _names;
@@ -145,33 +142,28 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     mapping(uint256 => address) private _guards;
 
 
-    // =========================================================================
-    //                            CONSTANTS
-    // =========================================================================
+    // --- CONSTANTS ---
 
     uint256 public constant MIN_COMMIT_AGE = 60;
     uint256 public constant MAX_COMMIT_AGE = 86400;
 
     // Pricing (USDC 6 decimals) — flat $5, pay once, available forever
-    uint256 public constant PRICE_3_CHAR = 5e6;     // $5
-    uint256 public constant PRICE_4_CHAR = 5e6;     // $5
-    uint256 public constant PRICE_5_PLUS = 5e6;     // $5
-    uint256 public constant NAMESPACE_PRICE = 0;      // Free to enable
-    uint256 public constant SUBNAME_PRICE = 1e6;     // $1 per agent subname
+    uint256 internal constant PRICE_3_CHAR = 5e6;     // $5
+    uint256 internal constant PRICE_4_CHAR = 5e6;     // $5
+    uint256 internal constant PRICE_5_PLUS = 5e6;     // $5
+    uint256 internal constant SUBNAME_PRICE = 1e6;     // $1 per agent subname
 
     // Time
-    uint256 public constant PRICING_WINDOW = 90 days;
+    uint256 internal constant PRICING_WINDOW = 90 days;
 
     // Name constraints
-    uint256 public constant MIN_NAME_LENGTH = 3;
-    uint256 public constant MAX_NAME_LENGTH = 63;
-    uint256 public constant MAX_CUSTOM_DOMAINS = 10;
+    uint256 internal constant MIN_NAME_LENGTH = 3;
+    uint256 internal constant MAX_NAME_LENGTH = 63;
+    uint256 internal constant MAX_CUSTOM_DOMAINS = 10;
 
     // No daily/total registration limits — progressive pricing is the sole anti-squat mechanism
 
-    // =========================================================================
-    //                              EVENTS
-    // =========================================================================
+    // --- EVENTS ---
 
     event NameRegistered(string name, address indexed owner, uint256 indexed tokenId, uint256 price);
     event AgentRegistered(string name, uint256 indexed agentId, address indexed agentWallet);
@@ -185,7 +177,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     event SubnameIssued(string namespace, string subname, address indexed owner);
     event SubnameRevoked(string namespace, string subname);
     event NamespaceTransferred(string namespace, address indexed newAdmin);
-    event ENSImported(string name, address indexed owner, string ensName);
     event FreeNameClaimed(string name, address indexed owner, uint256 indexed memberId, uint256 indexed tokenId);
     event TextChanged(bytes32 indexed nameHash, string key, string value);
     event AddrChanged(bytes32 indexed nameHash, uint256 coinType, bytes value);
@@ -198,11 +189,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     // ERC-6147 events
     event UpdateGuardLog(uint256 indexed tokenId, address indexed newGuard);
 
-    // ERC-6551 events
-
-    // =========================================================================
-    //                              ERRORS
-    // =========================================================================
+    // --- ERRORS ---
 
     error NameNotAvailable();
     error CommitmentTooNew();
@@ -218,14 +205,11 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     error NameNotRegistered();
     error NotNamespaceAdmin();
     error NamespaceAlreadyExists();
-    error NamespaceNotFound();
     error SubnameAlreadyExists();
     error SubnameNotFound();
     error SubnameTooShort();
     error SubnameTooLong();
     error SubnameInvalidCharacter();
-    error NameIsNamespace();
-    error InvalidCharCount();
     error TooManyDomains();
     error FreeClaimAlreadyUsed();
     error NameLocked();
@@ -240,9 +224,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     error CommissionTooHigh();
     error NotAuthorized();
 
-    // =========================================================================
-    //                           CONSTRUCTOR
-    // =========================================================================
+    // --- CONSTRUCTOR ---
 
     constructor(
         address _usdc,
@@ -250,10 +232,12 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         address _treasury,
         address _netLibraryMembership,
         address _unlimitedPass
-    ) ERC721("HAZZA Name", "HAZZA") Ownable(msg.sender) {
+    ) ERC721("hazza.name", "HAZZA") Ownable(msg.sender) {
         usdc = IERC20(_usdc);
         agentRegistry = IERC8004Registry(_agentRegistry);
         treasury = _treasury;
+        _baseTokenURI = "https://hazza.name/api/metadata/";
+        _contractURI = "https://hazza.name/api/collection-metadata";
         if (_netLibraryMembership != address(0)) {
             netLibraryMembership = IERC721Balance(_netLibraryMembership);
         }
@@ -262,18 +246,14 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         }
     }
 
-    // =========================================================================
-    //                         MODIFIERS
-    // =========================================================================
+    // --- MODIFIERS ---
 
     modifier onlyRelayerOrOwner() {
         if (msg.sender != owner() && !relayers[msg.sender]) revert NotRelayer();
         _;
     }
 
-    // =========================================================================
-    //                         REGISTRATION
-    // =========================================================================
+    // --- REGISTRATION ---
 
     /// @notice Step 1 of commit-reveal: submit a commitment hash
     function commit(bytes32 commitHash) external {
@@ -300,7 +280,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         if (block.timestamp - c.timestamp > MAX_COMMIT_AGE) revert CommitmentTooOld();
         delete commitments[commitHash];
 
-        _registerName(name, agentURI, RegistrationConfig({
+        _registerNameWithMember(name, agentURI, RegistrationConfig({
             nameOwner: nameOwner,
             charCount: 0, // ASCII: use byte length
             wantAgent: wantAgent,
@@ -308,7 +288,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
             ensImport: false,
             verifiedPass: false,
             relayer: address(0)
-        }));
+        }), false, 0);
     }
 
     /// @notice Direct registration (relayer / owner only — for x402 Worker and hazza agent)
@@ -323,7 +303,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         bool ensImport,
         bool verifiedPass
     ) external onlyRelayerOrOwner nonReentrant whenNotPaused {
-        _registerName(name, agentURI, RegistrationConfig({
+        _registerNameWithMember(name, agentURI, RegistrationConfig({
             nameOwner: nameOwner,
             charCount: charCount,
             wantAgent: wantAgent,
@@ -331,7 +311,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
             ensImport: ensImport,
             verifiedPass: verifiedPass,
             relayer: msg.sender
-        }));
+        }), false, 0);
     }
 
     /// @notice Direct registration with Net Library member ID for free claim tracking
@@ -362,14 +342,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
             verifiedPass: verifiedPass,
             relayer: msg.sender
         }), isFreeClaim, memberId);
-    }
-
-    function _registerName(
-        string calldata name,
-        string calldata agentURI,
-        RegistrationConfig memory c
-    ) internal {
-        _registerNameWithMember(name, agentURI, c, false, 0);
     }
 
     function _registerNameWithMember(
@@ -423,8 +395,8 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         _nameStrings[nameHash] = name;
         tokenToName[tokenId] = nameHash;
 
-        // Update wallet info & daily count
-        _updateWalletInfo(c.nameOwner);
+        // Update wallet info (free registrations don't count toward pricing tiers)
+        _updateWalletInfo(c.nameOwner, totalCost > 0);
 
         emit NameRegistered(name, c.nameOwner, tokenId, totalCost);
         if (isFreeClaim) {
@@ -440,20 +412,21 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         _safeMint(c.nameOwner, tokenId);
     }
 
-    function _updateWalletInfo(address wallet) internal {
+    function _updateWalletInfo(address wallet, bool isPaid) internal {
         WalletInfo storage info = walletInfo[wallet];
         info.totalRegistrations++;
-        if (info.pricingWindowStart == 0 || block.timestamp - info.pricingWindowStart > PRICING_WINDOW) {
-            info.pricingWindowStart = uint64(block.timestamp);
-            info.pricingWindowCount = 1;
-        } else {
-            info.pricingWindowCount++;
+        // Only count paid registrations toward progressive pricing tiers
+        if (isPaid) {
+            if (info.pricingWindowStart == 0 || block.timestamp - info.pricingWindowStart > PRICING_WINDOW) {
+                info.pricingWindowStart = uint64(block.timestamp);
+                info.pricingWindowCount = 1;
+            } else {
+                info.pricingWindowCount++;
+            }
         }
     }
 
-    // =========================================================================
-    //                       RATE LIMITING & PRICING
-    // =========================================================================
+    // --- RATE LIMITING & PRICING ---
 
     function _getMembershipTier(address wallet) internal view returns (uint8) {
         // 2 = Unlimited Pass, 1 = NL Member, 0 = Non-member
@@ -555,9 +528,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         totalCost = registrationFee;
     }
 
-    // =========================================================================
-    //                        PAYMENT HANDLING
-    // =========================================================================
+    // --- PAYMENT HANDLING ---
 
     function _collectPayment(uint256 amount, address relayer) internal {
         if (amount == 0) return; // Nothing to collect (first registration free)
@@ -580,9 +551,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         }
     }
 
-    // =========================================================================
-    //                        NAME MANAGEMENT
-    // =========================================================================
+    // --- NAME MANAGEMENT ---
 
     function setOperator(string calldata name, address operator) external {
         bytes32 nameHash = keccak256(bytes(name));
@@ -617,9 +586,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         emit CustomDomainRemoved(name, domain);
     }
 
-    // =========================================================================
-    //                         TEXT RECORDS
-    // =========================================================================
+    // --- TEXT RECORDS ---
 
     function setText(string calldata name, string calldata key, string calldata value) external {
         bytes32 nameHash = keccak256(bytes(name));
@@ -664,9 +631,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         }
     }
 
-    // =========================================================================
-    //                       ADDRESS RECORDS
-    // =========================================================================
+    // --- ADDRESS RECORDS ---
 
     function setAddr(string calldata name, uint256 coinType, bytes calldata value) external {
         bytes32 nameHash = keccak256(bytes(name));
@@ -680,9 +645,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         return _addrs[keccak256(bytes(name))][coinType];
     }
 
-    // =========================================================================
-    //                         CONTENTHASH
-    // =========================================================================
+    // --- CONTENTHASH ---
 
     function setContenthash(string calldata name, bytes calldata hash) external {
         bytes32 nameHash = keccak256(bytes(name));
@@ -696,9 +659,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         return _contenthashes[keccak256(bytes(name))];
     }
 
-    // =========================================================================
-    //                       REVERSE RESOLUTION
-    // =========================================================================
+    // --- REVERSE RESOLUTION ---
 
     /// @notice Set your primary HAZZA name (for reverse resolution)
     function setPrimaryName(string calldata name) external {
@@ -724,14 +685,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         return _nameStrings[nameHash];
     }
 
-    // =========================================================================
-    //                           API KEYS
-    // =========================================================================
-
-
-    // =========================================================================
-    //                         ERC-8004 AGENT
-    // =========================================================================
+    // --- ERC-8004 AGENT ---
 
     function registerAgent(string calldata name, string calldata agentURI, address agentWallet) external {
         bytes32 nameHash = keccak256(bytes(name));
@@ -769,9 +723,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         emit AgentRegistered(name, agentId, wallet);
     }
 
-    // =========================================================================
-    //                          NAMESPACES
-    // =========================================================================
+    // --- NAMESPACES ---
 
     /// @notice Register a namespace (must already own the HAZZA name). Free, permanent, cannot be undone.
     function registerNamespace(string calldata name) external nonReentrant {
@@ -857,9 +809,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         return (sub.owner, sub.operator);
     }
 
-    // =========================================================================
-    //                            VIEWS
-    // =========================================================================
+    // --- VIEWS ---
 
     /// @notice Check if a name is available for registration
     function available(string calldata name) external view returns (bool) {
@@ -912,9 +862,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         return _getMembershipTier(wallet);
     }
 
-    // =========================================================================
-    //                    ERC-5192: SOULBOUND LOCK
-    // =========================================================================
+    // --- ERC-5192: SOULBOUND LOCK ---
 
     /// @notice Lock a name to prevent transfers (make it soulbound)
     function lockName(string calldata name) external {
@@ -942,9 +890,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         return _locked[tokenId];
     }
 
-    // =========================================================================
-    //                     ERC-6147: GUARD OF NFT
-    // =========================================================================
+    // --- ERC-6147: GUARD OF NFT ---
 
     /// @notice Set a guardian for a name — transfers blocked until guard is removed
     /// @dev If a guard already exists, it must be removed first (prevents silent overwrite)
@@ -976,15 +922,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         return _guards[tokenId];
     }
 
-    // =========================================================================
-    //                 ERC-6551: TOKEN-BOUND ACCOUNTS
-    // =========================================================================
-
-    /// @notice Create a token-bound account for a hazza name (owner only)
-
-    // =========================================================================
-    //                            ADMIN
-    // =========================================================================
+    // --- ADMIN ---
 
     function setTreasury(address newTreasury) external onlyOwner {
         if (newTreasury == address(0)) revert ZeroAddress();
@@ -1008,10 +946,16 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         _baseTokenURI = baseURI;
     }
 
+    function contractURI() external view returns (string memory) {
+        return _contractURI;
+    }
 
-    // =========================================================================
-    //                         ERC-721 OVERRIDES
-    // =========================================================================
+    function setContractURI(string calldata uri) external onlyOwner {
+        _contractURI = uri;
+    }
+
+
+    // --- ERC-721 OVERRIDES ---
 
     /// @notice Override required by ERC721 + IERC4906 + ERC-5192 + ERC-6147
     function supportsInterface(bytes4 interfaceId)
@@ -1090,9 +1034,7 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         }
     }
 
-    // =========================================================================
-    //                          VALIDATION
-    // =========================================================================
+    // --- VALIDATION ---
 
     function _requireActiveNameOwner(bytes32 nameHash) internal view {
         NameRecord memory record = _names[nameHash];
