@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>hazza — promo</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: #CF3748;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Fredoka', sans-serif;
+    color: #fff;
+  }
+
+  #stage {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Name roller */
+  #roller {
+    position: relative;
+    height: 120px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #roller-text {
+    font-size: 96px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    white-space: nowrap;
+    position: relative;
+    opacity: 1;
+  }
+
+  /* Typed text area */
+  #typed-area {
+    font-size: 96px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    white-space: nowrap;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+  }
+
+  #typed-text {
+    display: inline;
+  }
+
+  #cursor {
+    display: inline-block;
+    width: 3px;
+    height: 80px;
+    background: #fff;
+    margin-left: 4px;
+    vertical-align: middle;
+    animation: blink 0.6s step-end infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  /* Domain suffix */
+  #domain-suffix {
+    display: inline;
+    opacity: 0;
+  }
+
+  /* Tagline */
+  #tagline {
+    font-size: 36px;
+    font-weight: 500;
+    letter-spacing: 2px;
+    opacity: 0;
+    margin-top: 16px;
+    color: rgba(255,255,255,0.85);
+  }
+
+  /* Final h logo */
+  #final-h {
+    position: absolute;
+    font-size: 96px;
+    font-weight: 700;
+    opacity: 0;
+    transition: none;
+  }
+
+  /* Roll animation */
+  .roll-in {
+    animation: rollIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .roll-out {
+    animation: rollOut 0.25s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+  }
+
+  @keyframes rollIn {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0); opacity: 1; }
+  }
+
+  @keyframes rollOut {
+    from { transform: translateY(0); opacity: 1; }
+    to   { transform: translateY(-100%); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="roller">
+    <div id="roller-text"></div>
+  </div>
+  <div id="typed-area">
+    <span id="typed-text"></span><span id="domain-suffix"></span><span id="cursor"></span>
+  </div>
+  <div id="tagline">immediately useful names</div>
+  <div id="final-h">h</div>
+</div>
+
+<script>
+// ============================================================
+// Audio Engine — Web Audio API synth
+// ============================================================
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playTick(time, pitch = 800, vol = 0.08) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  const filter = audioCtx.createBiquadFilter();
+  osc.type = 'sine';
+  osc.frequency.value = pitch;
+  filter.type = 'lowpass';
+  filter.frequency.value = 2000;
+  gain.gain.setValueAtTime(vol, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
+  osc.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(time);
+  osc.stop(time + 0.1);
+}
+
+function playWhoosh(time, vol = 0.06) {
+  const bufferSize = audioCtx.sampleRate * 0.15;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  const gain = audioCtx.createGain();
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 1200;
+  filter.Q.value = 0.5;
+  gain.gain.setValueAtTime(vol, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+  source.start(time);
+}
+
+// Ambient pad — builds up then calms
+function playPad(startTime, buildDuration, calmTime, endTime) {
+  const notes = [261.63, 329.63, 392.00, 523.25]; // C4, E4, G4, C5
+  notes.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    // Start quiet
+    gain.gain.setValueAtTime(0.001, startTime);
+    // Build
+    gain.gain.linearRampToValueAtTime(0.04 + i * 0.008, startTime + buildDuration);
+    // Peak at "everyone"
+    gain.gain.linearRampToValueAtTime(0.06 + i * 0.01, calmTime);
+    // Calm down
+    gain.gain.linearRampToValueAtTime(0.02, calmTime + 1.5);
+    // Fade out
+    gain.gain.linearRampToValueAtTime(0.001, endTime);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(startTime);
+    osc.stop(endTime + 0.5);
+  });
+
+  // Sub bass
+  const sub = audioCtx.createOscillator();
+  const subGain = audioCtx.createGain();
+  sub.type = 'sine';
+  sub.frequency.value = 65.41; // C2
+  subGain.gain.setValueAtTime(0.001, startTime);
+  subGain.gain.linearRampToValueAtTime(0.06, startTime + buildDuration);
+  subGain.gain.linearRampToValueAtTime(0.08, calmTime);
+  subGain.gain.linearRampToValueAtTime(0.02, calmTime + 1.5);
+  subGain.gain.linearRampToValueAtTime(0.001, endTime);
+  sub.connect(subGain);
+  subGain.connect(audioCtx.destination);
+  sub.start(startTime);
+  sub.stop(endTime + 0.5);
+}
+
+function playReveal(time) {
+  // Gentle chime for "everyone" reveal
+  [523.25, 659.25, 783.99].forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    const t = time + i * 0.08;
+    gain.gain.setValueAtTime(0.1, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 1);
+  });
+}
+
+function playResolve(time) {
+  // Final calm tone
+  [261.63, 392.00].forEach(freq => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.06, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 2.5);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(time);
+    osc.stop(time + 3);
+  });
+}
+
+// ============================================================
+// Animation Sequence
+// ============================================================
+
+const names = [
+  { text: 'freddy',   delay: 900 },
+  { text: 'arnold',   delay: 850 },
+  { text: 'sophia',   delay: 800 },
+  { text: 'cheryl',   delay: 750 },
+  { text: 'coco',     delay: 650 },
+  { text: 'steve',    delay: 550 },
+  { text: 'snoop',    delay: 500 },
+  { text: 'henry',    delay: 450 },
+  { text: 'kamala',   delay: 400 },
+  // speed up
+  { text: 'brad',     delay: 300 },
+  { text: 'leonardo', delay: 280 },
+  { text: 'kim',      delay: 250 },
+  { text: 'brian',    delay: 230 },
+  { text: 'jesse',    delay: 210 },
+  { text: 'satoshi',  delay: 1400 }, // lingers
+];
+
+const roller = document.getElementById('roller-text');
+const typedArea = document.getElementById('typed-area');
+const typedText = document.getElementById('typed-text');
+const domainSuffix = document.getElementById('domain-suffix');
+const cursor = document.getElementById('cursor');
+const tagline = document.getElementById('tagline');
+const finalH = document.getElementById('final-h');
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function animateName(text, duration) {
+  return new Promise(resolve => {
+    roller.classList.remove('roll-in', 'roll-out');
+    roller.textContent = text;
+    void roller.offsetWidth; // reflow
+    roller.classList.add('roll-in');
+    const animDur = Math.min(duration * 0.4, 250);
+    roller.style.animationDuration = animDur + 'ms';
+
+    setTimeout(() => {
+      roller.classList.remove('roll-in');
+      roller.classList.add('roll-out');
+      roller.style.animationDuration = animDur + 'ms';
+      setTimeout(resolve, animDur);
+    }, duration - animDur);
+  });
+}
+
+async function typeText(el, text, charDelay = 70) {
+  for (let i = 0; i < text.length; i++) {
+    el.textContent += text[i];
+    playTick(audioCtx.currentTime, 600 + Math.random() * 200, 0.04);
+    await sleep(charDelay);
+  }
+}
+
+async function backspaceText(el, charDelay = 50) {
+  while (el.textContent.length > 0) {
+    el.textContent = el.textContent.slice(0, -1);
+    playTick(audioCtx.currentTime, 400 + Math.random() * 100, 0.03);
+    await sleep(charDelay);
+  }
+}
+
+async function run() {
+  // Resume audio context (Chrome autoplay policy)
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+  await sleep(600);
+
+  // Calculate total build time for pad scheduling
+  let totalNameTime = 0;
+  names.forEach(n => totalNameTime += n.delay);
+  const padStart = audioCtx.currentTime;
+  const buildEnd = padStart + totalNameTime / 1000;
+  const everyoneTime = buildEnd + 4; // approximate
+  const endTime = everyoneTime + 12;
+  playPad(padStart, buildEnd - padStart, everyoneTime, endTime);
+
+  // Phase 1: Roll names
+  for (let i = 0; i < names.length; i++) {
+    const n = names[i];
+    const pitch = 700 + (i / names.length) * 600; // pitch rises with speed
+    const vol = 0.05 + (i / names.length) * 0.05;
+    playTick(audioCtx.currentTime, pitch, vol);
+    if (i > 8) playWhoosh(audioCtx.currentTime, 0.03 + (i - 8) * 0.005);
+    await animateName(n.text, n.delay);
+  }
+
+  // Phase 2: Backspace "satoshi"
+  await sleep(200);
+  roller.style.display = 'none';
+  typedArea.style.opacity = '1';
+  typedText.textContent = 'satoshi';
+  cursor.style.display = 'inline-block';
+
+  await sleep(300);
+  await backspaceText(typedText, 55);
+
+  // Phase 3: Type "everyone"
+  await sleep(400);
+  playReveal(audioCtx.currentTime);
+  await typeText(typedText, 'everyone', 90);
+
+  await sleep(600);
+
+  // Phase 4: ".hazza.name" appears
+  domainSuffix.textContent = '.hazza.name';
+  domainSuffix.style.opacity = '1';
+  domainSuffix.style.transition = 'opacity 0.6s ease';
+  cursor.style.display = 'none';
+
+  await sleep(1800);
+
+  // Phase 5: "everyone." and ".name" fade out, leaving "hazza"
+  // Split into: "everyone" + "." + "hazza" + ".name"
+  typedText.innerHTML = '<span id="fade-everyone">everyone</span>';
+  domainSuffix.innerHTML = '<span id="fade-dot">.</span><span id="stay-hazza">hazza</span><span id="fade-dotname">.name</span>';
+
+  await sleep(200);
+
+  const fadeEveryone = document.getElementById('fade-everyone');
+  const fadeDot = document.getElementById('fade-dot');
+  const fadeDotname = document.getElementById('fade-dotname');
+  const stayHazza = document.getElementById('stay-hazza');
+
+  [fadeEveryone, fadeDot, fadeDotname].forEach(el => {
+    el.style.transition = 'opacity 1s ease';
+    el.style.opacity = '0';
+  });
+
+  await sleep(1200);
+
+  // Remove faded elements, center "hazza"
+  typedText.innerHTML = '';
+  domainSuffix.innerHTML = '';
+  typedArea.innerHTML = '<span id="hazza-word" style="font-size:96px;font-weight:700;letter-spacing:-1px;">hazza</span>';
+
+  await sleep(600);
+
+  // Phase 6: Tagline appears
+  tagline.style.transition = 'opacity 0.8s ease';
+  tagline.style.opacity = '1';
+  playResolve(audioCtx.currentTime);
+
+  await sleep(2500);
+
+  // Phase 7: Everything fades except "h", which slides to center
+  const hazzaWord = document.getElementById('hazza-word');
+  const hazzaRect = hazzaWord.getBoundingClientRect();
+
+  // Get position of first letter "h"
+  // Create a temporary span to measure
+  hazzaWord.innerHTML = '<span id="h-letter">h</span><span id="azza-letters">azza</span>';
+  const hLetter = document.getElementById('h-letter');
+  const azzaLetters = document.getElementById('azza-letters');
+  const hRect = hLetter.getBoundingClientRect();
+
+  // Fade out tagline and "azza"
+  tagline.style.transition = 'opacity 0.8s ease';
+  tagline.style.opacity = '0';
+  azzaLetters.style.transition = 'opacity 0.8s ease';
+  azzaLetters.style.opacity = '0';
+
+  await sleep(1000);
+
+  // Position final-h at current h position
+  finalH.style.left = hRect.left + 'px';
+  finalH.style.top = hRect.top + 'px';
+  finalH.style.opacity = '1';
+
+  // Hide typed area
+  typedArea.style.opacity = '0';
+
+  await sleep(100);
+
+  // Slide h to center
+  const centerX = (1920 - hRect.width) / 2;
+  const centerY = (1080 - hRect.height) / 2;
+  finalH.style.transition = 'left 1.2s cubic-bezier(0.16, 1, 0.3, 1), top 1.2s cubic-bezier(0.16, 1, 0.3, 1)';
+  finalH.style.left = centerX + 'px';
+  finalH.style.top = centerY + 'px';
+
+  await sleep(2500);
+
+  // Gentle fade
+  finalH.style.transition = 'opacity 1.5s ease';
+  finalH.style.opacity = '0.9';
+}
+
+// Click to start (Chrome autoplay policy)
+document.body.addEventListener('click', () => {
+  document.body.style.cursor = 'none';
+  run();
+}, { once: true });
+</script>
+</body>
+</html>

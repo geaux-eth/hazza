@@ -251,6 +251,10 @@ If a user wants the discount on hazza names, point them to the Unlimited Pass fi
 5. SET RECORD: [SET_RECORD:thename:KEY:VALUE]
    - Valid keys: avatar, description, url, com.twitter, com.github, org.telegram, com.discord, xmtp
 
+6. CANCEL LISTING: [CANCEL:thename]
+   - Cancels an active marketplace listing for the name
+   - Only the wallet that created the listing can cancel it
+
 Rules:
 - The system intercepts tags and shows the user an interactive card with a button
 - The user's wallet handles the actual transaction — you don't execute anything
@@ -407,7 +411,7 @@ function updateUserContext(ctx, text, liveData) {
 
   // Track interests
   const interestKeywords = {
-    "marketplace": ["buy", "sell", "list", "marketplace", "trade", "offer"],
+    "marketplace": ["buy", "sell", "list", "marketplace", "trade", "offer", "cancel", "delist", "remove listing"],
     "registration": ["register", "sign up", "claim", "get me"],
     "agent-bounty": ["bounty", "agent", "erc-8183"],
     "profile": ["profile", "avatar", "bio", "records"],
@@ -606,6 +610,9 @@ function parseActionTag(text) {
   const setRecordMatch = text.match(/\[SET_RECORD:([a-z0-9-]{3,63}):([a-z0-9.-]+):([^\]]+)\]/i);
   if (setRecordMatch) return { action: "set_record", name: setRecordMatch[1], key: setRecordMatch[2], value: setRecordMatch[3], raw: setRecordMatch[0] };
 
+  const cancelMatch = text.match(/\[CANCEL:([a-z0-9-]{3,63})\]/i);
+  if (cancelMatch) return { action: "cancel", name: cancelMatch[1], raw: cancelMatch[0] };
+
   return null;
 }
 
@@ -684,6 +691,21 @@ async function buildActionCard(action, userCtx) {
       return JSON.stringify({
         type: "set_record_card", name: action.name,
         key: action.key, value: action.value,
+        registryAddress: REGISTRY_ADDRESS,
+      });
+    }
+    case "cancel": {
+      const name = action.name;
+      const listings = await apiFetch("/api/marketplace/listings");
+      const listing = listings?.listings?.find(l => l.name === name);
+      if (!listing) return null;
+      const resolve = await apiFetch(`/api/resolve/${name}`);
+      if (!resolve?.tokenId) return null;
+
+      return JSON.stringify({
+        type: "cancel_card", name,
+        orderHash: listing.orderHash,
+        tokenId: String(resolve.tokenId),
         registryAddress: REGISTRY_ADDRESS,
       });
     }

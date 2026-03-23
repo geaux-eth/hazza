@@ -250,6 +250,39 @@ cast send 0x4Af1B18C01250A52f29CEacA055164628b643ae9 \
   --rpc-url https://mainnet.base.org --private-key $PK
 ```
 
+### Cancel a Listing
+
+```bash
+curl -s -X POST https://hazza.name/api/marketplace/cancel \
+  -H "Content-Type: application/json" \
+  -d '{"orderHash": "0xabc123..."}'
+```
+
+Returns an unsigned Seaport cancel transaction. The seller's wallet must execute it (only the original offerer can cancel).
+
+```json
+{
+  "cancel": { "to": "0x0000000000000068F116a894984e2DB1123eB395", "data": "0x...", "value": "0" },
+  "listing": { "orderHash": "0xabc123...", "name": "coolname", "tokenId": "42", "offerer": "0x..." }
+}
+```
+
+### Edit a Listing (Cancel + Relist)
+
+Seaport has no native edit — editing means cancelling the old order and creating a new one. This endpoint handles both in one call.
+
+```bash
+curl -s -X POST https://hazza.name/api/marketplace/edit \
+  -H "Content-Type: application/json" \
+  -d '{"orderHash": "0xabc123...", "sellerAddress": "0x...", "newPriceWei": "200000000000000000"}'
+```
+
+Accepts: `orderHash` (required), `sellerAddress` (required), `newPriceWei` (optional), `newDuration` in seconds (optional), `newBounty` (optional).
+
+Returns: `cancel` tx (send first), then `newListing.eip712` data to sign and submit to Bazaar.
+
+**For Bankr/SIWA flow:** When acting on behalf of a user, execute the cancel tx with the user's delegated wallet, then sign the new EIP-712 order and submit to Bazaar. The user sees it as a single "edit" action.
+
 ### Marketplace Fees
 
 - No marketplace fee — sellers receive 100% of the sale price (minus optional agent bounty)
@@ -277,6 +310,8 @@ Base URL: `https://hazza.name`
 | `/api/marketplace/offers` | GET | Browse collection offers |
 | `/api/marketplace/fulfill` | POST | Get buy transaction data |
 | `/api/marketplace/fulfill-offer` | POST | Get offer acceptance tx data |
+| `/api/marketplace/cancel` | POST | Cancel a listing (returns unsigned Seaport cancel tx) |
+| `/api/marketplace/edit` | POST | Edit a listing (cancel + relist with new params) |
 | `/api/bounty/:tokenId` | GET | Check active bounty listing for a name |
 
 ## Key Addresses (Base Mainnet)

@@ -41,7 +41,8 @@ type ActionCard =
   | { type: 'buy_card'; name: string; price: string; priceRaw: string; currency: string; orderHash?: string; seller: string; source: 'seaport' }
   | { type: 'list_card'; name: string; price: string; priceWei: string; bountyWei?: string; bountyEth?: string; netEth?: string; tokenId: string; owner: string; registryAddress: string; duration?: string }
   | { type: 'transfer_card'; name: string; tokenId: string; from: string; to: string; toName: string | null; registryAddress: string }
-  | { type: 'set_record_card'; name: string; key: string; value: string; registryAddress: string };
+  | { type: 'set_record_card'; name: string; key: string; value: string; registryAddress: string }
+  | { type: 'cancel_card'; name: string; orderHash: string; tokenId: string; registryAddress: string };
 
 interface ChatMessage {
   id: string;
@@ -71,6 +72,19 @@ const ZONE_PUBLIC = '0x000000007F8c58fbf215bF91Bda7421A806cf3ae' as const;
 const SEAPORT_ABI_MINI = parseAbi([
   'function getCounter(address offerer) view returns (uint256)',
 ]);
+
+const SEAPORT_CANCEL_ABI = [{
+  name: 'cancel', type: 'function' as const, stateMutability: 'nonpayable' as const,
+  inputs: [{ name: 'orders', type: 'tuple[]', components: [
+    { name: 'offerer', type: 'address' }, { name: 'zone', type: 'address' },
+    { name: 'offer', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }] },
+    { name: 'consideration', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }, { name: 'recipient', type: 'address' }] },
+    { name: 'orderType', type: 'uint8' }, { name: 'startTime', type: 'uint256' }, { name: 'endTime', type: 'uint256' },
+    { name: 'zoneHash', type: 'bytes32' }, { name: 'salt', type: 'uint256' }, { name: 'conduitKey', type: 'bytes32' },
+    { name: 'totalOriginalConsiderationItems', type: 'uint256' }, { name: 'counter', type: 'uint256' },
+  ]}],
+  outputs: [{ name: 'cancelled', type: 'bool' }],
+}] as const;
 
 const BAZAAR_SUBMIT_ABI = [{
   name: 'submit', type: 'function' as const, stateMutability: 'nonpayable' as const,
@@ -679,6 +693,44 @@ export default function ChatPanel({
     }
   }, [walletClient, address, publicClient, setCardStatus, addMsg]);
 
+  const handleCancel = useCallback(async (card: Extract<ActionCard, { type: 'cancel_card' }>, cardId: string) => {
+    if (!walletClient || !address || !publicClient) return;
+    setCardStatus(cardId, 'pending');
+
+    try {
+      // Fetch the listing from the worker to get the full order components
+      const res = await fetch(`/api/marketplace/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderHash: card.orderHash }),
+      });
+      const data = await res.json() as any;
+      if (!res.ok) {
+        setCardStatus(cardId, 'error', { error: data.error || 'failed to prepare cancel' });
+        return;
+      }
+
+      // Send the cancel tx via the user's wallet
+      setCardStatus(cardId, 'confirming');
+      const txHash = await walletClient.sendTransaction({
+        to: data.cancel.to as Address,
+        data: data.cancel.data as `0x${string}`,
+        value: 0n,
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        setCardStatus(cardId, 'success', { txHash });
+        addMsg(`${card.name}.hazza.name listing has been cancelled.`, 'system');
+      } else {
+        setCardStatus(cardId, 'error', { error: 'cancel transaction failed' });
+      }
+    } catch (err: any) {
+      console.error('Cancel error:', err);
+      setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
+    }
+  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+
   const handleCardAction = useCallback((card: ActionCard, cardId: string) => {
     switch (card.type) {
       case 'register_card': handleRegister(card, cardId); break;
@@ -686,8 +738,9 @@ export default function ChatPanel({
       case 'list_card': handleList(card, cardId); break;
       case 'transfer_card': handleTransfer(card, cardId); break;
       case 'set_record_card': handleSetRecord(card, cardId); break;
+      case 'cancel_card': handleCancel(card, cardId); break;
     }
-  }, [handleRegister, handleBuy, handleList, handleTransfer, handleSetRecord]);
+  }, [handleRegister, handleBuy, handleList, handleTransfer, handleSetRecord, handleCancel]);
 
   function handleRetry() {
     setXmtpStatus('idle');
@@ -753,6 +806,7 @@ export default function ChatPanel({
         case 'list_card': return `list for ${card.price}`;
         case 'transfer_card': return 'transfer';
         case 'set_record_card': return `set ${card.key}`;
+        case 'cancel_card': return 'cancel listing';
       }
     })();
 
@@ -763,6 +817,7 @@ export default function ChatPanel({
         case 'list_card': return `list ${card.name}.hazza.name`;
         case 'transfer_card': return `transfer ${card.name}.hazza.name`;
         case 'set_record_card': return `update ${card.key}`;
+        case 'cancel_card': return `cancel ${card.name}.hazza.name listing`;
       }
     })();
 
@@ -781,6 +836,8 @@ export default function ChatPanel({
           return `to ${card.toName ? card.toName + '.hazza.name' : card.to.slice(0, 8) + '...' + card.to.slice(-4)}`;
         case 'set_record_card':
           return `${card.key} = "${card.value}"`;
+        case 'cancel_card':
+          return `this will cancel and delist ${card.name}.hazza.name from the marketplace`;
       }
     })();
 

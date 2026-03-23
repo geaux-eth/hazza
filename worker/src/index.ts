@@ -3016,6 +3016,110 @@ app.post("/api/marketplace/fulfill-offer", async (c) => {
   }
 });
 
+// POST /api/marketplace/cancel — prepare cancel transaction for a listing
+// Used by Bankr (SIWA delegate) and CLI. Returns unsigned Seaport cancel tx.
+app.post("/api/marketplace/cancel", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.orderHash) {
+    return c.json({ error: "Missing orderHash" }, 400);
+  }
+  try {
+    const bazaar = getBazaarClient(c.env);
+    const nftAddress = registryAddress(c.env);
+    const rawListings = await bazaar.getListings({ nftAddress });
+    const listing = rawListings.find((l: any) => l.orderHash === body.orderHash);
+    if (!listing) return c.json({ error: "Listing not found or no longer active" }, 404);
+
+    const cancelTx: any = bazaar.prepareCancelListing(listing);
+    const l: any = listing;
+    return c.json({
+      cancel: {
+        to: cancelTx.to || cancelTx.address,
+        data: cancelTx.data,
+        value: "0",
+      },
+      listing: {
+        orderHash: body.orderHash,
+        name: l.name || null,
+        tokenId: l.tokenId?.toString() || null,
+        offerer: l.offerer || l.seller || null,
+      },
+    });
+  } catch (e: any) {
+    console.error("Cancel listing failed:", e?.message || e);
+    return c.json({ error: "Failed to prepare cancel transaction" }, 500);
+  }
+});
+
+// POST /api/marketplace/edit — cancel existing listing + prepare new one
+// Edit = cancel old order + create replacement. Returns both transactions.
+app.post("/api/marketplace/edit", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.orderHash || !body?.sellerAddress) {
+    return c.json({ error: "Missing orderHash and sellerAddress" }, 400);
+  }
+  // At least one change required
+  if (!body.newPriceWei && !body.newDuration && body.newBounty === undefined) {
+    return c.json({ error: "No changes specified. Provide newPriceWei, newDuration, or newBounty." }, 400);
+  }
+  try {
+    const bazaar = getBazaarClient(c.env);
+    const nftAddress = registryAddress(c.env);
+    const rawListings = await bazaar.getListings({ nftAddress });
+    const listing = rawListings.find((l: any) => l.orderHash === body.orderHash);
+    if (!listing) return c.json({ error: "Listing not found or no longer active" }, 404);
+
+    // Verify the caller is the seller
+    const l: any = listing;
+    const offerer = (l.offerer || l.seller || "").toLowerCase();
+    if (offerer !== body.sellerAddress.toLowerCase()) {
+      return c.json({ error: "Only the listing seller can edit" }, 403);
+    }
+
+    // Step 1: Prepare cancel for old listing
+    const cancelTx: any = bazaar.prepareCancelListing(listing);
+
+    // Step 2: Prepare new listing with updated parameters
+    const tokenId: string = l.tokenId?.toString() || l.orderComponents?.offer?.[0]?.identifierOrCriteria?.toString() || "0";
+    const currentPriceWei = l.priceWei || 0n;
+    const newPriceWei = body.newPriceWei ? BigInt(body.newPriceWei) : currentPriceWei;
+
+    const prepared = await bazaar.prepareCreateListing({
+      nftAddress,
+      tokenId,
+      priceWei: newPriceWei,
+      offerer: body.sellerAddress as `0x${string}`,
+      ...(body.newDuration ? { durationSeconds: Number(body.newDuration) } : {}),
+    });
+
+    return c.json({
+      cancel: {
+        to: cancelTx.to || cancelTx.address,
+        data: cancelTx.data,
+        value: "0",
+      },
+      newListing: {
+        eip712: prepared.eip712,
+        approvals: prepared.approvals.map((a: any) => ({
+          to: a.to,
+          data: a.data,
+          value: a.value?.toString() || "0",
+        })),
+      },
+      meta: {
+        orderHash: body.orderHash,
+        name: l.name || null,
+        tokenId,
+        oldPriceWei: currentPriceWei.toString(),
+        newPriceWei: newPriceWei.toString(),
+      },
+    });
+  } catch (e: any) {
+    console.error("Edit listing failed:", e?.message || e);
+    return c.json({ error: "Failed to prepare edit transaction" }, 500);
+  }
+});
+
 // =========================================================================
 //                    OTC OFFERS (Individual Name Offers)
 // =========================================================================
