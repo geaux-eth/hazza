@@ -86,17 +86,17 @@ const BATCH_EXECUTOR_ABI = [
 
 
 const BOUNTY_ESCROW_ABI = [
-  { name: 'registerBounty', type: 'function', stateMutability: 'nonpayable',
-    inputs: [{ name: 'tokenId', type: 'uint256' }, { name: 'bountyAmount', type: 'uint256' }],
+  { name: 'registerBounty', type: 'function', stateMutability: 'payable',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
     outputs: []
   },
-  { name: 'getBounty', type: 'function', stateMutability: 'view',
+  { name: 'registerBounty', type: 'function', stateMutability: 'payable',
+    inputs: [{ name: 'tokenId', type: 'uint256' }, { name: 'agent', type: 'address' }],
+    outputs: []
+  },
+  { name: 'cancelBounty', type: 'function', stateMutability: 'nonpayable',
     inputs: [{ name: 'tokenId', type: 'uint256' }],
-    outputs: [
-      { name: 'seller', type: 'address' }, { name: 'bountyAmount', type: 'uint256' },
-      { name: 'agent', type: 'address' }, { name: 'claimed', type: 'bool' },
-      { name: 'active', type: 'bool' }
-    ]
+    outputs: []
   },
 ] as const;
 
@@ -538,31 +538,14 @@ function BrowseTab({
     });
   }, [listings]);
 
-  // Load bounty info from escrow contract
+  // Extract bounty info from worker-enriched listings
   useEffect(() => {
-    if (!publicClient) return;
-    const withTokenId = listings.filter(l => l.tokenId);
-    if (withTokenId.length === 0) return;
-    Promise.all(
-      withTokenId.map(async (l) => {
-        try {
-          const [, bountyAmount, , , active] = await publicClient.readContract({
-            address: BOUNTY_ESCROW_ADDRESS as Address,
-            abi: BOUNTY_ESCROW_ABI,
-            functionName: 'getBounty',
-            args: [BigInt(l.tokenId!)],
-          }) as [string, bigint, string, boolean, boolean];
-          return { orderHash: l.orderHash, active, amount: active ? formatEther(bountyAmount) : '0' };
-        } catch {
-          return { orderHash: l.orderHash, active: false, amount: '0' };
-        }
-      })
-    ).then(results => {
-      const bounties: Record<string, string> = {};
-      results.forEach(r => { if (r.active) bounties[r.orderHash] = r.amount; });
-      setBountyInfo(bounties);
+    const bounties: Record<string, string> = {};
+    listings.forEach(l => {
+      if ((l as any).bounty) bounties[l.orderHash] = (l as any).bounty.amount;
     });
-  }, [listings, publicClient]);
+    setBountyInfo(bounties);
+  }, [listings]);
 
   const filtered = useMemo(() => {
     let result = listings.filter(l => {
@@ -831,13 +814,6 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
           identifierOrCriteria: 0n, startAmount: feeAmount, endAmount: feeAmount, recipient: TREASURY_ADDRESS,
         });
       }
-      if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
-        consideration.push({
-          itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
-          identifierOrCriteria: 0n, startAmount: bountyWei, endAmount: bountyWei, recipient: BOUNTY_ESCROW_ADDRESS as Address,
-        });
-      }
-
       const salt = BigInt(generateSalt());
 
       // EIP-712 sign
@@ -872,19 +848,20 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
       if (receipt.status === 'success') {
-        // Register bounty on escrow contract if bounty specified
+        // Register bounty on escrow contract — deposit ETH upfront
         if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
           try {
             const bountyHash = await walletClient.data.writeContract({
               address: BOUNTY_ESCROW_ADDRESS as Address,
               abi: BOUNTY_ESCROW_ABI,
               functionName: 'registerBounty',
-              args: [BigInt(tokenId), bountyWei],
+              args: [BigInt(tokenId)],
+              value: bountyWei,
             });
             await publicClient.waitForTransactionReceipt({ hash: bountyHash });
           } catch (e: any) {
             console.warn('Bounty registration failed (listing still active):', e.message);
-            alert(`Warning: your listing is live, but bounty registration failed. The agent bounty of ${bountyAmount} ETH was NOT registered. You can retry by relisting.`);
+            alert(`Warning: your listing is live, but bounty deposit failed. The agent bounty of ${bountyAmount} ETH was NOT deposited. You can add it later from your listings.`);
           }
         }
         alert(`Listed! ${name}.hazza.name is now for sale at ${sellPrice} ETH.${bountyAmount && parseFloat(bountyAmount) > 0 ? ` Agent bounty: ${bountyAmount} ETH (paid from sale proceeds).` : ''}\n\nTx: ${hash}\n\nThis listing appears on hazza.name/marketplace and netprotocol.app/bazaar.`);

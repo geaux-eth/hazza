@@ -113,16 +113,32 @@ Contract addresses:
 - seaport: 0x0000000000000068F116a894984e2DB1123eB395
 - bazaar: 0x000000058f3ade587388daf827174d0e6fc97595`,
 
-  bounty: `AGENT BOUNTY SYSTEM:
+  bounty: `AGENT BOUNTY SYSTEM (v4 — deposit-based escrow):
 - when listing a name, you can OPTIONALLY set an agent bounty
-- the bounty comes from the SALE PROCEEDS — no upfront cost to the seller
-- how it works: the Seaport order splits the payment — seller gets (price - bounty), bounty goes to the escrow contract
-- agents register on a listing. when the name sells via Seaport, the bounty ETH automatically goes to the escrow contract
-- the agent then claims it from the escrow by proving the NFT changed hands
-- if no agent facilitated (direct sale), the seller can withdraw the unclaimed bounty
-- example: list "coolname" for 0.1 ETH with 0.01 ETH bounty. name sells. seller gets 0.09 ETH from Seaport. agent claims 0.01 ETH from escrow.
+- the seller DEPOSITS bounty ETH upfront into the escrow contract (0x95a29AD7f23c1039A03de365c23D275Fc5386f90)
+- the deposit is locked until the name sells or the seller cancels
+- agents self-register on open bounties (24-hour window) or get seller-assigned (no expiry)
+- only ONE agent can be active on a bounty at a time
+- when the name sells on ANY Seaport-compatible marketplace, the active agent calls claimBounty()
+- the escrow verifies the NFT changed hands and credits the agent
+- if no agent facilitated (or agent expired), the seller can reclaim via withdrawBounty()
+- seller can cancel anytime before sale to get their deposit back
+- seller can assign, kick, or switch agents at any time
+- example: list "coolname" for 0.1 ETH. deposit 0.01 ETH bounty into escrow. name sells for 0.1 ETH (seller gets full sale price from Seaport). agent claims 0.01 ETH from escrow.
 - the bounty incentivizes agents to promote your name — more bounty = more attention
-- completely optional. set to 0 if you don't want it.`,
+- completely optional. set to 0 if you don't want it.
+
+ESCROW API ENDPOINTS:
+- GET /api/bounty/:tokenId — check bounty status
+- POST /api/bounty/register — register bounty (returns unsigned tx, seller sends ETH as value)
+- POST /api/bounty/register-agent — agent self-registers (returns unsigned tx)
+- POST /api/bounty/claim — agent claims after sale (returns unsigned tx)
+- POST /api/bounty/cancel — seller cancels (returns unsigned tx, refund)
+- POST /api/bounty/assign-agent — seller assigns agent (returns unsigned tx)
+- POST /api/bounty/remove-agent — seller removes agent (returns unsigned tx)
+- POST /api/bounty/withdraw — withdraw earned payouts (returns unsigned tx)
+- POST /api/bounty/withdraw-bounty — seller reclaims after direct sale (returns unsigned tx)
+- GET /api/bounty/pending/:address — check pending withdrawals`,
 
   profile: `TEXT RECORDS & PROFILE:
 - every hazza name gets a live web profile from day one at yourname.hazza.name
@@ -208,8 +224,7 @@ Contract addresses (Base mainnet):
 - registry: 0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E
 - USDC: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
 - ERC-8004 registry: 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432
-- bounty escrow: 0x4Af1B18C01250A52f29CEacA055164628b643ae9
-- seaport: 0x0000000000000068F116a894984e2DB1123eB395
+- bounty escrow (proxy): 0x95a29AD7f23c1039A03de365c23D275Fc5386f90
 - CCIP-Read resolver (Ethereum): 0x9B9E94116f00EFD887e9D85D90293c7Bc0b52AdF`,
 
   network: `CHERYL & NET LIBRARY:
@@ -242,10 +257,10 @@ If a user wants the discount on hazza names, point them to the Unlimited Pass fi
 3. LIST: [LIST:thename:PRICE_IN_ETH:BOUNTY_ETH]
    - When user wants to list their name for sale
    - ASK for price first if not specified
-   - Then ASK if they want an agent bounty — explain: "agents can help promote and sell your name. you can set a bounty that comes out of the sale price — you only pay if it sells. want to add one? if so, how much ETH?"
+   - Then ASK if they want an agent bounty — explain: "agents can help promote and sell your name. you deposit ETH upfront into a secure escrow contract as a bounty. if an agent helps sell it, they claim the bounty. if you cancel or it doesn't sell, you get it back. want to add one? if so, how much ETH?"
    - Use 0 for no bounty
    - Listing goes through Seaport + Bazaar — appears on hazza.name/marketplace AND netprotocol.app/bazaar simultaneously
-   - The bounty is a Seaport consideration item — it goes to the escrow contract on sale, then the agent claims it
+   - The bounty is deposited into the escrow contract via registerBounty() — separate from the sale price
 
 4. TRANSFER: [TRANSFER:thename:RECIPIENT]
    - Recipient can be 0x address or hazza name

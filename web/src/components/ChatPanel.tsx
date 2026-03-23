@@ -140,7 +140,8 @@ const SEAPORT_EIP712_TYPES = {
 } as const;
 
 const BOUNTY_ESCROW_ABI = parseAbi([
-  'function registerBounty(uint256 tokenId, uint256 bountyAmount) external',
+  'function registerBounty(uint256 tokenId) external payable',
+  'function cancelBounty(uint256 tokenId) external',
 ]);
 
 function generateSalt(): bigint {
@@ -572,13 +573,6 @@ export default function ChatPanel({
           identifierOrCriteria: 0n, startAmount: feeAmount, endAmount: feeAmount, recipient: TREASURY_ADDRESS as Address,
         });
       }
-      if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
-        consideration.push({
-          itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
-          identifierOrCriteria: 0n, startAmount: bountyWei, endAmount: bountyWei, recipient: BOUNTY_ESCROW_ADDRESS as Address,
-        });
-      }
-
       const salt = generateSalt();
 
       // Step 4: EIP-712 sign the order
@@ -614,19 +608,20 @@ export default function ChatPanel({
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
       if (receipt.status === 'success') {
-        // Register bounty on escrow contract if bounty specified
+        // Register bounty on escrow contract — deposit ETH upfront
         if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
           try {
             const bountyHash = await walletClient.writeContract({
               address: BOUNTY_ESCROW_ADDRESS as Address,
               abi: BOUNTY_ESCROW_ABI,
               functionName: 'registerBounty',
-              args: [BigInt(card.tokenId), bountyWei],
+              args: [BigInt(card.tokenId)],
+              value: bountyWei,
             });
             await publicClient.waitForTransactionReceipt({ hash: bountyHash });
           } catch (e: any) {
-            console.warn('Bounty registration failed (listing still active):', e.message);
-            addMsg(`warning: listing is live but bounty registration failed. the ${card.bountyEth} ETH agent bounty was not registered.`, 'system');
+            console.warn('Bounty deposit failed (listing still active):', e.message);
+            addMsg(`warning: listing is live but bounty deposit failed. the ${card.bountyEth} ETH agent bounty was not deposited.`, 'system');
           }
         }
         setCardStatus(cardId, 'success', { txHash });

@@ -232,6 +232,10 @@ hazza names --json | jq '.[].name'
 
 The hazza marketplace at `hazza.name/marketplace` is a whitelabeled Net Protocol Bazaar. All listings are stored onchain as Net Protocol messages via Seaport, and appear on both `hazza.name/marketplace` and `netprotocol.app/bazaar`.
 
+### Agent Bounties
+
+Sellers can deposit ETH into the Bounty Escrow contract (`0x95a29AD7f23c1039A03de365c23D275Fc5386f90`, UUPS proxy) to incentivize agents. Bounties are separate from the sale price — deposited upfront via `registerBounty()`. Self-registered agents get 24-hour windows; seller-assigned agents never expire. All payouts use pull pattern (`withdrawPayout()`).
+
 ### Features
 - **Dual currency:** List names in ETH or USDC
 - **4 tabs:** Browse Listings, My Names, Collection Offers, Recent Sales
@@ -261,10 +265,19 @@ hazza market buy <orderHash>  # Buy a listing
 | `GET /api/marketplace/watch/:orderHash` | Watchlist count for a listing |
 | `POST /api/marketplace/watch` | Add to watchlist `{orderHash, address}` |
 | `DELETE /api/marketplace/watch` | Remove from watchlist `{orderHash, address}` |
+| `GET /api/bounty/:tokenId` | Check bounty status for a name |
+| `GET /api/bounty/pending/:address` | Check pending withdrawals |
+| `POST /api/bounty/register` | Register bounty (returns unsigned tx) |
+| `POST /api/bounty/register-agent` | Register as agent for bounty |
+| `POST /api/bounty/claim` | Claim bounty after sale |
+| `POST /api/bounty/cancel` | Cancel bounty (seller only) |
+| `POST /api/bounty/withdraw-bounty` | Withdraw bounty ETH (seller) |
+| `POST /api/bounty/withdraw` | Withdraw pending payouts |
 
 ### Key Contracts (Base)
 - **Seaport:** `0x0000000000000068F116a894984e2DB1123eB395`
 - **Bazaar V2:** `0x000000058f3ade587388daf827174d0e6fc97595`
+- **Bounty Escrow (Proxy):** `0x95a29AD7f23c1039A03de365c23D275Fc5386f90`
 - **Fee:** 0 bps (zero listing fee)
 
 ---

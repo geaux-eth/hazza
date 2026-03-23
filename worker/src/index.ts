@@ -2518,6 +2518,27 @@ async function enrichListing(listing: any, client: any, addr: Address) {
       isNamespace = !!nsAdmin && nsAdmin !== "0x0000000000000000000000000000000000000000";
     } catch {}
 
+    // Fetch bounty info for this token
+    let bounty: any = null;
+    try {
+      const [bSeller, bAmount, bAgent, bAgentActive, bSellerAssigned, bActive] = await client.readContract({
+        address: BOUNTY_ESCROW_ADDRESS as `0x${string}`,
+        abi: BOUNTY_ESCROW_ABI,
+        functionName: "getBounty",
+        args: [BigInt(tokenId)],
+      });
+      if (bActive) {
+        const zeroAddr = "0x0000000000000000000000000000000000000000";
+        bounty = {
+          amount: formatEther(bAmount),
+          amountWei: bAmount.toString(),
+          agent: bAgent === zeroAddr ? null : bAgent,
+          agentActive: bAgentActive,
+          sellerAssigned: bSellerAssigned,
+        };
+      }
+    } catch {}
+
     return {
       name: name as string,
       tokenId: tokenId.toString(),
@@ -2530,6 +2551,7 @@ async function enrichListing(listing: any, client: any, addr: Address) {
       nameStatus: "active",
       isNamespace,
       avatar: avatar || null,
+      bounty,
       profileUrl: `https://${name}.hazza.name`,
       messageData: listing.messageData || null,
       orderComponents: listing.orderComponents ? {
@@ -2580,16 +2602,62 @@ const BOUNTY_ESCROW_ABI = [
     inputs: [{ name: "tokenId", type: "uint256" }],
     outputs: [
       { name: "seller", type: "address" },
-      { name: "bountyAmount", type: "uint256" },
+      { name: "amount", type: "uint256" },
       { name: "agent", type: "address" },
-      { name: "claimed", type: "bool" },
+      { name: "agentActive", type: "bool" },
+      { name: "sellerAssigned", type: "bool" },
       { name: "active", type: "bool" },
     ],
   },
+  { name: "isAgentActive", type: "function", stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  { name: "pendingWithdrawals", type: "function", stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  { name: "registerBounty", type: "function", stateMutability: "payable",
+    inputs: [{ name: "tokenId", type: "uint256" }, { name: "agent", type: "address" }],
+    outputs: [],
+  },
+  { name: "registerBounty", type: "function", stateMutability: "payable",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [],
+  },
+  { name: "registerAgent", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [],
+  },
+  { name: "claimBounty", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [],
+  },
+  { name: "cancelBounty", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [],
+  },
+  { name: "assignAgent", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "tokenId", type: "uint256" }, { name: "agent", type: "address" }],
+    outputs: [],
+  },
+  { name: "removeAgent", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [],
+  },
+  { name: "withdrawBounty", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [],
+  },
+  { name: "withdrawPayout", type: "function", stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
 ] as const;
 
-const BOUNTY_ESCROW_ADDRESS = "0x4Af1B18C01250A52f29CEacA055164628b643ae9";
+const BOUNTY_ESCROW_ADDRESS = "0x95a29AD7f23c1039A03de365c23D275Fc5386f90";
 
+// GET /api/bounty/:tokenId — read bounty details
 app.get("/api/bounty/:tokenId", async (c) => {
   const tokenIdParam = c.req.param("tokenId");
   if (!/^\d+$/.test(tokenIdParam) || tokenIdParam === "0") {
@@ -2597,7 +2665,7 @@ app.get("/api/bounty/:tokenId", async (c) => {
   }
   try {
     const client = getClient(c.env);
-    const [seller, bountyAmount, agent, claimed, active] = await client.readContract({
+    const [seller, amount, agent, agentActive, sellerAssigned, active] = await client.readContract({
       address: BOUNTY_ESCROW_ADDRESS as `0x${string}`,
       abi: BOUNTY_ESCROW_ABI,
       functionName: "getBounty",
@@ -2606,18 +2674,139 @@ app.get("/api/bounty/:tokenId", async (c) => {
     if (!active) {
       return c.json({ active: false });
     }
+    const zeroAddr = "0x0000000000000000000000000000000000000000";
     return c.json({
       active: true,
       seller,
-      bountyAmount: formatEther(bountyAmount),
-      bountyAmountWei: bountyAmount.toString(),
-      agent: agent === "0x0000000000000000000000000000000000000000" ? null : agent,
-      claimed,
+      amount: formatEther(amount),
+      amountWei: amount.toString(),
+      agent: agent === zeroAddr ? null : agent,
+      agentActive,
+      sellerAssigned,
+      escrowAddress: BOUNTY_ESCROW_ADDRESS,
     });
   } catch (e: any) {
     console.error("Bounty lookup failed:", e?.message || e);
     return c.json({ active: false, error: "Bounty lookup failed" });
   }
+});
+
+// GET /api/bounty/pending/:address — check pending withdrawals for an address
+app.get("/api/bounty/pending/:address", async (c) => {
+  const addr = c.req.param("address");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+    return c.json({ error: "Invalid address" }, 400);
+  }
+  try {
+    const client = getClient(c.env);
+    const pending = await client.readContract({
+      address: BOUNTY_ESCROW_ADDRESS as `0x${string}`,
+      abi: BOUNTY_ESCROW_ABI,
+      functionName: "pendingWithdrawals",
+      args: [addr as `0x${string}`],
+    });
+    return c.json({ address: addr, pending: formatEther(pending), pendingWei: pending.toString() });
+  } catch (e: any) {
+    return c.json({ error: "Lookup failed" }, 500);
+  }
+});
+
+// POST /api/bounty/register — return unsigned tx to register a bounty (seller deposits ETH)
+app.post("/api/bounty/register", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.tokenId) return c.json({ error: "Missing tokenId" }, 400);
+  if (!body?.amountWei) return c.json({ error: "Missing amountWei (bounty deposit in wei)" }, 400);
+  const { tokenId, amountWei, agent } = body;
+
+  const data = agent
+    ? encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "registerBounty", args: [BigInt(tokenId), agent] })
+    : encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "registerBounty", args: [BigInt(tokenId)] });
+  return c.json({
+    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: amountWei.toString() },
+    description: agent ? `Register bounty for token ${tokenId} with agent ${agent}` : `Register open bounty for token ${tokenId}`,
+  });
+});
+
+// POST /api/bounty/register-agent — return unsigned tx for agent to self-register
+app.post("/api/bounty/register-agent", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.tokenId) return c.json({ error: "Missing tokenId" }, 400);
+
+  const data = encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "registerAgent", args: [BigInt(body.tokenId)] });
+  return c.json({
+    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: "0" },
+    description: `Register as agent on bounty for token ${body.tokenId}`,
+  });
+});
+
+// POST /api/bounty/claim — return unsigned tx for agent to claim bounty after sale
+app.post("/api/bounty/claim", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.tokenId) return c.json({ error: "Missing tokenId" }, 400);
+
+  const data = encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "claimBounty", args: [BigInt(body.tokenId)] });
+  return c.json({
+    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: "0" },
+    description: `Claim bounty for token ${body.tokenId}`,
+  });
+});
+
+// POST /api/bounty/cancel — return unsigned tx for seller to cancel bounty (refund)
+app.post("/api/bounty/cancel", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.tokenId) return c.json({ error: "Missing tokenId" }, 400);
+
+  const data = encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "cancelBounty", args: [BigInt(body.tokenId)] });
+  return c.json({
+    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: "0" },
+    description: `Cancel bounty for token ${body.tokenId} (refund deposited ETH)`,
+  });
+});
+
+// POST /api/bounty/assign-agent — return unsigned tx for seller to assign/switch agent
+app.post("/api/bounty/assign-agent", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.tokenId || !body?.agent) return c.json({ error: "Missing tokenId or agent" }, 400);
+
+  const data = encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "assignAgent", args: [BigInt(body.tokenId), body.agent] });
+  return c.json({
+    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: "0" },
+    description: `Assign agent ${body.agent} to bounty for token ${body.tokenId}`,
+  });
+});
+
+// POST /api/bounty/remove-agent — return unsigned tx for seller to remove agent
+app.post("/api/bounty/remove-agent", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.tokenId) return c.json({ error: "Missing tokenId" }, 400);
+
+  const data = encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "removeAgent", args: [BigInt(body.tokenId)] });
+  return c.json({
+    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: "0" },
+    description: `Remove agent from bounty for token ${body.tokenId}`,
+  });
+});
+
+// POST /api/bounty/withdraw — return unsigned tx to withdraw earned payouts
+app.post("/api/bounty/withdraw", async (c) => {
+
+  const data = encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "withdrawPayout", args: [] });
+  return c.json({
+    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: "0" },
+    description: "Withdraw pending bounty payouts",
+  });
+});
+
+// POST /api/bounty/withdraw-bounty — return unsigned tx for seller to reclaim after direct sale
+app.post("/api/bounty/withdraw-bounty", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.tokenId) return c.json({ error: "Missing tokenId" }, 400);
+
+  const data = encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "withdrawBounty", args: [BigInt(body.tokenId)] });
+  return c.json({
+    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: "0" },
+    description: `Seller withdraw bounty for token ${body.tokenId} (no agent facilitated)`,
+  });
 });
 
 // GET /api/board — fetch forum messages from Net Protocol storage

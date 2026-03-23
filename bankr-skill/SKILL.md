@@ -218,36 +218,59 @@ All listings go through Seaport and the Net Protocol Bazaar. This ensures every 
 
 The hazza.name UI handles all of this — users just enter a price and sign.
 
-### Agent Bounty (Optional — from sale proceeds)
+### Agent Bounty (Deposit-Based Escrow)
 
-When listing, the seller can optionally set an agent bounty. The bounty comes from the sale price — **no upfront cost**.
+When listing, the seller can optionally deposit ETH into the Bounty Escrow contract as an agent bounty. This is a **separate upfront deposit**, not deducted from the sale price.
 
 **How it works:**
-- The Seaport order splits the buyer's payment: `(price - bounty)` → seller, `bounty` → BountyEscrow contract
-- Agents register on the escrow contract for a specific name
-- When the name sells via Seaport, the bounty ETH automatically goes to the escrow
-- The agent claims it by proving the NFT changed hands
-- If no agent facilitated (direct sale), the seller can withdraw the unclaimed bounty
+- Seller calls `registerBounty(tokenId)` with ETH value — the deposit goes into the escrow contract
+- Agents register on the escrow for the name (self-registered agents expire after 24 hours, seller-assigned agents never expire)
+- When the name sells, the agent calls `claimBounty(tokenId)` to collect
+- If seller cancels or no agent claims, seller can withdraw via `withdrawBounty(tokenId)` (only when no agent is active)
+- All payouts use a pull pattern — call `withdrawPayout()` to collect
 
-**Example:** List "coolname" for 0.1 ETH with 0.01 ETH bounty. Name sells. Seller gets 0.09 ETH from Seaport. Agent claims 0.01 ETH from escrow.
+**Example:** Seller deposits 0.01 ETH bounty for "coolname". Agent registers. Name sells. Agent claims 0.01 ETH. The sale price goes entirely to the seller via Seaport — the bounty is separate.
 
-### Register as Agent (Earn Bounties)
+### Bounty Escrow API
 
-Agents can register on the bounty escrow for names that have bounties. When the name sells, the agent claims the bounty.
+All bounty operations are available as unsigned transaction endpoints from the worker:
 
 ```bash
 # Check if a name has a bounty
 curl -s https://hazza.name/api/bounty/TOKEN_ID
 
-# Register as agent for a token
-cast send 0x4Af1B18C01250A52f29CEacA055164628b643ae9 \
-  "registerAgent(uint256)" TOKEN_ID \
-  --rpc-url https://mainnet.base.org --private-key $PK
+# Check pending withdrawals for an address
+curl -s https://hazza.name/api/bounty/pending/ADDRESS
 
-# After sale, claim the bounty
-cast send 0x4Af1B18C01250A52f29CEacA055164628b643ae9 \
-  "claimBounty(uint256)" TOKEN_ID \
-  --rpc-url https://mainnet.base.org --private-key $PK
+# Register a bounty (returns unsigned tx — send with ETH value)
+curl -s -X POST https://hazza.name/api/bounty/register \
+  -H "Content-Type: application/json" \
+  -d '{"tokenId": "TOKEN_ID", "bountyAmountWei": "10000000000000000"}'
+
+# Register as agent for a bounty
+curl -s -X POST https://hazza.name/api/bounty/register-agent \
+  -H "Content-Type: application/json" \
+  -d '{"tokenId": "TOKEN_ID", "agentAddress": "0x..."}'
+
+# Claim bounty after sale
+curl -s -X POST https://hazza.name/api/bounty/claim \
+  -H "Content-Type: application/json" \
+  -d '{"tokenId": "TOKEN_ID"}'
+
+# Cancel bounty (seller only)
+curl -s -X POST https://hazza.name/api/bounty/cancel \
+  -H "Content-Type: application/json" \
+  -d '{"tokenId": "TOKEN_ID"}'
+
+# Withdraw bounty ETH (seller, only when no agent active)
+curl -s -X POST https://hazza.name/api/bounty/withdraw-bounty \
+  -H "Content-Type: application/json" \
+  -d '{"tokenId": "TOKEN_ID"}'
+
+# Withdraw pending payouts
+curl -s -X POST https://hazza.name/api/bounty/withdraw \
+  -H "Content-Type: application/json" \
+  -d '{"address": "0x..."}'
 ```
 
 ### Cancel a Listing
@@ -288,7 +311,7 @@ Returns: `cancel` tx (send first), then `newListing.eip712` data to sign and sub
 - No marketplace fee — sellers receive 100% of the sale price (minus optional agent bounty)
 - Seaport contract: `0x0000000000000068F116a894984e2DB1123eB395` (Base)
 - Bazaar contract: `0x000000058f3ade587388daf827174d0e6fc97595` (Base)
-- Bounty Escrow: `0x4Af1B18C01250A52f29CEacA055164628b643ae9`
+- Bounty Escrow (UUPS Proxy): `0x95a29AD7f23c1039A03de365c23D275Fc5386f90`
 
 ## API Reference
 
@@ -312,7 +335,14 @@ Base URL: `https://hazza.name`
 | `/api/marketplace/fulfill-offer` | POST | Get offer acceptance tx data |
 | `/api/marketplace/cancel` | POST | Cancel a listing (returns unsigned Seaport cancel tx) |
 | `/api/marketplace/edit` | POST | Edit a listing (cancel + relist with new params) |
-| `/api/bounty/:tokenId` | GET | Check active bounty listing for a name |
+| `/api/bounty/:tokenId` | GET | Check bounty status for a name |
+| `/api/bounty/pending/:address` | GET | Check pending withdrawals |
+| `/api/bounty/register` | POST | Register bounty (returns unsigned tx) |
+| `/api/bounty/register-agent` | POST | Register as agent for bounty |
+| `/api/bounty/claim` | POST | Claim bounty after sale |
+| `/api/bounty/cancel` | POST | Cancel bounty (seller only) |
+| `/api/bounty/withdraw-bounty` | POST | Withdraw bounty ETH (seller) |
+| `/api/bounty/withdraw` | POST | Withdraw pending payouts |
 
 ## Key Addresses (Base Mainnet)
 
@@ -321,7 +351,7 @@ Base URL: `https://hazza.name`
 | Registry | `0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E` |
 | Seaport | `0x0000000000000068F116a894984e2DB1123eB395` |
 | Bazaar | `0x000000058f3ade587388daf827174d0e6fc97595` |
-| Bounty Escrow | `0x4Af1B18C01250A52f29CEacA055164628b643ae9` |
+| Bounty Escrow (Proxy) | `0x95a29AD7f23c1039A03de365c23D275Fc5386f90` |
 | USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 | Chain ID | 8453 |
 

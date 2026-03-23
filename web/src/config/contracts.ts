@@ -6,7 +6,7 @@ export const TREASURY_ADDRESS = '0x62B7399B2ac7e938Efad06EF8746fDBA3B351900' as 
 export const SEAPORT_ADDRESS = '0x0000000000000068F116a894984e2DB1123eB395' as const;
 export const BAZAAR_ADDRESS = '0x000000058f3ade587388daf827174d0e6fc97595' as const;
 export const MARKETPLACE_FEE_BPS = 0; // Bazaar V2 contract feeBps=0; must match or submit reverts
-export const BOUNTY_ESCROW_ADDRESS = '0x4Af1B18C01250A52f29CEacA055164628b643ae9' as const;
+export const BOUNTY_ESCROW_ADDRESS = '0x95a29AD7f23c1039A03de365c23D275Fc5386f90' as const;
 export const NOMI_XMTP_ADDR = '0x55B251E202938E562E7384bD998215885b80162e' as const;
 
 export const REGISTRY_ABI = [

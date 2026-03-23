@@ -226,20 +226,21 @@ The marketplace uses Seaport (`0x0000000000000068F116a894984e2DB1123eB395` on Ba
 
 ### Agent Bounties
 
-When listing a name, you can attach a bounty from the sale proceeds. Here's how it works:
+When listing a name, you can deposit ETH into a secure escrow contract as a bounty for agents who help sell it. Here's how it works:
 
-1. You list "coolname" for 0.1 ETH with a 0.01 ETH bounty
-2. The Seaport order splits the buyer's payment: 0.09 ETH to you, 0.01 ETH to the Bounty Escrow contract
-3. An agent registers on the escrow for your name
-4. The name sells via Seaport — ETH splits automatically
-5. The agent claims the bounty by proving the NFT changed hands
-6. If no agent facilitated the sale, you withdraw the unclaimed bounty
+1. You list "coolname" for 0.1 ETH on the marketplace
+2. You deposit 0.01 ETH into the Bounty Escrow contract via `registerBounty()`
+3. An agent registers on the escrow for your name (self-registered agents get a 24-hour window)
+4. The name sells — you receive the full 0.1 ETH sale price
+5. The agent claims the 0.01 ETH bounty from the escrow
+6. If no agent claims, you withdraw your bounty deposit
 
-The Bounty Escrow contract (`0x4Af1B18C01250A52f29CEacA055164628b643ae9` on Base) is completely open:
+The Bounty Escrow contract (`0x95a29AD7f23c1039A03de365c23D275Fc5386f90` on Base, UUPS upgradeable proxy) is completely open:
 
-- **Open bounties:** Any agent can register, first-come first-served, no replacement
-- **Approved bounties:** Seller specifies a single agent address — only that agent can register
-- **Seller controls:** Cancel anytime before sale, withdraw unclaimed bounties after sale
+- **Open bounties:** Any agent can self-register (24-hour expiry, can re-register)
+- **Approved bounties:** Seller assigns a specific agent address (never expires)
+- **Seller controls:** Cancel anytime, withdraw bounty when no agent is active
+- **Pull-based payouts:** All ETH goes to a `pendingWithdrawals` balance — recipients call `withdrawPayout()` to collect
 
 ### Making and Accepting Offers
 
@@ -434,7 +435,7 @@ hazza supports CCIP-Read for ENS-compatible offchain resolution. This means ENS-
 - **Framework:** Foundry (forge, cast)
 - **Network:** Base mainnet (Chain ID 8453)
 - **Registry contract:** `0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E`
-- **Bounty Escrow:** `0x4Af1B18C01250A52f29CEacA055164628b643ae9`
+- **Bounty Escrow (Proxy):** `0x95a29AD7f23c1039A03de365c23D275Fc5386f90`
 - **Validation library:** `0xde304655b96ed7f8a42Bd82D640e252bc76a3Bc1`
 - **ERC-721** with full enumeration (balanceOf, tokenOfOwnerByIndex)
 - **Optimizer:** 10 runs with via-IR (minimizes contract size — EIP-170 limit)
@@ -495,7 +496,7 @@ hazza supports CCIP-Read for ENS-compatible offchain resolution. This means ENS-
 | Item | Address | Network |
 |------|---------|---------|
 | Registry | `0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E` | Base Mainnet |
-| Bounty Escrow | `0x4Af1B18C01250A52f29CEacA055164628b643ae9` | Base Mainnet |
+| Bounty Escrow (Proxy) | `0x95a29AD7f23c1039A03de365c23D275Fc5386f90` | Base Mainnet |
 | Seaport | `0x0000000000000068F116a894984e2DB1123eB395` | Base Mainnet |
 | Bazaar | `0x000000058f3ade587388daf827174d0e6fc97595` | Base Mainnet |
 | USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | Base Mainnet |
