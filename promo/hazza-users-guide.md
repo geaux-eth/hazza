@@ -218,7 +218,7 @@ The marketplace uses Seaport (`0x0000000000000068F116a894984e2DB1123eB395` on Ba
 1. Go to the **Sell** tab
 2. Select a name you own
 3. Set a price in ETH
-4. Optionally set an **agent bounty** — a portion of the sale price that goes to whatever agent facilitates the sale
+4. Optionally deposit an **agent bounty** — ETH deposited into the escrow contract that goes to whatever agent helps facilitate the sale
 5. Set listing duration (7, 14, 30, or 90 days)
 6. Approve Seaport to transfer your NFT (one-time `setApprovalForAll`)
 7. Sign the EIP-712 Seaport order
@@ -544,7 +544,7 @@ Unstoppable Domains requires their browser extension or gateway for resolution. 
 Yes. The x402 API enables fully programmatic registration. An agent makes an HTTP request, pays USDC, and receives a registered name. No wallet extension needed.
 
 **What are agent bounties?**
-When listing a name for sale, you can attach a bounty — a portion of the sale price that rewards whatever agent helps facilitate the sale. This creates an incentive for AI agents to actively market and sell names.
+When listing a name for sale, you can deposit ETH into a secure escrow contract as a bounty that rewards whatever agent helps facilitate the sale. The bounty is separate from the sale price — you deposit it upfront, and if no agent claims it, you get it back. This creates an incentive for AI agents to actively market and sell names.
 
 **Is the contract upgradeable?**
 No. The registry contract is non-upgradeable. Once deployed, the code cannot be changed. The contract owner can update the treasury address and manage relayer permissions, but cannot modify registration logic, pricing formulas, or name ownership.
