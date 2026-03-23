@@ -151,12 +151,12 @@ Per wallet within 90-day window:
 
 ## Contract (Base Mainnet)
 
-- **Registry:** `0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746`
+- **Registry:** `0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E`
 - **MockUSDC:** `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
 - **ERC-8004 Registry:** `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`
 - **Unlimited Pass (Sepolia):** `0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB`
 - **Owner:** `0x96168ACf7f3925e7A9eAA08Ddb21e59643da8097` (GEAUX)
-- **Treasury:** `0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a`
+- **Treasury:** `0x62B7399B2ac7e938Efad06EF8746fDBA3B351900`
 - **Chain ID:** 8453
 - **RPC:** `https://mainnet.base.org`
 
@@ -216,6 +216,13 @@ Base URL: `https://hazza.name`
 | `GET /api/names/:address` | All names owned by wallet |
 | `GET /api/free-claim/:address` | Free claim eligibility |
 | `POST /x402/register` | x402 payment registration |
+| `GET /api/marketplace/listings` | Active name listings |
+| `GET /api/marketplace/offers` | Collection offers |
+| `GET /api/marketplace/offers/:name` | Offers on a specific name |
+| `GET /api/marketplace/sales` | Recent sales |
+| `POST /api/marketplace/fulfill` | Get buy tx data (orderHash + buyerAddress) |
+| `POST /api/marketplace/fulfill-offer` | Get offer acceptance tx data |
+| `POST /api/marketplace/offer` | Submit an offer |
 
 ## Text Record Keys
 
@@ -232,7 +239,7 @@ You have a **Bankr wallet** (ERC-4337 smart contract account). No private key. A
 1. **Simulate first** (optional but smart):
 ```bash
 cast call --from 0x62b7399b2ac7e938efad06ef8746fdba3b351900 \
-  0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746 \
+  0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E \
   "available(string)" "somename" \
   --rpc-url https://mainnet.base.org
 ```
@@ -244,7 +251,7 @@ cast calldata 'setText(string,string,string)' "nomi" "description" "the hazza ag
 
 3. **Submit via Bankr:**
 ```bash
-bankr submit '{"to":"0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746","data":"0x...encoded...","value":"0","chainId":8453}'
+bankr submit '{"to":"0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E","data":"0x...encoded...","value":"0","chainId":8453}'
 ```
 
 ### Common Operations
@@ -259,7 +266,7 @@ curl -s https://hazza.name/api/available/somename
 # Encode
 cast calldata 'setText(string,string,string)' "nomi" "description" "the hazza agent. immediately useful names on Base."
 # Submit via bankr
-bankr submit '{"to":"0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746","data":"0x...","value":"0","chainId":8453}'
+bankr submit '{"to":"0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E","data":"0x...","value":"0","chainId":8453}'
 ```
 
 **Set primary name:**

@@ -12,7 +12,7 @@ Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an 
 
 ## Contract (Base Mainnet)
 
-**Registry:** `0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746`
+**Registry:** `0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E`
 **USDC:** `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
 
 ### Key Functions
@@ -77,6 +77,13 @@ All endpoints at `hazza.name`.
 | `/api/collection-metadata` | GET | Collection-level metadata (contractURI) |
 | `/x402/register` | POST | Register a name via x402 payment protocol |
 | `/api/ens-names/:address` | GET | ENS name suggestions for wallet |
+| `/api/marketplace/listings` | GET | Active marketplace listings |
+| `/api/marketplace/offers` | GET | Collection offers |
+| `/api/marketplace/offers/:name` | GET | Offers on a specific name |
+| `/api/marketplace/sales` | GET | Recent sales history |
+| `/api/marketplace/fulfill` | POST | Get buy tx data (`{orderHash, buyerAddress}` → `{approvals, fulfillment}`) |
+| `/api/marketplace/fulfill-offer` | POST | Get offer acceptance tx data |
+| `/api/marketplace/offer` | POST | Submit an offer on a name |
 
 ### Free Claim Flow
 
@@ -116,7 +123,7 @@ npx wrangler deploy  # deploy to Cloudflare
 
 ```bash
 cd contracts
-HAZZA_TREASURY=0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a \
+HAZZA_TREASURY=0x62B7399B2ac7e938Efad06EF8746fDBA3B351900 \
 UNLIMITED_PASS=0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB \
 RELAYER_WALLET=0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d \
 forge script script/Deploy.s.sol:DeployHazza --rpc-url https://mainnet.base.org --private-key $PK --broadcast
@@ -129,7 +136,7 @@ After deploying, each relayer must approve the registry to spend USDC:
 ```bash
 cast send 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \
   "approve(address,uint256)" \
-  0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746 \
+  0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E \
   115792089237316195423570985008687907853269984665640564039457584007913129639935 \
   --rpc-url https://mainnet.base.org --private-key $RELAYER_PK
 ```
@@ -154,7 +161,7 @@ cast send 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \
 | Role | Address |
 |------|---------|
 | Owner (GEAUX) | `0x96168ACf7f3925e7A9eAA08Ddb21e59643da8097` |
-| Treasury | `0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a` |
+| Treasury | `0x62B7399B2ac7e938Efad06EF8746fDBA3B351900` |
 | Relayer | `0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d` |
 
 Powered by x402, XMTP and Net Protocol. Built on Base.

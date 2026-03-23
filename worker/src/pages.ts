@@ -39,7 +39,7 @@ function safeHref(url: string): string {
 // pricingPage, pricingProtectionsPage, pricingDetailsPage, docsPage,
 // domainsPage, domainsManagePage, profilePage.
 
-const SPA_ASSET_BASE = "https://hazza-app.pages.dev";
+const SPA_ASSET_BASE = "";
 
 interface SpaRoute {
   title: string;
@@ -72,14 +72,9 @@ const SPA_ROUTES: Record<string, SpaRoute> = {
     description: "Buy, sell, and trade hazza names. Powered by Seaport protocol on Base.",
     ogUrl: "https://hazza.name/marketplace",
   },
-  "/pricing": {
-    title: "Pricing \u2014 hazza",
-    description: "Flat $5 USDC per name. No renewals, no auctions. First name free. Anti-squat protections included.",
-    ogUrl: "https://hazza.name/pricing",
-  },
   "/about": {
-    title: "About \u2014 hazza",
-    description: "Learn about hazza names, Nomi, and the onchain identity stack built on Base.",
+    title: "About & Pricing \u2014 hazza",
+    description: "Learn about hazza names, pricing, and the onchain identity stack built on Base. First name free, additional names start at $5.",
     ogUrl: "https://hazza.name/about",
   },
   "/docs": {
@@ -87,20 +82,10 @@ const SPA_ROUTES: Record<string, SpaRoute> = {
     description: "Developer documentation for hazza names. Contract addresses, text records, CLI, and API reference.",
     ogUrl: "https://hazza.name/docs",
   },
-  "/pricing/protections": {
-    title: "Anti-Squat Protections \u2014 hazza",
-    description: "Progressive pricing protections prevent name squatting. 2.5x/5x/10x multipliers within 90-day windows.",
-    ogUrl: "https://hazza.name/pricing/protections",
-  },
-  "/pricing/details": {
-    title: "Pricing Details \u2014 hazza",
-    description: "Detailed breakdown of hazza name pricing, namespace fees, and marketplace commissions.",
-    ogUrl: "https://hazza.name/pricing/details",
-  },
-  "/nomi": {
-    title: "Nomi \u2014 hazza",
-    description: "Meet Nomi, the hazza marketplace agent. Chat via XMTP, browse listings, and get help with your names.",
-    ogUrl: "https://hazza.name/nomi",
+  "/messages": {
+    title: "Messages \u2014 hazza",
+    description: "Message anyone on hazza via XMTP. Chat with Nomi, DM name owners, and manage your inbox.",
+    ogUrl: "https://hazza.name/messages",
   },
   "/domains": {
     title: "Custom Domains \u2014 hazza",
@@ -132,6 +117,16 @@ export function spaShell(path: string, profileName?: string): string {
     ? `\n  <script>window.__HAZZA_PROFILE_NAME__=${JSON.stringify(profileName)};</script>`
     : "";
 
+  // SSR the landing page so users see real content instantly (no "loading..." flash)
+  const isLanding = path === "/";
+  const ssrContent = isLanding ? `<div class="nav-bar"><nav><a class="logo" href="/"><span class="logo-icon">h</span></a><button class="hamburger" aria-label="Menu">&#9776;</button><div class="links"><a href="/register">register</a><a href="/marketplace">marketplace</a><a href="/dashboard">dashboard</a><a href="/messages">messages</a><a href="/about">about</a><a href="/docs">docs</a><button class="nav-wallet-btn">connect</button></div></nav></div><div class="page-content"><div class="header"><h1>hazza<span>.name</span></h1><p>immediately useful</p></div><div style="max-width:480px;margin:0 auto 1rem"><div class="search-box"><input type="text" id="name-input" placeholder="find something awesome!" autocomplete="off" spellcheck="false"><button id="search-btn">Search</button></div></div><div class="result" id="result"></div><div id="landing-features" style="margin-top:1.5rem;max-width:640px;margin-left:auto;margin-right:auto;display:grid;grid-template-columns:repeat(5,1fr);gap:1rem">${[
+    { title: 'onchain', desc: 'permanent name + website on Net Protocol' },
+    { title: 'DNS + ENS', desc: 'resolves like a real domain' },
+    { title: 'x402', desc: 'one-click registration, no wallet popups' },
+    { title: 'ERC-8004', desc: 'identity endpoint for AI agents' },
+    { title: 'XMTP', desc: 'encrypted messaging built in' },
+  ].map(c => `<div style="background:#fff;border:2px solid #4870D4;border-radius:10px;padding:0.85rem 0.6rem;text-align:center;box-shadow:0 2px 6px rgba(19,19,37,0.06)"><div style="font-family:'Fredoka',sans-serif;font-weight:700;color:#4870D4;font-size:0.85rem;white-space:nowrap;margin-bottom:0.35rem">${c.title}</div><div style="color:#131325;font-size:0.72rem;line-height:1.4">${c.desc}</div></div>`).join('')}</div></div>` : 'loading...';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -151,17 +146,18 @@ export function spaShell(path: string, profileName?: string): string {
   <meta name="twitter:description" content="${esc(route.description)}">
   <meta name="twitter:image" content="${ogImage}">
 
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"hazza","url":"https://hazza.name","description":"Onchain name registry on Base. Register short, immediately useful names — profile pages, text records, marketplace, and messaging.","applicationCategory":"BlockchainApplication","operatingSystem":"Web","offers":{"@type":"Offer","price":"0","priceCurrency":"USD","description":"First name free, additional names from $5 USDC"}}</script>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" crossorigin href="${SPA_ASSET_BASE}/assets/index-Cmuy1Xkz.css">
-  <link rel="modulepreload" crossorigin href="${SPA_ASSET_BASE}/assets/xmtp-4t1ZZQ0V.js">${profileScript}
+  <link rel="stylesheet" href="${SPA_ASSET_BASE}/assets/index-B2esDReL.css">
+  <link rel="modulepreload" href="${SPA_ASSET_BASE}/assets/xmtp-CzGTnMUH.js">${profileScript}
 </head>
 <body>
-  <div id="root">loading...</div>
-  <script>window.onerror=function(m,s,l,c,e){document.getElementById('root').innerHTML='<pre style="color:red;padding:2rem">'+m+'\\n'+s+':'+l+'\\n'+(e&&e.stack||'')+'</pre>';}</script>
-  <script type="module" crossorigin src="${SPA_ASSET_BASE}/assets/index-BGpaO0jH.js"></script>
+  <div id="root">${ssrContent}</div>
+  <script>window.onerror=function(m,s,l,c,e){if(s&&s.includes('extension'))return true;document.getElementById('root').innerHTML='<pre style="color:red;padding:2rem">'+m+'\\n'+s+':'+l+'\\n'+(e&&e.stack||'')+'</pre>';}</script>
+  <script type="module" src="${SPA_ASSET_BASE}/assets/index-D6ezXgDH.js"></script>
 </body>
 </html>`;
 }

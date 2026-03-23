@@ -40,11 +40,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
         address agentWallet;
     }
 
-    struct Commitment {
-        address committer;
-        uint64 timestamp;
-    }
-
     struct Namespace {
         address admin;
         uint256 parentTokenId;
@@ -96,9 +91,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     mapping(bytes32 => string) private _nameStrings;
     mapping(uint256 => bytes32) public tokenToName;
 
-    // Commit-reveal
-    mapping(bytes32 => Commitment) public commitments;
-
     // API keys
 
     // Custom domains
@@ -143,9 +135,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
 
 
     // --- CONSTANTS ---
-
-    uint256 public constant MIN_COMMIT_AGE = 60;
-    uint256 public constant MAX_COMMIT_AGE = 86400;
 
     // Pricing (USDC 6 decimals) — flat $5, pay once, available forever
     uint256 internal constant PRICE_3_CHAR = 5e6;     // $5
@@ -192,9 +181,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     // --- ERRORS ---
 
     error NameNotAvailable();
-    error CommitmentTooNew();
-    error CommitmentTooOld();
-    error CommitmentNotFound();
     error NotNameOwner();
     error NotRelayer();
     error InsufficientPayment();
@@ -214,7 +200,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     error FreeClaimAlreadyUsed();
     error NameLocked();
     error GuardRestricted();
-    error CommitmentExists();
     error DomainAlreadyMapped();
     error LengthMismatch();
     error AlreadyLocked();
@@ -254,42 +239,6 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     }
 
     // --- REGISTRATION ---
-
-    /// @notice Step 1 of commit-reveal: submit a commitment hash
-    function commit(bytes32 commitHash) external {
-        if (commitments[commitHash].timestamp != 0) revert CommitmentExists();
-        commitments[commitHash] = Commitment({
-            committer: msg.sender,
-            timestamp: uint64(block.timestamp)
-        });
-    }
-
-    /// @notice Step 2 of commit-reveal: reveal and register (ASCII names only)
-    function register(
-        string calldata name,
-        address nameOwner,
-        bytes32 salt,
-        bool wantAgent,
-        address agentWallet,
-        string calldata agentURI
-    ) external nonReentrant whenNotPaused {
-        bytes32 commitHash = keccak256(abi.encodePacked(name, nameOwner, salt));
-        Commitment memory c = commitments[commitHash];
-        if (c.timestamp == 0) revert CommitmentNotFound();
-        if (block.timestamp - c.timestamp < MIN_COMMIT_AGE) revert CommitmentTooNew();
-        if (block.timestamp - c.timestamp > MAX_COMMIT_AGE) revert CommitmentTooOld();
-        delete commitments[commitHash];
-
-        _registerNameWithMember(name, agentURI, RegistrationConfig({
-            nameOwner: nameOwner,
-            charCount: 0, // ASCII: use byte length
-            wantAgent: wantAgent,
-            agentWallet: agentWallet,
-            ensImport: false,
-            verifiedPass: false,
-            relayer: address(0)
-        }), false, 0);
-    }
 
     /// @notice Direct registration (relayer / owner only — for x402 Worker and hazza agent)
     /// @dev Supports ENSIP-15 Unicode names via charCount, ENS import discounts, cross-wallet pass
@@ -353,12 +302,8 @@ contract HazzaRegistry is ERC721, Ownable, ReentrancyGuard, IERC4906 {
     ) internal {
         if (c.nameOwner == address(0)) revert ZeroAddress();
 
-        // Validate: strict ASCII for public path, permissive UTF-8 for relayer
-        if (c.relayer == address(0)) {
-            HazzaValidation.validateNameStrict(name);
-        } else {
-            HazzaValidation.validateNamePermissive(name, c.charCount);
-        }
+        // Validate: permissive UTF-8 (ENSIP-15 normalization happens offchain in worker)
+        HazzaValidation.validateNamePermissive(name, c.charCount);
 
         bytes32 nameHash = keccak256(bytes(name));
 

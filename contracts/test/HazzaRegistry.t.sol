@@ -124,14 +124,6 @@ contract HazzaRegistryTest is Test {
         registry.registerDirect(name, to, 0, true, to, "https://example.com/agent.json", false, false);
     }
 
-    /// @dev Commit and warp past MIN_COMMIT_AGE, returns salt for register() call
-    function _commitAndWarp(string memory name, address to) internal returns (bytes32 salt) {
-        salt = bytes32(uint256(uint160(to)));
-        bytes32 commitHash = keccak256(abi.encodePacked(name, to, salt));
-        vm.prank(to);
-        registry.commit(commitHash);
-        vm.warp(block.timestamp + 61);
-    }
 
     // =========================================================================
     //                       BASIC REGISTRATION
@@ -145,40 +137,10 @@ contract HazzaRegistryTest is Test {
         assertEq(tokenId, 1);
     }
 
-    function test_commitReveal() public {
-        string memory name = "alice";
-        bytes32 salt = bytes32(uint256(123));
-        bytes32 commitHash = keccak256(abi.encodePacked(name, alice, salt));
-
-        vm.prank(alice);
-        registry.commit(commitHash);
-        vm.warp(block.timestamp + 61);
-
-        vm.prank(alice);
-        registry.register(name, alice, salt, false, address(0), "");
-
-        assertFalse(registry.available(name));
-    }
-
-    function test_commitTooNew() public {
-        bytes32 commitHash = keccak256(abi.encodePacked("alice", alice, bytes32(uint256(1))));
-        vm.prank(alice);
-        registry.commit(commitHash);
-
-        vm.prank(alice);
-        vm.expectRevert(HazzaRegistry.CommitmentTooNew.selector);
-        registry.register("alice", alice, bytes32(uint256(1)), false, address(0), "");
-    }
-
-    function test_commitTooOld() public {
-        bytes32 commitHash = keccak256(abi.encodePacked("alice", alice, bytes32(uint256(1))));
-        vm.prank(alice);
-        registry.commit(commitHash);
-        vm.warp(block.timestamp + 86401);
-
-        vm.prank(alice);
-        vm.expectRevert(HazzaRegistry.CommitmentTooOld.selector);
-        registry.register("alice", alice, bytes32(uint256(1)), false, address(0), "");
+    function test_noPublicRegister() public {
+        // Only relayer/owner can register — no public commit-reveal path
+        _register("relayer-only", alice);
+        assertFalse(registry.available("relayer-only"));
     }
 
     function test_cannotRegisterTaken() public {
@@ -617,39 +579,18 @@ contract HazzaRegistryTest is Test {
         _register("ab", alice);
     }
 
-    function test_leadingHyphen() public {
-        bytes32 salt = _commitAndWarp("-abc", alice);
-        vm.prank(alice);
-        vm.expectRevert(HazzaValidation.LeadingHyphen.selector);
-        registry.register("-abc", alice, salt, false, address(0), "");
+    // Relayer path uses permissive validation (ENSIP-15 normalization happens offchain)
+    // Only length checks apply — character validation is done by the worker
+
+    function test_permissivePath_acceptsUnicode() public {
+        // Relayer path accepts names that strict path would reject
+        _register("hello-world", alice);
+        assertFalse(registry.available("hello-world"));
     }
 
-    function test_trailingHyphen() public {
-        bytes32 salt = _commitAndWarp("abc-", alice);
-        vm.prank(alice);
-        vm.expectRevert(HazzaValidation.TrailingHyphen.selector);
-        registry.register("abc-", alice, salt, false, address(0), "");
-    }
-
-    function test_consecutiveHyphens() public {
-        bytes32 salt = _commitAndWarp("ab--cd", alice);
-        vm.prank(alice);
-        vm.expectRevert(HazzaValidation.ConsecutiveHyphens.selector);
-        registry.register("ab--cd", alice, salt, false, address(0), "");
-    }
-
-    function test_uppercase() public {
-        bytes32 salt = _commitAndWarp("Hello", alice);
-        vm.prank(alice);
-        vm.expectRevert(HazzaValidation.InvalidCharacter.selector);
-        registry.register("Hello", alice, salt, false, address(0), "");
-    }
-
-    function test_specialChars() public {
-        bytes32 salt = _commitAndWarp("hello!", alice);
-        vm.prank(alice);
-        vm.expectRevert(HazzaValidation.InvalidCharacter.selector);
-        registry.register("hello!", alice, salt, false, address(0), "");
+    function test_permissivePath_rejectsTooShort() public {
+        vm.expectRevert(HazzaValidation.NameTooShort.selector);
+        _register("ab", alice);
     }
 
     // =========================================================================

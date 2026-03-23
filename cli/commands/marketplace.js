@@ -243,9 +243,9 @@ cmd.command('sell <name> <price>')
 
       // Step 4: Build order
       const priceWei = ethToWei(price);
-      const feeBps = 200n; // 2%
-      const feeAmount = (priceWei * feeBps) / 10000n;
-      const sellerAmount = priceWei - feeAmount;
+      const feeBps = 0n;
+      const feeAmount = 0n;
+      const sellerAmount = priceWei;
       const duration = parseInt(opts.duration);
       const endTime = duration === 0
         ? BigInt('115792089237316195423570985008687907853269984665640564039457584007913129639935')
@@ -259,7 +259,7 @@ cmd.command('sell <name> <price>')
       const feeRemainder = feeAmount % BigInt('1000000000000000000');
       const feeDecimal = feeRemainder.toString().padStart(18, '0').slice(0, 6);
       const feeDisplay = `${feeWhole}.${feeDecimal}`;
-      out.info(`Listing: ${name} for ${price} ETH (2% fee = ${feeDisplay} ETH)`);
+      out.info(`Listing: ${name} for ${price} ETH (no marketplace fee)`);
       out.info(`Duration: ${duration === 0 ? 'no expiry' : `${duration}s`}`);
 
       // Step 5: Build EIP-712 typed data and sign with cast
@@ -383,7 +383,7 @@ cmd.command('sell <name> <price>')
           throw new Error('Invalid transaction hash returned: ' + txHash);
         }
 
-        out.success(`Listed! ${name}.hazza.name is now for sale at ${price} ETH (2% fee)`);
+        out.success(`Listed! ${name}.hazza.name is now for sale at ${price} ETH`);
         out.info(`Tx: ${txHash}`);
         out.info(`View at: hazza.name/marketplace`);
       } finally {

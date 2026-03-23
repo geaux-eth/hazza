@@ -108,7 +108,7 @@
   }
 
   /* ── Container / Header ── */
-  .container { max-width: 720px; margin: 0 auto; padding: 2rem 1.5rem; }
+  .container { max-width: 720px !important; margin: 0 auto; padding: 2rem 1.5rem; }
   .header {
     text-align: center;
     padding: 0.5rem 0 1rem;
@@ -119,10 +119,10 @@
     font-size: 5rem;
     font-weight: 700;
     letter-spacing: -0.02em;
-    color: #131325;
+    color: #4870D4;
     margin-top: -0.5rem;
   }
-  .header h1 span { color: #4870D4; }
+  .header h1 span { color: #131325; }
   .header p {
     color: #8a7d5a;
     margin-top: 0.25rem;
@@ -177,8 +177,8 @@
     box-shadow: 0 2px 8px rgba(19,19,37,0.05);
   }
   .result.show { display: block; }
-  .result .available { color: #CF3748; font-weight: 700; }
-  .result .taken { color: #CF3748; }
+  .result .available { color: #131325; font-weight: 700; }
+  .result .taken { color: #131325; }
 
   /* ── Pricing ── */
   .pricing {
@@ -400,25 +400,32 @@
   .checkout-step {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.6rem 0;
+    gap: 0.6rem;
+    padding: 0.5rem 0;
     color: #8a7d5a;
     font-size: 0.9rem;
   }
-  .checkout-step.active { color: #131325; }
-  .checkout-step.done { color: #CF3748; }
+  .checkout-step.active { color: #131325; font-weight: 600; }
+  .checkout-step.done { color: #1B7A3D; }
   .checkout-step.error { color: #CF3748; }
   .checkout-step .step-icon {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
-    background: #E8DCAB;
+    border: 2px solid #E8DCAB;
+    background: #fff;
     flex-shrink: 0;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #8a7d5a;
+    font-family: 'Fredoka', sans-serif;
   }
-  .checkout-step.active .step-icon { background: #131325; }
-  .checkout-step.done .step-icon { background: #CF3748; }
-  .checkout-step.error .step-icon { background: #CF3748; }
+  .checkout-step.active .step-icon { border-color: #4870D4; background: #4870D4; color: #fff; }
+  .checkout-step.done .step-icon { border-color: #1B7A3D; background: #1B7A3D; color: #fff; }
+  .checkout-step.error .step-icon { border-color: #CF3748; background: #CF3748; color: #fff; }
 
   /* ── Collapsible details ── */
   details.collapsible { margin: 1.5rem 0; }
@@ -661,8 +668,8 @@
     box-shadow: 0 2px 8px rgba(19,19,37,0.05);
   }
   .listing-card:hover { border-color: #CF3748; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(207,55,72,0.12); }
-  .listing-name { font-size: 1.15rem; font-weight: 700; color: #fff; margin-bottom: 0.25rem; font-family: 'Fredoka', sans-serif; }
-  .listing-name a { color: #fff; }
+  .listing-name { font-size: 1.15rem; font-weight: 700; color: #131325; margin-bottom: 0.25rem; font-family: 'Fredoka', sans-serif; }
+  .listing-name a { color: #4870D4; text-decoration: none; }
   .listing-name a:hover { color: #CF3748; }
   .listing-meta { font-size: 0.8rem; color: #8a7d5a; margin-bottom: 0.75rem; }
   .listing-price { font-size: 1.3rem; font-weight: 700; color: #fff; }
@@ -748,24 +755,25 @@
   .btn-cancel:hover { background: #CF3748; color: #fff; }
   .name-card {
     background: #fff;
-    border: 2px solid #E8DCAB;
-    border-radius: 10px;
-    padding: 1rem 1.25rem;
-    margin-bottom: 0.75rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.75rem;
+    border: 2px solid #4870D4;
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: box-shadow 0.2s ease;
   }
-  .name-card-info { flex: 1; min-width: 200px; }
-  .name-card-name { font-weight: 700; color: #131325; font-size: 1rem; font-family: 'Fredoka', sans-serif; }
-  .name-card-detail { font-size: 0.8rem; color: #8a7d5a; }
-  .name-card-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .name-card:hover {
+    box-shadow: 0 4px 16px rgba(72,112,212,0.2);
+  }
+  #mynames-container { display: flex; flex-direction: column; gap: 0.5rem; }
+  #mynames-container .name-card { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; cursor: default; }
+  .name-card-info { flex: 1; min-width: 0; }
+  .name-card-name { font-weight: 700; color: #131325; font-size: 0.9rem; font-family: 'Fredoka', sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name-card-detail { font-size: 0.75rem; color: #8a7d5a; }
+  .name-card-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; flex-shrink: 0; }
   .name-card-actions a, .name-card-actions button {
-    padding: 0.4rem 0.85rem;
+    padding: 0.3rem 0.6rem;
     border-radius: 6px;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     font-weight: 600;
     font-family: 'Fredoka', sans-serif;
     cursor: pointer;

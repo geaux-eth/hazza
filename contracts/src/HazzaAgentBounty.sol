@@ -4,147 +4,174 @@ pragma solidity ^0.8.24;
 import {IERC721} from "forge-std/interfaces/IERC721.sol";
 
 /// @title HazzaAgentBounty
-/// @notice ERC-8183 compatible agent bounty system for hazza marketplace
-/// @dev Sellers attach ETH bounties to listings. Agents who facilitate the sale claim the bounty
-///      after the NFT transfers to the buyer. The evaluator (this contract) verifies the transfer.
+/// @notice ERC-8183 compatible marketplace with automatic agent bounty payment
+/// @dev Sellers list names with a price and optional agent bounty. When a buyer purchases,
+///      the contract splits payment atomically: seller gets (price - bounty), agent gets bounty.
+///      No escrow required — bounty comes from sale proceeds.
 ///
 /// ERC-8183 Roles:
-///   Client  = Seller (creates bounty)
-///   Provider = Agent (claims bounty after facilitating sale)
-///   Evaluator = This contract (verifies NFT ownership changed)
+///   Client   = Seller (lists name with bounty)
+///   Provider = Agent (registers to facilitate sale, earns bounty)
+///   Evaluator = This contract (handles sale, verifies transfer, splits payment)
 contract HazzaAgentBounty {
 
-    struct Bounty {
-        address seller;          // Client — who posted the bounty
-        uint256 tokenId;         // Which hazza name (NFT)
-        uint256 amount;          // ETH bounty amount
-        address agent;           // Provider — agent who claims (0x0 = open to any)
-        uint64 expiresAt;        // Expiration timestamp (0 = no expiry)
-        bool claimed;            // Whether the bounty has been claimed
-        bool cancelled;          // Whether the seller cancelled
+    struct Listing {
+        address seller;
+        uint256 tokenId;
+        uint256 price;           // Total price buyer pays (in ETH)
+        uint256 bountyAmount;    // Portion of price that goes to agent
+        address agent;           // Agent who registered (0x0 = no agent yet)
+        uint64 expiresAt;        // Listing expiration (0 = no expiry)
+        bool active;
     }
 
     IERC721 public immutable registry;
     address public owner;
 
-    uint256 public nextBountyId;
-    mapping(uint256 => Bounty) public bounties;
-    mapping(uint256 => uint256) public tokenBounty; // tokenId => active bountyId (0 = none)
+    uint256 public nextListingId;
+    mapping(uint256 => Listing) public listings;
+    mapping(uint256 => uint256) public tokenListing; // tokenId => active listingId (0 = none)
 
-    event BountyCreated(uint256 indexed bountyId, address indexed seller, uint256 indexed tokenId, uint256 amount, address agent, uint64 expiresAt);
-    event BountyClaimed(uint256 indexed bountyId, address indexed agent, uint256 indexed tokenId, address newOwner);
-    event BountyCancelled(uint256 indexed bountyId, address indexed seller);
-    event BountyExpired(uint256 indexed bountyId);
+    event Listed(uint256 indexed listingId, address indexed seller, uint256 indexed tokenId, uint256 price, uint256 bountyAmount, uint64 expiresAt);
+    event AgentRegistered(uint256 indexed listingId, address indexed agent, uint256 indexed tokenId);
+    event Sale(uint256 indexed listingId, address indexed buyer, uint256 indexed tokenId, address seller, address agent, uint256 sellerProceeds, uint256 agentBounty);
+    event Cancelled(uint256 indexed listingId, address indexed seller);
 
     error NotSeller();
-    error BountyNotActive();
-    error NotAuthorizedAgent();
-    error NFTNotTransferred();
-    error BountyExpiredError();
-    error TokenAlreadyHasBounty();
-    error InsufficientAmount();
+    error NotActive();
+    error ListingExpired();
+    error AlreadyListed();
+    error BountyExceedsPrice();
+    error WrongPrice();
+    error NFTNotApproved();
+    error TransferFailed();
 
     constructor(address _registry) {
         registry = IERC721(_registry);
         owner = msg.sender;
-        nextBountyId = 1; // 0 means "no bounty"
+        nextListingId = 1;
     }
 
-    /// @notice Create a bounty for a hazza name sale
+    /// @notice List a name for sale with optional agent bounty
     /// @param tokenId The hazza name tokenId
-    /// @param agent Restrict to specific agent address (0x0 = open bounty)
-    /// @param expiresAt Expiration timestamp (0 = no expiry)
-    function createBounty(uint256 tokenId, address agent, uint64 expiresAt) external payable {
-        if (msg.value == 0) revert InsufficientAmount();
+    /// @param price Total price in ETH the buyer pays
+    /// @param bountyAmount Portion of price allocated to agent (0 = no bounty)
+    /// @param expiresAt Listing expiration timestamp (0 = no expiry)
+    function list(uint256 tokenId, uint256 price, uint256 bountyAmount, uint64 expiresAt) external {
         if (registry.ownerOf(tokenId) != msg.sender) revert NotSeller();
-        if (tokenBounty[tokenId] != 0) {
-            // Check if existing bounty is still active
-            Bounty storage existing = bounties[tokenBounty[tokenId]];
-            if (!existing.claimed && !existing.cancelled && (existing.expiresAt == 0 || existing.expiresAt > block.timestamp)) {
-                revert TokenAlreadyHasBounty();
-            }
+        if (bountyAmount >= price) revert BountyExceedsPrice();
+        if (!registry.isApprovedForAll(msg.sender, address(this)) &&
+            registry.getApproved(tokenId) != address(this)) revert NFTNotApproved();
+
+        // Cancel any existing active listing for this token
+        uint256 existingId = tokenListing[tokenId];
+        if (existingId != 0 && listings[existingId].active) {
+            listings[existingId].active = false;
         }
 
-        uint256 bountyId = nextBountyId++;
-        bounties[bountyId] = Bounty({
+        uint256 listingId = nextListingId++;
+        listings[listingId] = Listing({
             seller: msg.sender,
             tokenId: tokenId,
-            amount: msg.value,
-            agent: agent,
+            price: price,
+            bountyAmount: bountyAmount,
+            agent: address(0),
             expiresAt: expiresAt,
-            claimed: false,
-            cancelled: false
+            active: true
         });
-        tokenBounty[tokenId] = bountyId;
+        tokenListing[tokenId] = listingId;
 
-        emit BountyCreated(bountyId, msg.sender, tokenId, msg.value, agent, expiresAt);
+        emit Listed(listingId, msg.sender, tokenId, price, bountyAmount, expiresAt);
     }
 
-    /// @notice Claim a bounty after facilitating a sale
-    /// @dev The evaluator logic: checks that the NFT is no longer owned by the seller
-    /// @param bountyId The bounty to claim
-    function claimBounty(uint256 bountyId) external {
-        Bounty storage b = bounties[bountyId];
-        if (b.claimed || b.cancelled) revert BountyNotActive();
-        if (b.expiresAt != 0 && b.expiresAt < block.timestamp) revert BountyExpiredError();
-        if (b.agent != address(0) && b.agent != msg.sender) revert NotAuthorizedAgent();
+    /// @notice Agent registers to facilitate a sale (earn the bounty)
+    /// @param listingId The listing to register for
+    function registerAgent(uint256 listingId) external {
+        Listing storage l = listings[listingId];
+        if (!l.active) revert NotActive();
+        if (l.expiresAt != 0 && l.expiresAt < block.timestamp) revert ListingExpired();
+        if (l.bountyAmount == 0) revert BountyExceedsPrice(); // no bounty to earn
+        if (l.seller == msg.sender) revert NotSeller(); // seller can't be their own agent
 
-        // ERC-8183 Evaluator: verify the NFT has been transferred away from the seller
-        address currentOwner = registry.ownerOf(b.tokenId);
-        if (currentOwner == b.seller) revert NFTNotTransferred();
-
-        b.claimed = true;
-        tokenBounty[b.tokenId] = 0;
-
-        // Pay the agent
-        (bool success,) = payable(msg.sender).call{value: b.amount}("");
-        require(success, "ETH transfer failed");
-
-        emit BountyClaimed(bountyId, msg.sender, b.tokenId, currentOwner);
+        l.agent = msg.sender;
+        emit AgentRegistered(listingId, msg.sender, l.tokenId);
     }
 
-    /// @notice Cancel a bounty and reclaim ETH
-    /// @param bountyId The bounty to cancel
-    function cancelBounty(uint256 bountyId) external {
-        Bounty storage b = bounties[bountyId];
-        if (b.seller != msg.sender) revert NotSeller();
-        if (b.claimed || b.cancelled) revert BountyNotActive();
+    /// @notice Purchase a listed name — payment splits automatically
+    /// @param listingId The listing to purchase
+    function buy(uint256 listingId) external payable {
+        Listing storage l = listings[listingId];
+        if (!l.active) revert NotActive();
+        if (l.expiresAt != 0 && l.expiresAt < block.timestamp) revert ListingExpired();
+        if (msg.value != l.price) revert WrongPrice();
 
-        b.cancelled = true;
-        tokenBounty[b.tokenId] = 0;
+        l.active = false;
+        tokenListing[l.tokenId] = 0;
 
-        (bool success,) = payable(msg.sender).call{value: b.amount}("");
-        require(success, "ETH transfer failed");
+        // Transfer NFT to buyer
+        registry.transferFrom(l.seller, msg.sender, l.tokenId);
 
-        emit BountyCancelled(bountyId, msg.sender);
+        // Split payment
+        uint256 agentPayout = 0;
+        if (l.agent != address(0) && l.bountyAmount > 0) {
+            agentPayout = l.bountyAmount;
+            (bool agentOk,) = payable(l.agent).call{value: agentPayout}("");
+            if (!agentOk) revert TransferFailed();
+        }
+
+        uint256 sellerPayout = msg.value - agentPayout;
+        (bool sellerOk,) = payable(l.seller).call{value: sellerPayout}("");
+        if (!sellerOk) revert TransferFailed();
+
+        emit Sale(listingId, msg.sender, l.tokenId, l.seller, l.agent, sellerPayout, agentPayout);
     }
 
-    /// @notice Reclaim ETH from an expired bounty
-    /// @param bountyId The expired bounty
-    function reclaimExpired(uint256 bountyId) external {
-        Bounty storage b = bounties[bountyId];
-        if (b.seller != msg.sender) revert NotSeller();
-        if (b.claimed || b.cancelled) revert BountyNotActive();
-        if (b.expiresAt == 0 || b.expiresAt >= block.timestamp) revert BountyNotActive();
+    /// @notice Cancel a listing
+    /// @param listingId The listing to cancel
+    function cancel(uint256 listingId) external {
+        Listing storage l = listings[listingId];
+        if (l.seller != msg.sender) revert NotSeller();
+        if (!l.active) revert NotActive();
 
-        b.cancelled = true;
-        tokenBounty[b.tokenId] = 0;
+        l.active = false;
+        tokenListing[l.tokenId] = 0;
 
-        (bool success,) = payable(msg.sender).call{value: b.amount}("");
-        require(success, "ETH transfer failed");
-
-        emit BountyExpired(bountyId);
+        emit Cancelled(listingId, msg.sender);
     }
 
-    /// @notice Get active bounty for a token
-    function getActiveBounty(uint256 tokenId) external view returns (
-        uint256 bountyId, uint256 amount, address agent, uint64 expiresAt, address seller
+    /// @notice Update price and/or bounty on an active listing
+    /// @param listingId The listing to update
+    /// @param newPrice New total price
+    /// @param newBountyAmount New bounty amount
+    function updateListing(uint256 listingId, uint256 newPrice, uint256 newBountyAmount) external {
+        Listing storage l = listings[listingId];
+        if (l.seller != msg.sender) revert NotSeller();
+        if (!l.active) revert NotActive();
+        if (newBountyAmount >= newPrice) revert BountyExceedsPrice();
+
+        l.price = newPrice;
+        l.bountyAmount = newBountyAmount;
+    }
+
+    /// @notice Get active listing for a token
+    function getActiveListing(uint256 tokenId) external view returns (
+        uint256 listingId, address seller, uint256 price, uint256 bountyAmount,
+        address agent, uint64 expiresAt
     ) {
-        bountyId = tokenBounty[tokenId];
-        if (bountyId == 0) return (0, 0, address(0), 0, address(0));
-        Bounty storage b = bounties[bountyId];
-        if (b.claimed || b.cancelled) return (0, 0, address(0), 0, address(0));
-        if (b.expiresAt != 0 && b.expiresAt < block.timestamp) return (0, 0, address(0), 0, address(0));
-        return (bountyId, b.amount, b.agent, b.expiresAt, b.seller);
+        listingId = tokenListing[tokenId];
+        if (listingId == 0) return (0, address(0), 0, 0, address(0), 0);
+        Listing storage l = listings[listingId];
+        if (!l.active) return (0, address(0), 0, 0, address(0), 0);
+        if (l.expiresAt != 0 && l.expiresAt < block.timestamp) return (0, address(0), 0, 0, address(0), 0);
+        return (listingId, l.seller, l.price, l.bountyAmount, l.agent, l.expiresAt);
+    }
+
+    /// @notice Get listing details by ID
+    function getListing(uint256 listingId) external view returns (
+        address seller, uint256 tokenId, uint256 price, uint256 bountyAmount,
+        address agent, uint64 expiresAt, bool active
+    ) {
+        Listing storage l = listings[listingId];
+        return (l.seller, l.tokenId, l.price, l.bountyAmount, l.agent, l.expiresAt, l.active);
     }
 }

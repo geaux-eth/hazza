@@ -1,11 +1,27 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { useDisconnect } from 'wagmi';
 
 export default function Nav() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [walletMenuOpen, setWalletMenuOpen] = useState(false);
+  const walletMenuRef = useRef<HTMLDivElement>(null);
+  const { disconnect } = useDisconnect();
 
   const closeMenu = () => setMenuOpen(false);
+
+  // Close wallet dropdown on outside click
+  useEffect(() => {
+    if (!walletMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (walletMenuRef.current && !walletMenuRef.current.contains(e.target as Node)) {
+        setWalletMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [walletMenuOpen]);
 
   return (
     <div className="nav-bar">
@@ -25,22 +41,11 @@ export default function Nav() {
           <Link to="/register" onClick={closeMenu}>register</Link>
           <Link to="/marketplace" onClick={closeMenu}>marketplace</Link>
           <Link to="/dashboard" onClick={closeMenu}>dashboard</Link>
-          <Link to="/pricing" onClick={closeMenu}>pricing</Link>
+          <Link to="/messages" onClick={closeMenu}>messages</Link>
           <Link to="/about" onClick={closeMenu}>about</Link>
           <Link to="/docs" onClick={closeMenu}>docs</Link>
-          <a
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              closeMenu();
-              window.dispatchEvent(new CustomEvent('openNomiChat'));
-            }}
-            style={{ color: '#4870D4', fontWeight: 600 }}
-          >
-            nomi
-          </a>
           <ConnectButton.Custom>
-            {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
+            {({ account, chain, openChainModal, openConnectModal, mounted }) => {
               const connected = mounted && account && chain;
               if (!mounted) {
                 return (
@@ -64,9 +69,30 @@ export default function Nav() {
                 );
               }
               return (
-                <button className="nav-wallet-btn connected" onClick={openAccountModal}>
-                  {account.displayName}
-                </button>
+                <div ref={walletMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
+                  <button className="nav-wallet-btn connected" onClick={() => setWalletMenuOpen(!walletMenuOpen)}>
+                    {account.displayName}
+                  </button>
+                  {walletMenuOpen && (
+                    <div style={{
+                      position: 'absolute', top: '100%', right: 0, marginTop: 6,
+                      background: '#fff', borderRadius: 8, padding: '0.4rem 0',
+                      boxShadow: '0 4px 16px rgba(19,19,37,0.15)', minWidth: 140, zIndex: 10000,
+                    }}>
+                      <button
+                        onClick={() => { disconnect(); setWalletMenuOpen(false); }}
+                        style={{
+                          display: 'block', width: '100%', padding: '0.5rem 1rem',
+                          background: 'none', border: 'none', textAlign: 'left',
+                          fontFamily: "'Fredoka', sans-serif", fontSize: '0.85rem',
+                          color: '#CF3748', fontWeight: 600, cursor: 'pointer',
+                        }}
+                      >
+                        disconnect
+                      </button>
+                    </div>
+                  )}
+                </div>
               );
             }}
           </ConnectButton.Custom>

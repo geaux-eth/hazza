@@ -70,7 +70,7 @@ if (cssFile) {
 // Replace main JS filename
 if (jsFile) {
   // Match the entry JS (the one in the <script> tag, not modulepreload)
-  const jsRegex = /(?<=src="\$\{SPA_ASSET_BASE\}\/assets\/)index-[A-Za-z0-9_-]+\.js/g;
+  const jsRegex = /(?<=src="[^"]*\/assets\/)index-[A-Za-z0-9_-]+\.js/g;
   const before = pages;
   pages = pages.replace(jsRegex, jsFile);
   if (pages !== before) { updated = true; console.log('  Updated JS →', jsFile); }

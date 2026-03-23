@@ -2,17 +2,16 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
-import "../src/HazzaAgentBounty.sol";
+import "../src/HazzaBountyEscrow.sol";
 
-contract DeployAgentBounty is Script {
+contract DeployBountyEscrow is Script {
     function run() external {
-        // Registry address on Base mainnet
         address registry = 0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E;
 
         vm.startBroadcast();
-        HazzaAgentBounty bounty = new HazzaAgentBounty(registry);
+        HazzaBountyEscrow escrow = new HazzaBountyEscrow(registry);
         vm.stopBroadcast();
 
-        console.log("HazzaAgentBounty deployed at:", address(bounty));
+        console.log("HazzaBountyEscrow deployed at:", address(escrow));
     }
 }

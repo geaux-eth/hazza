@@ -5,7 +5,7 @@ export default function About() {
   return (
     <>
       <style>{`.section-title { color: #CF3748 !important; }`}</style>
-      <div className="header" style={{ background: '#4870D4', padding: '1.5rem 1rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
+      <div className="header" style={{ background: '#4870D4', padding: '1rem 1rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
         <h1 style={{ color: '#fff' }}>about</h1>
       </div>
 
@@ -129,6 +129,56 @@ export default function About() {
           . Set text records, link socials, point to content, or register an AI agent &mdash; all through
           onchain transactions.
         </p>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Pricing</div>
+        <div style={{ textAlign: 'center', margin: '1rem 0', padding: '1rem', border: '3px solid #CF3748', borderRadius: '12px', background: '#fff' }}>
+          <div style={{ color: '#CF3748', fontWeight: 700, fontSize: '1rem' }}>your first name</div>
+          <div style={{ color: '#4870D4', fontWeight: 700, fontSize: '1.6rem', fontFamily: "'Fredoka', sans-serif" }}>FREE</div>
+          <div style={{ color: '#8a7d5a', fontSize: '0.85rem', marginTop: '0.15rem' }}>just pay gas &mdash; 1 per wallet</div>
+        </div>
+        <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+          <div style={{ color: '#131325', fontWeight: 700, fontSize: '1rem' }}>additional names start at $5</div>
+          <div style={{ color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.15rem' }}>pay once, available forever</div>
+        </div>
+        <div className="info-grid">
+          <div className="info-row"><span className="label">Payment</span><span className="value">USDC on Base (~$0.01 gas per tx)</span></div>
+          <div className="info-row"><span className="label">Names 1&ndash;3</span><span className="value">1x ($5 each)</span></div>
+          <div className="info-row"><span className="label">Names 4&ndash;5</span><span className="value">2.5x ($12.50 each)</span></div>
+          <div className="info-row"><span className="label">Names 6&ndash;7</span><span className="value">5x ($25 each)</span></div>
+          <div className="info-row"><span className="label">Names 8+</span><span className="value">10x ($50 each)</span></div>
+        </div>
+        <p style={{ color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+          Progressive pricing deters bulk registration. The 90-day window resets automatically.
+          <br />
+          <a href="https://netlibrary.app" style={{ color: '#4870D4' }}>Unlimited Pass</a> holders get 20% off + 1 free name.
+        </p>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Namespaces</div>
+        <p style={{ color: '#8a7d5a', lineHeight: 1.7, marginBottom: '0.75rem' }}>
+          Turn any name into a namespace and issue subnames &mdash; e.g.{' '}
+          <strong style={{ color: '#131325' }}>alice.yourname</strong>,{' '}
+          <strong style={{ color: '#131325' }}>bot.yourname</strong>.
+        </p>
+        <div className="info-grid">
+          <div className="info-row"><span className="label">Enable</span><span className="value">Free (permanent)</span></div>
+          <div className="info-row"><span className="label">Subnames</span><span className="value">$1 each &mdash; full hazza name with profile, agent, and DNS</span></div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Ownership &amp; Rules</div>
+        <div className="info-grid">
+          <div className="info-row"><span className="label">Standard</span><span className="value">ERC-721 NFT on Base</span></div>
+          <div className="info-row"><span className="label">Transfer</span><span className="value">Via dashboard or any NFT marketplace</span></div>
+          <div className="info-row"><span className="label">Characters</span><span className="value">a&ndash;z, 0&ndash;9, hyphens &mdash; 1 to 64 chars</span></div>
+          <div className="info-row"><span className="label">Unicode</span><span className="value">ENSIP-15 emoji &amp; international support</span></div>
+          <div className="info-row"><span className="label">First-come</span><span className="value">No challenge or dispute system</span></div>
+          <div className="info-row"><span className="label">Contract</span><span className="value"><a href="https://github.com/geaux-eth/hazza">Open source</a>, non-upgradeable</span></div>
+        </div>
       </div>
 
       <div className="section">

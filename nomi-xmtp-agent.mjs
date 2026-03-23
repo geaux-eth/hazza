@@ -10,7 +10,8 @@ const NOMI_INTRO = [
   "gm. i'm nomi -- the hazza name agent.",
   "",
   "i can help you with everything hazza:",
-  "- search & register names",
+  "- check name availability (live)",
+  "- look up profiles & marketplace listings (live)",
   "- pricing & discounts",
   "- text records (avatar, socials, bio, agent endpoint)",
   "- marketplace (list, buy, make offers)",
@@ -29,7 +30,7 @@ const HELP_TEXT = [
   "",
   "-- registration --",
   '"register" -- how to register a name',
-  '"check [name]" -- check if a name is available',
+  '"check [name]" -- check if a name is available (live)',
   '"first free" -- how the free first name works',
   "",
   "-- pricing --",
@@ -43,9 +44,13 @@ const HELP_TEXT = [
   '"website" -- how to deploy an onchain website',
   "",
   "-- marketplace --",
-  '"marketplace" -- how to buy/sell/trade names',
+  '"marketplace" -- what\'s listed for sale (live)',
   '"list" -- how to list a name for sale',
   '"offer" -- how to make an offer on a name',
+  "",
+  "-- lookup --",
+  '"whois [name]" -- look up a name\'s profile (live)',
+  '"stats" -- registry stats (live)',
   "",
   "-- advanced --",
   '"namespace" -- how to create subnames',
@@ -88,16 +93,19 @@ const KB = {
     "first name: FREE (1 per wallet, just pay gas)",
     "additional names: flat $5 USDC",
     "",
-    "discounts:",
-    "- ENS import: 50% off (have an ENS name? get 50% off)",
-    "- Unlimited Pass holder: 20% off + 1 extra free name",
-    "- Net Library member: coming soon",
+    "Unlimited Pass holders (netlibrary.app/mint, $10 USDC):",
+    "- 20% off all paid registrations",
+    "- 1 extra free name (on top of everyone's first-free)",
     "",
-    "progressive anti-squat pricing:",
-    "- 2nd name in 90 days: 2.5x ($12.50)",
-    "- 3rd name in 90 days: 5x ($25)",
-    "- 4th+ name in 90 days: 10x ($50)",
-    "(resets after 90 days of no registration)",
+    "progressive anti-squat pricing (per wallet, 90-day window):",
+    "",
+    "              standard    with Unlimited Pass",
+    "names 1-3:    $5          $4",
+    "names 4-5:    $12.50      $10",
+    "names 6-7:    $25         $20",
+    "names 8+:     $50         $40",
+    "",
+    "free names (first-free + ULP bonus) don't count toward these tiers.",
     "",
     "namespaces: free to enable, $1 per subname",
     "",
@@ -108,24 +116,23 @@ const KB = {
     "available discounts on hazza names:",
     "",
     "1. first name free -- everyone gets 1 free name (just gas)",
-    "2. ENS import -- 50% off if you own an ENS name",
-    "3. Unlimited Pass -- 20% off all registrations + 1 extra free name",
+    "2. Unlimited Pass -- 20% off all registrations + 1 extra free name",
     "   (mint at netlibrary.app/mint for $10 USDC)",
     "",
-    "discounts stack! ENS import + Unlimited Pass = big savings.",
-    "the register page auto-detects your ENS names and shows discounts.",
+    "the register page auto-detects your Unlimited Pass and shows discounts.",
   ].join("\n"),
 
   antisquat: [
     "progressive anti-squat pricing protects against name squatting:",
     "",
     "within a rolling 90-day window per wallet:",
-    "- 1st name: base price ($5 or free if first ever)",
-    "- 2nd name: 2.5x ($12.50)",
-    "- 3rd name: 5x ($25)",
-    "- 4th+: 10x ($50)",
+    "- names 1-3: base price ($5, or free if first ever)",
+    "- names 4-5: 2.5x ($12.50)",
+    "- names 6-7: 5x ($25)",
+    "- names 8+: 10x ($50)",
     "",
-    "the multiplier resets after 90 days of no registration.",
+    "free names don't count toward these tiers.",
+    "the window resets after 90 days.",
     "this keeps names available for people who actually want to use them.",
   ].join("\n"),
 
@@ -197,6 +204,11 @@ const KB = {
     "marketplace fee: 2% on sales",
     "powered by Seaport protocol (same as OpenSea)",
     "",
+    "for agents/CLIs: the API handles all Seaport complexity.",
+    "GET /api/marketplace/listings to browse.",
+    "POST /api/marketplace/fulfill with {orderHash, buyerAddress} to get the exact transaction data to execute a purchase.",
+    "the API returns {approvals, fulfillment} -- just send those transactions. no need to decode Seaport orders.",
+    "",
     "the forum tab lets you discuss names and connect with other users.",
     "all forum messages are stored onchain via Net Protocol.",
   ].join("\n"),
@@ -242,7 +254,7 @@ const KB = {
     "how to set up:",
     "1. own a hazza name",
     "2. enable namespace on the manage page (free)",
-    "3. set a subname price ($1 default)",
+    "3. subnames cost $1 each (flat rate)",
     "4. share your namespace -- anyone can register subnames",
     "",
     "use cases: teams, communities, projects, DAOs",
@@ -327,34 +339,48 @@ const KB = {
   dns: [
     "custom domain setup:",
     "",
-    "you can point your hazza name to a traditional domain:",
+    "you can link up to 10 custom domains to your hazza name:",
     "",
-    "1. set the 'url' text record to your domain",
-    "2. add a CNAME record on your domain pointing to hazza.name",
-    "3. your domain now resolves through hazza",
+    "1. go to hazza.name/manage",
+    "2. add your domain(s) in the custom domains section",
+    "3. set a CNAME record on your domain pointing to hazza.name",
+    "4. your domain now serves your hazza profile or onchain site",
     "",
-    "you can also set up ENS-to-DNS resolution:",
-    "your hazza name works alongside ENS -- it's complementary, not competing.",
+    "this means your hazza name works as a real web address.",
+    "no hosting needed -- it's all onchain.",
   ].join("\n"),
 
   about: [
-    "hazza.name -- immediately useful names.",
+    "hazza.name -- immediately useful names on Base.",
     "",
-    "hazza is an onchain name registry on Base.",
     'the name comes from "has a" -- so brian.hazza.name reads as "brian has a name."',
     "",
-    "what makes hazza different:",
-    "- permanent: pay once, no renewals, no expiration",
-    "- immediately useful: live web profile, text records, API access -- all instant",
-    "- first name free: everyone gets 1 free name",
-    "- flat pricing: $5 for additional names (no length-based pricing games)",
-    "- anti-squat: progressive pricing prevents hoarding",
-    "- onchain websites: deploy a site to your name via Net Protocol",
-    "- agent-native: ERC-8004 agent registry built in",
-    "- marketplace: buy, sell, trade names",
+    "5 things that make hazza different:",
     "",
-    "powered by x402 and Net Protocol.",
-    "built by GEAUX (geaux.eth).",
+    "1. YOUR NAME IS AN NFT",
+    "   ERC-721 on Base. you own it in your wallet. transferable, tradeable, permanent.",
+    "   no renewals, no expiration. pay once, it's yours forever.",
+    "",
+    "2. LIVE WEBSITE FROM DAY ONE",
+    "   the moment you register, yourname.hazza.name is a real web page.",
+    "   profile with avatar, bio, and socials -- or deploy a full custom site",
+    "   via Net Protocol (netprotocol.app). no hosting needed, all onchain.",
+    "",
+    "3. ONCHAIN IDENTITY + RECORDS",
+    "   text records for everything: avatar, bio, socials, links, multi-chain addresses.",
+    "   all onchain on Base. resolves via API and CCIP-Read. programs can read your profile.",
+    "",
+    "4. AGENT-NATIVE (ERC-8004)",
+    "   register your AI agent with a discoverable name and endpoint.",
+    "   other agents find yours through the registry. hazza is built for agents, not just humans.",
+    "",
+    "5. MARKETPLACE + COMMUNITY",
+    "   buy, sell, trade names on the built-in marketplace (Seaport).",
+    "   forum for discussion. XMTP messaging between users.",
+    "   names are assets with real utility, not just collectibles.",
+    "",
+    "pricing: first name FREE. additional names $5 USDC. namespaces free, $1/subname.",
+    "powered by x402 and Net Protocol. built by GEAUX (geaux.eth).",
   ].join("\n"),
 
   nomi: [
@@ -376,7 +402,7 @@ const KB = {
   contracts: [
     "hazza contract addresses (Base mainnet):",
     "",
-    "registry: 0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746",
+    "registry: 0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E",
     "USDC: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     "ERC-8004 registry: 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
     "",
@@ -406,7 +432,17 @@ const KB = {
   ].join("\n"),
 };
 
-function generateResponse(text) {
+const API_BASE = "https://hazza.name";
+
+async function apiFetch(path) {
+  try {
+    const res = await fetch(`${API_BASE}${path}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+async function generateResponse(text) {
   const lower = text.toLowerCase().trim();
 
   // Greetings
@@ -422,19 +458,37 @@ function generateResponse(text) {
     return HELP_TEXT;
   }
 
-  // Check availability
+  // Check availability (live API call)
   if (lower.startsWith("check ")) {
-    const name = lower.replace("check ", "").trim().replace(/[^a-z0-9-]/g, "");
-    if (name.length > 0 && name.length <= 64) {
-      return [
-        `to check if "${name}" is available:`,
-        "",
-        `visit: hazza.name/register and search for "${name}"`,
-        `or call: hazza.name/api/available/${name}`,
-        "",
-        "i can't check the contract directly from here yet, but those two methods are instant.",
-      ].join("\n");
+    let name = lower.replace("check ", "").trim();
+    // strip .hazza.name suffix if present
+    name = name.replace(/\.hazza\.name$/, "").replace(/[^a-z0-9-]/g, "");
+    if (name.length >= 3 && name.length <= 63) {
+      const data = await apiFetch(`/api/available/${name}`);
+      if (data) {
+        if (data.available) {
+          const quote = await apiFetch(`/api/quote/${name}`);
+          const price = quote?.totalCost === "0" ? "FREE (first name)" : `$${(parseInt(quote?.totalCost || "5000000") / 1e6).toFixed(2)} USDC`;
+          return [
+            `"${name}.hazza.name" is AVAILABLE.`,
+            "",
+            `price: ${price} (connect wallet at hazza.name/register for exact quote)`,
+            `register: hazza.name/register?name=${name}`,
+          ].join("\n");
+        } else {
+          return [
+            `"${name}.hazza.name" is taken.`,
+            data.owner ? `owner: ${data.owner}` : "",
+            "",
+            "try a different name, or add numbers/hyphens.",
+            `browse who owns it: hazza.name/api/profile/${name}`,
+          ].filter(Boolean).join("\n");
+        }
+      }
+      return `couldn't reach the API right now. try: hazza.name/api/available/${name}`;
     }
+    if (name.length < 3) return "names must be at least 3 characters.";
+    if (name.length > 63) return "names can be at most 63 characters.";
   }
 
   // Registration
@@ -453,7 +507,7 @@ function generateResponse(text) {
   }
 
   // Discounts
-  if (lower.includes("discount") || lower.includes("ens import") || lower.includes("unlimited pass")) {
+  if (lower.includes("discount") || lower.includes("unlimited pass")) {
     return KB.discounts;
   }
 
@@ -477,8 +531,36 @@ function generateResponse(text) {
     return KB.website;
   }
 
-  // Marketplace
-  if (lower.includes("marketplace") || lower.includes("market") || lower.includes("buy") || lower.includes("sell") || lower.includes("trade")) {
+  // Marketplace (live listings + static info)
+  if (lower.includes("marketplace") || lower.includes("market") || lower.includes("for sale") || lower.includes("what's listed") || lower.includes("whats listed") || lower.includes("listings")) {
+    const data = await apiFetch("/api/marketplace/listings");
+    const listings = data?.listings || [];
+    if (listings.length > 0) {
+      const lines = [
+        `${listings.length} name${listings.length === 1 ? "" : "s"} currently listed on the marketplace:`,
+        "",
+      ];
+      for (const l of listings.slice(0, 10)) {
+        const price = l.price ? `${l.price} ${l.currency || ""}`.trim() : "offer";
+        lines.push(`- ${l.name}.hazza.name — ${price}`);
+      }
+      if (listings.length > 10) lines.push(`... and ${listings.length - 10} more`);
+      lines.push("", "browse all: hazza.name/marketplace");
+      return lines.join("\n");
+    }
+    return [
+      "no names are currently listed for sale on the marketplace.",
+      "",
+      "the marketplace is at hazza.name/marketplace.",
+      "you can list your name, make offers on any registered name,",
+      "or browse the forum to connect with other users.",
+      "",
+      KB.marketplace,
+    ].join("\n");
+  }
+
+  // Buy/sell/trade (general marketplace info)
+  if (lower.includes("buy") || lower.includes("sell") || lower.includes("trade")) {
     return KB.marketplace;
   }
 
@@ -537,6 +619,42 @@ function generateResponse(text) {
     return KB.contracts;
   }
 
+  // Stats (live)
+  if (lower.includes("stats") || lower.includes("how many") || lower.includes("total names") || lower.includes("registered")) {
+    const data = await apiFetch("/api/stats");
+    if (data?.totalRegistered) {
+      return [
+        `${data.totalRegistered} names registered on hazza so far.`,
+        "",
+        `contract: ${data.contract}`,
+        `chain: Base (${data.chain})`,
+        "",
+        "register yours at hazza.name/register",
+      ].join("\n");
+    }
+    return "couldn't fetch stats right now. check hazza.name/api/stats";
+  }
+
+  // Lookup a name's profile (live)
+  if (lower.startsWith("whois ") || lower.startsWith("lookup ") || lower.startsWith("profile ")) {
+    let name = lower.replace(/^(whois|lookup|profile)\s+/, "").trim();
+    name = name.replace(/\.hazza\.name$/, "").replace(/[^a-z0-9-]/g, "");
+    if (name.length >= 3) {
+      const data = await apiFetch(`/api/profile/${name}`);
+      if (data?.registered) {
+        const lines = [`${name}.hazza.name`, ""];
+        if (data.owner) lines.push(`owner: ${data.owner}`);
+        if (data.texts?.description) lines.push(`bio: ${data.texts.description}`);
+        if (data.texts?.url) lines.push(`url: ${data.texts.url}`);
+        if (data.texts?.["com.twitter"]) lines.push(`twitter: @${data.texts["com.twitter"]}`);
+        if (data.texts?.["com.github"]) lines.push(`github: ${data.texts["com.github"]}`);
+        lines.push("", `profile: https://${name}.hazza.name`);
+        return lines.join("\n");
+      }
+      return `"${name}" is not registered. it might be available -- try "check ${name}"`;
+    }
+  }
+
   // Forum
   if (lower.includes("forum") || lower.includes("board") || lower.includes("message board")) {
     return "the forum is on the marketplace page (hazza.name/marketplace, click the 'forum' tab). all messages are stored onchain via Net Protocol. connect your wallet to post.";
@@ -574,7 +692,7 @@ async function main() {
       `[${new Date().toISOString()}] Message from ${senderAddress}: ${incomingText.substring(0, 100)}`
     );
 
-    const response = generateResponse(incomingText);
+    const response = await generateResponse(incomingText);
     await ctx.conversation.sendText(response);
 
     console.log(

@@ -72,12 +72,8 @@ When a buyer wants a name that's not listed, reach out in this priority order:
 
 ## Fee Structure
 
-| Deal Type | Platform Fee | Broker Fee | Total |
-|-----------|-------------|------------|-------|
-| Direct (no broker) | 2% | — | 2% |
-| Brokered by agent | 1% | 1% | 2% |
-
-Your broker address: `0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d`
+- **No marketplace fee** — sellers receive 100% of the sale price
+- Sellers can optionally set an **agent bounty** — this is deducted from sale proceeds automatically when the name sells (no upfront escrow)
 
 ## What to Say About hazza + Net Library
 

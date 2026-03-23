@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
 import { parseEther, formatEther, formatUnits, type Address } from 'viem';
 import {
   REGISTRY_ADDRESS, SEAPORT_ADDRESS, BAZAAR_ADDRESS,
-  MARKETPLACE_FEE_BPS, TREASURY_ADDRESS, ERC721_ABI,
+  MARKETPLACE_FEE_BPS, TREASURY_ADDRESS, ERC721_ABI, USDC_ADDRESS,
+  BOUNTY_ESCROW_ADDRESS,
 } from '../config/contracts';
 import { API_BASE } from '../constants';
 import ChatPanel from '../components/ChatPanel';
@@ -83,18 +84,18 @@ const BATCH_EXECUTOR_ABI = [
   },
 ] as const;
 
-const BOUNTY_ADDRESS = '0x390d571D0CaA7D82cf089e978A38785f5B3A1759' as const;
-const BOUNTY_ABI = [
-  { name: 'createBounty', type: 'function', stateMutability: 'payable',
-    inputs: [{ name: 'tokenId', type: 'uint256' }, { name: 'agent', type: 'address' }, { name: 'expiresAt', type: 'uint64' }],
-    outputs: [{ name: 'bountyId', type: 'uint256' }]
+
+const BOUNTY_ESCROW_ABI = [
+  { name: 'registerBounty', type: 'function', stateMutability: 'nonpayable',
+    inputs: [{ name: 'tokenId', type: 'uint256' }, { name: 'bountyAmount', type: 'uint256' }],
+    outputs: []
   },
-  { name: 'getActiveBounty', type: 'function', stateMutability: 'view',
+  { name: 'getBounty', type: 'function', stateMutability: 'view',
     inputs: [{ name: 'tokenId', type: 'uint256' }],
     outputs: [
-      { name: 'bountyId', type: 'uint256' }, { name: 'amount', type: 'uint256' },
-      { name: 'agent', type: 'address' }, { name: 'expiresAt', type: 'uint64' },
-      { name: 'seller', type: 'address' }
+      { name: 'seller', type: 'address' }, { name: 'bountyAmount', type: 'uint256' },
+      { name: 'agent', type: 'address' }, { name: 'claimed', type: 'bool' },
+      { name: 'active', type: 'bool' }
     ]
   },
 ] as const;
@@ -230,7 +231,7 @@ const SEAPORT_EIP712_TYPES = {
 
 // --- Tab type ---
 
-type TabKey = 'browse' | 'mynames' | 'offers' | 'sales' | 'forum';
+type TabKey = 'browse' | 'mynames' | 'offers' | 'sales' | 'forum' | 'donate';
 
 // ============================================================
 // Sub-components
@@ -474,7 +475,7 @@ function OfferModal({ name, address, walletClient, publicClient, onClose }: {
           <option value="604800">7 days</option>
           <option value="2592000">30 days</option>
         </select>
-        <div style={{ fontSize: '0.75rem', color: '#8a7d5a', marginBottom: '1rem' }}>2% marketplace fee (included in offer). Seller receives 98% in WETH.</div>
+        <div style={{ fontSize: '0.75rem', color: '#8a7d5a', marginBottom: '1rem' }}>{MARKETPLACE_FEE_BPS > 0 ? `${MARKETPLACE_FEE_BPS / 100}% marketplace fee.` : 'No marketplace fee.'} Seller receives payment in WETH.</div>
         <button
           onClick={makeOffer} disabled={submitting}
           style={{ width: '100%', padding: '0.6rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '0.9rem', cursor: submitting ? 'not-allowed' : 'pointer', fontFamily: 'Fredoka, sans-serif', opacity: submitting ? 0.7 : 1 }}
@@ -537,23 +538,31 @@ function BrowseTab({
     });
   }, [listings]);
 
-  // Load bounty info (batched)
+  // Load bounty info from escrow contract
   useEffect(() => {
+    if (!publicClient) return;
     const withTokenId = listings.filter(l => l.tokenId);
     if (withTokenId.length === 0) return;
     Promise.all(
-      withTokenId.map(l =>
-        fetch(`${API_BASE}/api/bounty/${l.tokenId}`)
-          .then(r => r.json())
-          .then(d => ({ orderHash: l.orderHash, active: d.active, amount: d.amount }))
-          .catch(() => ({ orderHash: l.orderHash, active: false, amount: '0' }))
-      )
+      withTokenId.map(async (l) => {
+        try {
+          const [, bountyAmount, , , active] = await publicClient.readContract({
+            address: BOUNTY_ESCROW_ADDRESS as Address,
+            abi: BOUNTY_ESCROW_ABI,
+            functionName: 'getBounty',
+            args: [BigInt(l.tokenId!)],
+          }) as [string, bigint, string, boolean, boolean];
+          return { orderHash: l.orderHash, active, amount: active ? formatEther(bountyAmount) : '0' };
+        } catch {
+          return { orderHash: l.orderHash, active: false, amount: '0' };
+        }
+      })
     ).then(results => {
       const bounties: Record<string, string> = {};
       results.forEach(r => { if (r.active) bounties[r.orderHash] = r.amount; });
       setBountyInfo(bounties);
     });
-  }, [listings]);
+  }, [listings, publicClient]);
 
   const filtered = useMemo(() => {
     let result = listings.filter(l => {
@@ -594,6 +603,10 @@ function BrowseTab({
 
   async function buyListing(listing: Listing) {
     if (!address || !walletClient.data || !publicClient) return;
+    if (address.toLowerCase() === listing.seller.toLowerCase()) {
+      alert("You can't buy your own listing.");
+      return;
+    }
     setBuyStatus('Preparing transaction...');
     try {
       const res = await fetch(`${API_BASE}/api/marketplace/fulfill`, {
@@ -642,8 +655,8 @@ function BrowseTab({
         <input
           type="text" value={search} onChange={e => setSearch(e.target.value)}
           onKeyUp={e => { if (e.key === 'Enter') { /* filtered already reactive */ } }}
-          placeholder="search"
-          style={{ width: 80, flex: '0 1 auto', padding: '0.4rem 0.5rem', border: '2px solid #E8DCAB', borderRadius: 6, background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka', sans-serif", outline: 'none' }}
+          placeholder="search names..."
+          style={{ flex: '1 1 auto', minWidth: 0, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: 6, background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka', sans-serif", outline: 'none' }}
         />
         <button
           onClick={() => {/* search is reactive */}}
@@ -788,10 +801,17 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
         address: SEAPORT_ADDRESS, abi: SEAPORT_ABI, functionName: 'getCounter', args: [address],
       }) as bigint;
 
-      // Build order
+      // Build order — consideration splits: seller gets (price - fee - bounty),
+      // treasury gets fee, escrow contract gets bounty (if any).
       const priceWei = parseEther(sellPrice);
       const feeAmount = (priceWei * BigInt(MARKETPLACE_FEE_BPS)) / 10000n;
-      const sellerAmount = priceWei - feeAmount;
+      const bountyWei = bountyAmount && parseFloat(bountyAmount) > 0 ? parseEther(bountyAmount) : 0n;
+      if (bountyWei + feeAmount >= priceWei) {
+        alert('Bounty amount must be less than the listing price.');
+        setListing(false);
+        return;
+      }
+      const sellerAmount = priceWei - feeAmount - bountyWei;
       const dur = parseInt(sellDuration);
       const endTime = dur === 0
         ? BigInt('115792089237316195423570985008687907853269984665640564039457584007913129639935')
@@ -809,6 +829,12 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
         consideration.push({
           itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
           identifierOrCriteria: 0n, startAmount: feeAmount, endAmount: feeAmount, recipient: TREASURY_ADDRESS,
+        });
+      }
+      if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
+        consideration.push({
+          itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
+          identifierOrCriteria: 0n, startAmount: bountyWei, endAmount: bountyWei, recipient: BOUNTY_ESCROW_ADDRESS as Address,
         });
       }
 
@@ -846,23 +872,22 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
       if (receipt.status === 'success') {
-        let bountyMsg = '';
-        if (bountyAmount && parseFloat(bountyAmount) > 0) {
+        // Register bounty on escrow contract if bounty specified
+        if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
           try {
-            const bountyHash = await walletClient.data!.writeContract({
-              address: BOUNTY_ADDRESS,
-              abi: BOUNTY_ABI,
-              functionName: 'createBounty',
-              args: [BigInt(tokenId), '0x0000000000000000000000000000000000000000' as Address, 0n],
-              value: parseEther(bountyAmount),
+            const bountyHash = await walletClient.data.writeContract({
+              address: BOUNTY_ESCROW_ADDRESS as Address,
+              abi: BOUNTY_ESCROW_ABI,
+              functionName: 'registerBounty',
+              args: [BigInt(tokenId), bountyWei],
             });
-            await publicClient!.waitForTransactionReceipt({ hash: bountyHash });
-            bountyMsg = `\n\nAgent bounty of ${bountyAmount} ETH created!`;
+            await publicClient.waitForTransactionReceipt({ hash: bountyHash });
           } catch (e: any) {
-            bountyMsg = `\n\nNote: Listing succeeded but bounty creation failed: ${e.shortMessage || e.message}`;
+            console.warn('Bounty registration failed (listing still active):', e.message);
+            alert(`Warning: your listing is live, but bounty registration failed. The agent bounty of ${bountyAmount} ETH was NOT registered. You can retry by relisting.`);
           }
         }
-        alert(`Listed! ${name}.hazza.name is now for sale at ${sellPrice} ETH (2% fee).\n\nTx: ${hash}\n\nThis listing appears on hazza.name/marketplace and netprotocol.app/bazaar.${bountyMsg}`);
+        alert(`Listed! ${name}.hazza.name is now for sale at ${sellPrice} ETH.${bountyAmount && parseFloat(bountyAmount) > 0 ? ` Agent bounty: ${bountyAmount} ETH (paid from sale proceeds).` : ''}\n\nTx: ${hash}\n\nThis listing appears on hazza.name/marketplace and netprotocol.app/bazaar.`);
         setSellFormName(null);
         setSellPrice('');
         setBountyAmount('');
@@ -905,7 +930,7 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
           <div className="name-card">
             <div className="name-card-info">
               <div className="name-card-name">
-                {n.name}<span style={{ color: '#4870D4' }}>.hazza.name</span>
+                <span style={{ color: '#4870D4' }}>{n.name}</span><span style={{ color: '#131325' }}>.hazza.name</span>
                 {' '}<span className={`status-badge status-${n.status}`}>{n.status}</span>
               </div>
               <div className="name-card-detail">Token #{n.tokenId}</div>
@@ -926,7 +951,7 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
                 type="number" value={sellPrice} onChange={e => setSellPrice(e.target.value)}
                 placeholder="0.01" step="any" min="0"
               />
-              <div style={{ fontSize: 11, color: '#8a7d5a', margin: '-4px 0 8px' }}>2% marketplace fee deducted from sale</div>
+              <div style={{ fontSize: 11, color: '#8a7d5a', margin: '-4px 0 8px' }}>{MARKETPLACE_FEE_BPS > 0 ? `${MARKETPLACE_FEE_BPS / 100}% marketplace fee` : 'no marketplace fee'} — seller receives {MARKETPLACE_FEE_BPS > 0 ? `${100 - MARKETPLACE_FEE_BPS / 100}%` : '100%'}</div>
               <label>Duration</label>
               <select value={sellDuration} onChange={e => setSellDuration(e.target.value)}>
                 <option value="604800">7 days</option>
@@ -939,7 +964,7 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
                 type="number" value={bountyAmount} onChange={e => setBountyAmount(e.target.value)}
                 placeholder="0" step="any" min="0"
               />
-              <div style={{ fontSize: 11, color: '#8a7d5a', margin: '-4px 0 8px' }}>incentivize AI agents to find buyers for your name</div>
+              <div style={{ fontSize: 11, color: '#8a7d5a', margin: '-4px 0 8px' }}>deducted from sale proceeds — the agent earns this when your name sells</div>
               <button className="btn-sell" onClick={() => createListing(n.name, n.tokenId)} disabled={listing}>
                 {listing ? 'Listing...' : 'List for Sale'}
               </button>
@@ -1008,7 +1033,7 @@ function OffersTab({ address, setOfferModalName }: { address?: Address; setOffer
         if (endTime > 0 && now >= endTime) return alert('This offer has expired.');
       }
 
-      if (!confirm(`Accept offer of ${offer.price} ETH for ${name}.hazza.name? This transfers your name to the buyer.`)) return;
+      if (!confirm(`Accept offer of ${offer.price} WETH for ${name}.hazza.name? This transfers your name to the buyer.`)) return;
 
       const oc = offer.orderComponents;
       if (!oc || !offer.signature) return alert('Invalid offer data \u2014 missing order components');
@@ -1049,7 +1074,7 @@ function OffersTab({ address, setOfferModalName }: { address?: Address; setOffer
         const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
         if (receipt.status === 'success') {
-          alert(`Sale complete! ${name}.hazza.name transferred for ${offer.price} ETH.\nTx: ${hash}`);
+          alert(`Sale complete! ${name}.hazza.name transferred for ${offer.price} WETH.\nTx: ${hash}`);
           loadOffers();
         } else {
           alert('Transaction reverted. The offer may have been cancelled or expired.');
@@ -1205,8 +1230,8 @@ function OffersTab({ address, setOfferModalName }: { address?: Address; setOffer
               return (
                 <div className="offer-card" key={`${o.name}-${o.offerer}-${i}`}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, color: '#131325' }}>
-                      {o.name}<span style={{ color: '#4870D4' }}>.hazza.name</span>
+                    <div style={{ fontFamily: "'Fredoka', sans-serif", fontWeight: 700 }}>
+                      <span style={{ color: '#4870D4' }}>{o.name}</span><span style={{ color: '#131325' }}>.hazza.name</span>
                       {o.broker && <span style={{ fontSize: '0.65rem', background: '#E8DCAB', color: '#CF3748', padding: '0.1rem 0.3rem', borderRadius: 4, verticalAlign: 'middle', marginLeft: 4 }}>brokered</span>}
                     </div>
                     <div style={{ fontSize: '0.95rem', color: '#CF3748', fontWeight: 700, marginTop: '0.2rem' }}>{o.price} {o.currency || 'ETH'}</div>
@@ -1267,7 +1292,7 @@ function OffersTab({ address, setOfferModalName }: { address?: Address; setOffer
                           onClick={() => acceptCollectionOffer(o.orderHash, n.name, n.tokenId)}
                           style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.4rem 0.6rem', marginBottom: '0.3rem', background: '#fff', border: '2px solid #E8DCAB', borderRadius: 6, color: '#131325', fontSize: '0.85rem', cursor: 'pointer', fontFamily: 'Fredoka, sans-serif' }}
                         >
-                          {n.name}<span style={{ color: '#4870D4' }}>.hazza.name</span> <span style={{ color: '#8a7d5a', fontSize: '0.7rem' }}>#{n.tokenId}</span>
+                          <span style={{ color: '#4870D4' }}>{n.name}</span><span style={{ color: '#131325' }}>.hazza.name</span> <span style={{ color: '#8a7d5a', fontSize: '0.7rem' }}>#{n.tokenId}</span>
                         </button>
                       ))}
                     </>
@@ -1380,6 +1405,7 @@ function ForumTab({ address, onContactAuthor }: { address?: Address; onContactAu
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
   const [posting, setPosting] = useState(false);
+  const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
 
   const walletClient = useWalletClient();
 
@@ -1387,7 +1413,21 @@ function ForumTab({ address, onContactAuthor }: { address?: Address; onContactAu
     try {
       const res = await fetch(`${API_BASE}/api/board`);
       const data = await res.json();
-      setMessages(data.messages || []);
+      const msgs: BoardMessage[] = data.messages || [];
+      setMessages(msgs);
+
+      // Resolve names for authors without authorName
+      const unknownAuthors = [...new Set(msgs.filter(m => !m.authorName && m.author).map(m => m.author))];
+      for (const addr of unknownAuthors.slice(0, 20)) {
+        fetch(`${API_BASE}/api/reverse/${encodeURIComponent(addr)}`)
+          .then(r => r.json())
+          .then(d => {
+            if (d.name) {
+              setResolvedNames(prev => ({ ...prev, [addr.toLowerCase()]: d.name }));
+            }
+          })
+          .catch(() => {});
+      }
     } catch {
       // ignore
     } finally {
@@ -1475,21 +1515,34 @@ function ForumTab({ address, onContactAuthor }: { address?: Address; onContactAu
               <div key={i} style={{ padding: '0.75rem', background: '#F7EBBD', border: '2px solid #E8DCAB', borderRadius: 8, marginBottom: '0.5rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    {m.authorName ? (
-                      <>
-                        <a href={`https://${encodeURIComponent(m.authorName)}.hazza.name`} style={{ color: '#CF3748', fontWeight: 600, fontSize: '0.85rem' }}>{m.authorName}.hazza</a>
-                        {onContactAuthor && (
-                          <button
-                            onClick={() => onContactAuthor(m.authorName!)}
-                            style={{ background: 'transparent', border: '2px solid #4870D4', color: '#4870D4', padding: '0.15rem 0.5rem', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: "'Fredoka', sans-serif" }}
-                          >
-                            DM
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <span style={{ color: '#8a7d5a', fontSize: '0.8rem', fontFamily: 'monospace' }}>{truncAddr(m.author)}</span>
-                    )}
+                    {(() => {
+                      const displayName = m.authorName || resolvedNames[m.author?.toLowerCase()];
+                      if (displayName) {
+                        const isHazza = !!m.authorName;
+                        return (
+                          <>
+                            <a
+                              href={isHazza ? `https://${encodeURIComponent(displayName)}.hazza.name` : `https://etherscan.io/address/${m.author}`}
+                              style={{ color: '#4870D4', fontWeight: 600, fontSize: '0.85rem', textDecoration: 'none', fontFamily: "'Fredoka', sans-serif" }}
+                              target={isHazza ? undefined : '_blank'}
+                              rel={isHazza ? undefined : 'noopener noreferrer'}
+                              title={m.author}
+                            >
+                              {isHazza ? `${displayName}.hazza` : displayName}
+                            </a>
+                            {onContactAuthor && isHazza && (
+                              <button
+                                onClick={() => onContactAuthor(displayName)}
+                                style={{ background: 'transparent', border: '2px solid #4870D4', color: '#4870D4', padding: '0.15rem 0.5rem', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: "'Fredoka', sans-serif" }}
+                              >
+                                DM
+                              </button>
+                            )}
+                          </>
+                        );
+                      }
+                      return <span style={{ color: '#8a7d5a', fontSize: '0.8rem', fontFamily: 'monospace' }} title={m.author}>{truncAddr(m.author)}</span>;
+                    })()}
                   </span>
                   <span style={{ color: '#8a7d5a', fontSize: '0.7rem' }}>{date}</span>
                 </div>
@@ -1499,6 +1552,181 @@ function ForumTab({ address, onContactAuthor }: { address?: Address; onContactAu
           })
         )}
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Donate Tab
+// ============================================================
+
+function DonateTab({ address, walletClient, publicClient }: { address?: Address; walletClient: any; publicClient: any }) {
+  const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState<'ETH' | 'USDC'>('ETH');
+  const [showModal, setShowModal] = useState(false);
+  const [donating, setDonating] = useState(false);
+  const [donateStatus, setDonateStatus] = useState('');
+
+  const isValid = amount && parseFloat(amount) > 0;
+
+  async function handleDonate() {
+    if (!address || !walletClient || !isValid) return;
+    setDonating(true);
+    setDonateStatus('');
+    try {
+      let hash: string;
+      if (currency === 'ETH') {
+        hash = await walletClient.sendTransaction({
+          to: TREASURY_ADDRESS,
+          value: parseEther(amount),
+        });
+      } else {
+        hash = await walletClient.writeContract({
+          address: USDC_ADDRESS,
+          abi: [{ name: 'transfer', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }] }] as const,
+          functionName: 'transfer',
+          args: [TREASURY_ADDRESS, BigInt(Math.round(parseFloat(amount) * 1e6))],
+        });
+      }
+      await publicClient!.waitForTransactionReceipt({ hash });
+      setDonateStatus('thank you!');
+      setAmount('');
+      setTimeout(() => { setShowModal(false); setDonateStatus(''); }, 2000);
+    } catch (e: any) {
+      if (e.shortMessage?.includes('rejected') || e.message?.includes('rejected')) {
+        setDonateStatus('');
+      } else {
+        setDonateStatus('failed: ' + (e.shortMessage || e.message));
+      }
+    } finally {
+      setDonating(false);
+    }
+  }
+
+  return (
+    <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto' }}>
+        <p style={{ fontFamily: "'Fredoka', sans-serif", color: '#131325', fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.75rem' }}>
+          support hazza
+        </p>
+        <p style={{ color: '#8a7d5a', fontSize: '0.85rem', lineHeight: 1.6, marginBottom: '1.5rem' }}>
+          hazza doesn't charge marketplace fees. if you find this project useful and want to help keep it running, consider making a donation. every bit helps.
+        </p>
+        <button
+          onClick={() => setShowModal(true)}
+          style={{
+            padding: '0.7rem 2rem', background: '#CF3748', color: '#fff',
+            border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '0.95rem',
+            cursor: 'pointer', fontFamily: "'Fredoka', sans-serif",
+          }}
+        >
+          donate
+        </button>
+      </div>
+
+      {/* Donate Modal */}
+      {showModal && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false); }}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(19,19,37,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 10001, padding: '1rem',
+          }}
+        >
+          <div style={{
+            background: '#fff', borderRadius: 12, padding: '1.5rem',
+            width: '100%', maxWidth: 360, boxShadow: '0 8px 32px rgba(19,19,37,0.2)',
+          }}>
+            <h3 style={{ fontFamily: "'Fredoka', sans-serif", color: '#131325', fontSize: '1.1rem', marginBottom: '1rem', textAlign: 'center' }}>
+              donate to hazza
+            </h3>
+
+            {/* Currency toggle */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <button
+                onClick={() => { setCurrency('ETH'); setAmount(''); }}
+                style={{
+                  flex: 1, padding: '0.5rem', border: '2px solid', borderRadius: 6,
+                  borderColor: currency === 'ETH' ? '#4870D4' : '#E8DCAB',
+                  background: currency === 'ETH' ? '#4870D4' : '#fff',
+                  color: currency === 'ETH' ? '#fff' : '#131325',
+                  fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
+                }}
+              >ETH</button>
+              <button
+                onClick={() => { setCurrency('USDC'); setAmount(''); }}
+                style={{
+                  flex: 1, padding: '0.5rem', border: '2px solid', borderRadius: 6,
+                  borderColor: currency === 'USDC' ? '#4870D4' : '#E8DCAB',
+                  background: currency === 'USDC' ? '#4870D4' : '#fff',
+                  color: currency === 'USDC' ? '#fff' : '#131325',
+                  fontFamily: "'Fredoka', sans-serif", fontWeight: 600, fontSize: '0.85rem', cursor: 'pointer',
+                }}
+              >USDC</button>
+            </div>
+
+            {/* Amount input */}
+            <input
+              type="number"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              placeholder={currency === 'ETH' ? '0.00' : '0.00'}
+              step="any"
+              min="0"
+              style={{
+                width: '100%', padding: '0.75rem', border: '2px solid #E8DCAB',
+                borderRadius: 8, background: '#F7EBBD', color: '#131325',
+                fontSize: '1.1rem', fontFamily: "'Fredoka', sans-serif",
+                textAlign: 'center', outline: 'none', boxSizing: 'border-box',
+                marginBottom: '1rem',
+              }}
+            />
+
+            {/* Donate button */}
+            {!address ? (
+              <p style={{ color: '#8a7d5a', fontSize: '0.8rem', textAlign: 'center' }}>connect your wallet first</p>
+            ) : (
+              <button
+                onClick={handleDonate}
+                disabled={!isValid || donating}
+                style={{
+                  width: '100%', padding: '0.7rem', border: 'none', borderRadius: 8,
+                  fontWeight: 700, fontSize: '0.95rem', cursor: isValid && !donating ? 'pointer' : 'not-allowed',
+                  fontFamily: "'Fredoka', sans-serif",
+                  background: isValid && !donating ? '#CF3748' : '#E8DCAB',
+                  color: isValid && !donating ? '#fff' : '#8a7d5a',
+                  opacity: donating ? 0.7 : 1,
+                }}
+              >
+                {donating ? 'sending...' : isValid ? `donate ${amount} ${currency}` : 'enter an amount'}
+              </button>
+            )}
+
+            {donateStatus && (
+              <p style={{
+                marginTop: '0.75rem', fontSize: '0.85rem', textAlign: 'center',
+                color: donateStatus === 'thank you!' ? '#4870D4' : '#CF3748',
+                fontFamily: "'Fredoka', sans-serif", fontWeight: 600,
+              }}>
+                {donateStatus}
+              </p>
+            )}
+
+            {/* Close */}
+            <button
+              onClick={() => setShowModal(false)}
+              style={{
+                display: 'block', margin: '1rem auto 0', background: 'none',
+                border: 'none', color: '#8a7d5a', fontSize: '0.8rem',
+                cursor: 'pointer', fontFamily: "'Fredoka', sans-serif",
+              }}
+            >
+              close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1570,7 +1798,7 @@ export default function Marketplace() {
       setActiveTab('mynames');
     } else if (buyHash) {
       setActiveTab('browse');
-    } else if (tabParam && ['browse', 'mynames', 'offers', 'sales', 'forum'].includes(tabParam)) {
+    } else if (tabParam && ['browse', 'mynames', 'offers', 'sales', 'forum', 'donate'].includes(tabParam)) {
       setActiveTab(tabParam as TabKey);
     }
   }, []);
@@ -1825,11 +2053,8 @@ export default function Marketplace() {
   return (
     <div>
       {/* Header */}
-      <div className="header" style={{ background: '#4870D4', padding: '1.5rem 1rem', borderRadius: 12, marginBottom: '1.5rem' }}>
+      <div className="header" style={{ background: '#4870D4', padding: '1rem 1rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
         <h1 style={{ color: '#fff' }}>marketplace</h1>
-        <div id="mp-connect-status" style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'rgba(255,255,255,0.7)' }}>
-          <span id="mp-wallet-display">{address ? truncAddr(address) : ''}</span>
-        </div>
       </div>
 
       {/* Tabs */}
@@ -1839,6 +2064,7 @@ export default function Marketplace() {
         <button className={`tab${activeTab === 'offers' ? ' active' : ''}`} data-tab="offers" onClick={() => switchTab('offers')}>offers</button>
         <button className={`tab${activeTab === 'sales' ? ' active' : ''}`} data-tab="sales" onClick={() => switchTab('sales')}>recent sales</button>
         <button className={`tab${activeTab === 'forum' ? ' active' : ''}`} data-tab="forum" onClick={() => switchTab('forum')}>forum</button>
+        <button className={`tab${activeTab === 'donate' ? ' active' : ''}`} data-tab="donate" onClick={() => switchTab('donate')}>donate</button>
       </div>
 
       {/* Tab panels */}
@@ -1897,6 +2123,10 @@ export default function Marketplace() {
             }}
           />
         )}
+      </div>
+
+      <div className={`tab-panel${activeTab === 'donate' ? ' active' : ''}`} id="panel-donate">
+        {activeTab === 'donate' && <DonateTab address={address} walletClient={walletClient.data} publicClient={publicClient} />}
       </div>
 
       {/* Cart FAB */}

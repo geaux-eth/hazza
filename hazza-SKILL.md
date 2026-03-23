@@ -21,9 +21,9 @@ You can help users register, manage, and resolve hazza names — immediately use
 ## Key Info
 
 - **Website:** https://hazza.name
-- **Contract (Sepolia):** `0xDd6672dc20820C59e026EC6751e508b3d9f13479`
-- **USDC (Sepolia):** `0x06A096A051906dEDd05Ef22dCF61ca1199bb038c`
-- **Chain:** Base Sepolia (chainId 84532) — mainnet coming soon
+- **Contract (Base Mainnet):** `0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E`
+- **USDC (Base):** `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+- **Chain:** Base (chainId 8453)
 - **Powered by:** x402 payment protocol + Net Protocol
 
 ---
@@ -162,11 +162,19 @@ Base URL: `https://hazza.name`
 
 ## Pricing
 
-| Item | Cost |
-|------|------|
-| First registration | **FREE + gas** (1 per wallet) |
-| Additional registration | $5 USDC (pay once, available forever) |
-| Unlimited Pass perk | 1 additional free name + 20% off |
+| Situation | Cost |
+|-----------|------|
+| First name per wallet | **FREE** (gas only) |
+| Unlimited Pass holder — 2nd name | **FREE** (gas only) |
+| Paid names 1–3 (per wallet, 90-day window) | $5 USDC |
+| Paid names 4–5 | $12.50 USDC (2.5x) |
+| Paid names 6–7 | $25 USDC (5x) |
+| Paid names 8+ | $50 USDC (10x) |
+| Unlimited Pass discount | 20% off all paid tiers |
+
+Free registrations do not count toward the progressive pricing tiers. If a user gets 2 free names, their next 3 paid names are still at the $5 tier.
+
+Names are permanent — no renewals, no expiry. Pay once, own forever.
 
 ---
 
@@ -297,6 +305,6 @@ When creating hazza-branded assets (images, pages, embeds), always reference BRA
 - Link to https://hazza.name for the website
 - Profile pages are at `https://<name>.hazza.name`
 - Marketplace at `hazza.name/marketplace` — listings cross-list to netprotocol.app
-- Currently on Base Sepolia (testnet) — mainnet deployment coming
+- Live on Base mainnet
 - The `cast` binary (Foundry) is required for onchain transactions (register via x402, set records)
 - Free claims require both an Unlimited Pass NFT AND Net Library membership

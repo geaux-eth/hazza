@@ -1,14 +1,58 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useAccount, useWalletClient } from 'wagmi';
+import { useAccount, useWalletClient, usePublicClient } from 'wagmi';
+import { parseAbi, type Address } from 'viem';
+import {
+  REGISTRY_ADDRESS, USDC_ADDRESS, RELAYER_ADDRESS, USDC_ABI, REGISTRY_ABI, ERC721_ABI,
+  SEAPORT_ADDRESS, BAZAAR_ADDRESS, MARKETPLACE_FEE_BPS, TREASURY_ADDRESS, BOUNTY_ESCROW_ADDRESS,
+} from '../config/contracts';
+
+/** Extract readable text from XMTP message content (may be string, object with text field, etc.) */
+function extractTextContent(content: unknown): string | null {
+  if (!content) return null;
+  if (typeof content === 'string') return content;
+  if (typeof content === 'object') {
+    const c = content as Record<string, unknown>;
+    // Skip XMTP system/metadata messages (group membership changes, admin changes, etc.)
+    if ('initiatedByInboxId' in c || 'addedInboxes' in c || 'removedInboxes' in c ||
+        'metadataFieldChanges' in c || 'addedAdminInboxes' in c || 'leftInboxes' in c) {
+      return null;
+    }
+    // XMTP content types: { text: "..." } or { content: "..." }
+    if (typeof c.text === 'string') return c.text;
+    if (typeof c.content === 'string') return c.content;
+  }
+  return null;
+}
+
+/** Try to parse a message as a structured action card from Nomi */
+function parseActionCard(text: string): ActionCard | null {
+  if (!text.startsWith('{"type":"')) return null;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed.type && ['register_card', 'buy_card', 'list_card', 'transfer_card', 'set_record_card'].includes(parsed.type)) {
+      return parsed as ActionCard;
+    }
+  } catch { /* not JSON */ }
+  return null;
+}
+
+type ActionCard =
+  | { type: 'register_card'; name: string; price: string; priceRaw: string; free: boolean; relayer: string; freeClaim: any }
+  | { type: 'buy_card'; name: string; price: string; priceRaw: string; currency: string; orderHash?: string; seller: string; source: 'seaport' }
+  | { type: 'list_card'; name: string; price: string; priceWei: string; bountyWei?: string; bountyEth?: string; netEth?: string; tokenId: string; owner: string; registryAddress: string; duration?: string }
+  | { type: 'transfer_card'; name: string; tokenId: string; from: string; to: string; toName: string | null; registryAddress: string }
+  | { type: 'set_record_card'; name: string; key: string; value: string; registryAddress: string };
 
 interface ChatMessage {
   id: string;
   content: string;
   sender: 'remote' | 'user' | 'system';
   timestamp: Date;
+  card?: ActionCard | null;
 }
 
 type XmtpStatus = 'idle' | 'creating-client' | 'client-ready' | 'connecting-convo' | 'connected' | 'error';
+type CardStatus = 'idle' | 'pending' | 'confirming' | 'success' | 'error';
 
 export interface ChatPanelProps {
   isOpen: boolean;
@@ -17,12 +61,82 @@ export interface ChatPanelProps {
   targetName: string;
   targetAvatar?: string;
   greeting?: string;
-  /** Context label shown in header, e.g. "marketplace inquiry" */
   context?: string;
+  xmtpClient?: any;
+}
+
+const ZERO_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
+const ZONE_PUBLIC = '0x000000007F8c58fbf215bF91Bda7421A806cf3ae' as const;
+
+const SEAPORT_ABI_MINI = parseAbi([
+  'function getCounter(address offerer) view returns (uint256)',
+]);
+
+const BAZAAR_SUBMIT_ABI = [{
+  name: 'submit', type: 'function' as const, stateMutability: 'nonpayable' as const,
+  inputs: [{ name: 'submission', type: 'tuple', components: [
+    { name: 'parameters', type: 'tuple', components: [
+      { name: 'offerer', type: 'address' }, { name: 'zone', type: 'address' },
+      { name: 'offer', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }] },
+      { name: 'consideration', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }, { name: 'recipient', type: 'address' }] },
+      { name: 'orderType', type: 'uint8' }, { name: 'startTime', type: 'uint256' }, { name: 'endTime', type: 'uint256' },
+      { name: 'zoneHash', type: 'bytes32' }, { name: 'salt', type: 'uint256' }, { name: 'conduitKey', type: 'bytes32' }, { name: 'totalOriginalConsiderationItems', type: 'uint256' }
+    ]},
+    { name: 'counter', type: 'uint256' },
+    { name: 'signature', type: 'bytes' }
+  ]}], outputs: []
+}] as const;
+
+const SEAPORT_DOMAIN = {
+  name: 'Seaport' as const,
+  version: '1.6' as const,
+  chainId: 8453,
+  verifyingContract: SEAPORT_ADDRESS,
+};
+
+const SEAPORT_EIP712_TYPES = {
+  OrderComponents: [
+    { name: 'offerer', type: 'address' },
+    { name: 'zone', type: 'address' },
+    { name: 'offer', type: 'OfferItem[]' },
+    { name: 'consideration', type: 'ConsiderationItem[]' },
+    { name: 'orderType', type: 'uint8' },
+    { name: 'startTime', type: 'uint256' },
+    { name: 'endTime', type: 'uint256' },
+    { name: 'zoneHash', type: 'bytes32' },
+    { name: 'salt', type: 'uint256' },
+    { name: 'conduitKey', type: 'bytes32' },
+    { name: 'counter', type: 'uint256' },
+  ],
+  OfferItem: [
+    { name: 'itemType', type: 'uint8' },
+    { name: 'token', type: 'address' },
+    { name: 'identifierOrCriteria', type: 'uint256' },
+    { name: 'startAmount', type: 'uint256' },
+    { name: 'endAmount', type: 'uint256' },
+  ],
+  ConsiderationItem: [
+    { name: 'itemType', type: 'uint8' },
+    { name: 'token', type: 'address' },
+    { name: 'identifierOrCriteria', type: 'uint256' },
+    { name: 'startAmount', type: 'uint256' },
+    { name: 'endAmount', type: 'uint256' },
+    { name: 'recipient', type: 'address' },
+  ],
+} as const;
+
+const BOUNTY_ESCROW_ABI = parseAbi([
+  'function registerBounty(uint256 tokenId, uint256 bountyAmount) external',
+]);
+
+function generateSalt(): bigint {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return BigInt('0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(''));
 }
 
 export default function ChatPanel({
-  isOpen, onClose, targetAddress, targetName, targetAvatar, greeting, context,
+  isOpen, onClose, targetAddress, targetName, targetAvatar, greeting, context, xmtpClient,
 }: ChatPanelProps) {
   const defaultGreeting = useMemo(() => greeting || `gm. you're chatting with ${targetName}.`, [greeting, targetName]);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -30,17 +144,19 @@ export default function ChatPanel({
   ]);
   const [input, setInput] = useState('');
   const [xmtpStatus, setXmtpStatus] = useState<XmtpStatus>('idle');
+  const [cardStatuses, setCardStatuses] = useState<Record<string, { status: CardStatus; error?: string; txHash?: string }>>({});
   const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const conversationRef = useRef<any>(null);
   const clientRef = useRef<any>(null);
   const streamRef = useRef<any>(null);
-  const xmtpAttemptedRef = useRef(false);
+  const crossOriginErrorRef = useRef(false);
   const prevTargetRef = useRef(targetAddress);
   const prevAddressRef = useRef<string | undefined>(undefined);
 
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
 
   const scrollToBottom = useCallback(() => {
     if (messagesRef.current) {
@@ -55,15 +171,14 @@ export default function ChatPanel({
   }, [isOpen]);
 
   const msgCounterRef = useRef(0);
-  const addMsg = useCallback((text: string, sender: 'remote' | 'user' | 'system') => {
+  const addMsg = useCallback((text: string, sender: 'remote' | 'user' | 'system', card?: ActionCard | null) => {
     const seq = ++msgCounterRef.current;
     setMessages((prev) => [
       ...prev,
-      { id: `${sender}-${Date.now()}-${seq}`, content: text, sender, timestamp: new Date() },
+      { id: `${sender}-${Date.now()}-${seq}`, content: text, sender, timestamp: new Date(), card },
     ]);
   }, []);
 
-  // Stop stream helper
   const stopStream = useCallback(() => {
     if (streamRef.current) {
       try { streamRef.current.return?.(); } catch (_e) { /* */ }
@@ -71,7 +186,6 @@ export default function ChatPanel({
     }
   }, []);
 
-  // Close client helper
   const closeClient = useCallback(() => {
     stopStream();
     conversationRef.current = null;
@@ -81,12 +195,11 @@ export default function ChatPanel({
     }
   }, [stopStream]);
 
-  // Reset when wallet address changes — full teardown
   useEffect(() => {
     if (address !== prevAddressRef.current) {
       prevAddressRef.current = address;
       closeClient();
-      xmtpAttemptedRef.current = false;
+
       setXmtpStatus('idle');
       setMessages([
         { id: 'greeting', content: defaultGreeting, sender: 'remote', timestamp: new Date() },
@@ -94,17 +207,15 @@ export default function ChatPanel({
     }
   }, [address, closeClient, defaultGreeting]);
 
-  // Reset when target changes — keep client, just reset conversation
   useEffect(() => {
     if (targetAddress !== prevTargetRef.current) {
       prevTargetRef.current = targetAddress;
-      xmtpAttemptedRef.current = false;
+
       setMessages([
         { id: 'greeting', content: defaultGreeting, sender: 'remote', timestamp: new Date() },
       ]);
       stopStream();
       conversationRef.current = null;
-      // If client exists, go straight to connecting conversation; otherwise start fresh
       if (clientRef.current) {
         setXmtpStatus('client-ready');
       } else {
@@ -113,18 +224,26 @@ export default function ChatPanel({
     }
   }, [targetAddress, defaultGreeting, stopStream]);
 
-  // Phase 1: Create XMTP client (depends on wallet, not target)
+  useEffect(() => {
+    if (xmtpClient && !clientRef.current) {
+      clientRef.current = xmtpClient;
+      setXmtpStatus('client-ready');
+    }
+  }, [xmtpClient]);
+
   const createClient = useCallback(async () => {
+    if (xmtpClient) {
+      clientRef.current = xmtpClient;
+      setXmtpStatus('client-ready');
+      return;
+    }
+
     if (!isConnected || !walletClient || !address) {
-      if (!xmtpAttemptedRef.current) {
-        addMsg('connect a wallet to chat. tap connect in the menu above.', 'system');
-        xmtpAttemptedRef.current = true;
-      }
+
       return;
     }
 
     setXmtpStatus('creating-client');
-    addMsg('setting up XMTP... check your wallet to sign.', 'system');
 
     try {
       const xmtp = await import('@xmtp/browser-sdk');
@@ -137,40 +256,35 @@ export default function ChatPanel({
         }),
         signMessage: async (msg: string | Uint8Array) => {
           const textMsg = typeof msg === 'string' ? msg : new TextDecoder().decode(msg);
-          const hexMsg = '0x' + Array.from(new TextEncoder().encode(textMsg))
-            .map((b) => b.toString(16).padStart(2, '0')).join('');
-          const sig = await walletClient.request({
-            method: 'personal_sign',
-            params: [hexMsg as `0x${string}`],
-          } as any);
+          const sig = await walletClient.signMessage({
+            account: address as `0x${string}`,
+            message: textMsg,
+          });
           return new Uint8Array(
-            ((sig as string).slice(2).match(/.{2}/g) || []).map((b: string) => parseInt(b, 16))
+            (sig.slice(2).match(/.{2}/g) || []).map((b: string) => parseInt(b, 16))
           );
         },
       };
 
-      const storageKey = `hazza-xmtp-dbkey-${address}`;
-      let dbKeyHex = localStorage.getItem(storageKey);
-      let dbEncryptionKey: Uint8Array;
-      if (dbKeyHex) {
-        dbEncryptionKey = new Uint8Array(dbKeyHex.match(/.{2}/g)!.map(b => parseInt(b, 16)));
-      } else {
-        dbEncryptionKey = crypto.getRandomValues(new Uint8Array(32));
-        localStorage.setItem(storageKey, Array.from(dbEncryptionKey).map(b => b.toString(16).padStart(2, '0')).join(''));
-      }
-      const client = await (xmtp.Client.create as any)(signer, dbEncryptionKey, { env: 'production' });
+      const client = await xmtp.Client.create(signer, {
+        env: 'production',
+      });
       clientRef.current = client;
 
       setXmtpStatus('client-ready');
-      addMsg('connected to XMTP. messages are encrypted and saved onchain.', 'system');
     } catch (err: any) {
       console.error('XMTP client creation failed:', err);
       setXmtpStatus('error');
-      addMsg('XMTP error: ' + (err.message || err), 'system');
+      const msg = err.message || String(err);
+      if (msg.includes('cannot be accessed from origin') || msg.includes('Worker')) {
+        crossOriginErrorRef.current = true;
+        addMsg('in-page XMTP chat isn\'t available yet — use the direct link below to message ' + targetName + '.', 'system');
+      } else {
+        addMsg('XMTP error: ' + msg, 'system');
+      }
     }
-  }, [isConnected, walletClient, address, addMsg]);
+  }, [isConnected, walletClient, address, addMsg, xmtpClient]);
 
-  // Phase 2: Create conversation (depends on client + targetAddress)
   const createConversation = useCallback(async () => {
     const client = clientRef.current;
     if (!client || !targetAddress) return;
@@ -178,21 +292,28 @@ export default function ChatPanel({
     setXmtpStatus('connecting-convo');
 
     try {
-      const convo = await (client.conversations as any).newDm(targetAddress);
-      conversationRef.current = convo;
+      const xmtp = await import('@xmtp/browser-sdk');
+      const dm = await client.conversations.createDmWithIdentifier({
+        identifier: targetAddress,
+        identifierKind: xmtp.IdentifierKind.Ethereum,
+      });
+      conversationRef.current = dm;
 
-      const existing = await convo.messages();
+      const existing = await dm.messages();
       const inboxId = client.inboxId;
 
       const mapped: ChatMessage[] = [];
       for (let i = 0; i < existing.length; i++) {
         const m = existing[i];
-        if (m.contentType && m.contentType.typeId === 'text') {
+        const text = extractTextContent(m.content);
+        if (text) {
+          const card = parseActionCard(text);
           mapped.push({
             id: m.id || `msg-${i}`,
-            content: typeof m.content === 'string' ? m.content : String(m.content),
+            content: card ? '' : text,
             sender: m.senderInboxId !== inboxId ? 'remote' : 'user',
             timestamp: m.sentAt || new Date(),
+            card,
           });
         }
       }
@@ -206,16 +327,19 @@ export default function ChatPanel({
 
       setXmtpStatus('connected');
 
-      streamRef.current = await convo.stream();
+      streamRef.current = await dm.stream();
       (async () => {
         try {
           for await (const msg of streamRef.current) {
-            if (msg && msg.senderInboxId !== inboxId && msg.contentType?.typeId === 'text') {
+            const streamText = msg?.content ? extractTextContent(msg.content) : null;
+            if (streamText && msg.senderInboxId !== inboxId) {
+              const card = parseActionCard(streamText);
               const chatMsg: ChatMessage = {
                 id: msg.id || `stream-${Date.now()}`,
-                content: typeof msg.content === 'string' ? msg.content : String(msg.content),
+                content: card ? '' : streamText,
                 sender: 'remote',
                 timestamp: msg.sentAt || new Date(),
+                card,
               };
               setMessages((prev) => prev.some((m) => m.id === chatMsg.id) ? prev : [...prev, chatMsg]);
             }
@@ -229,30 +353,341 @@ export default function ChatPanel({
     }
   }, [targetAddress, defaultGreeting, addMsg]);
 
-  // Auto-create client when panel opens and wallet is connected
   useEffect(() => {
     if (isOpen && isConnected && walletClient && address && xmtpStatus === 'idle' && targetAddress) {
       createClient();
     }
   }, [isOpen, isConnected, walletClient, address, xmtpStatus, targetAddress, createClient]);
 
-  // Auto-create conversation when client is ready
   useEffect(() => {
     if (isOpen && xmtpStatus === 'client-ready' && targetAddress && clientRef.current) {
       createConversation();
     }
   }, [isOpen, xmtpStatus, targetAddress, createConversation]);
 
-  // Cleanup on unmount — close client and stop stream
   useEffect(() => {
     return () => {
       stopStream();
-      if (clientRef.current) {
+      if (clientRef.current && !xmtpClient) {
         try { clientRef.current.close?.(); } catch (_e) { /* */ }
         clientRef.current = null;
       }
     };
-  }, [stopStream]);
+  }, [stopStream, xmtpClient]);
+
+  // --- Card action handlers ---
+
+  const setCardStatus = useCallback((cardId: string, status: CardStatus, extra?: { error?: string; txHash?: string }) => {
+    setCardStatuses(prev => ({ ...prev, [cardId]: { status, ...extra } }));
+  }, []);
+
+  const handleRegister = useCallback(async (card: Extract<ActionCard, { type: 'register_card' }>, cardId: string) => {
+    if (!walletClient || !address || !publicClient) return;
+    setCardStatus(cardId, 'pending');
+
+    try {
+      if (card.free) {
+        // Free registration — just POST to x402, no USDC transfer needed
+        const res = await fetch('https://hazza.name/x402/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: card.name, owner: address }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setCardStatus(cardId, 'success', { txHash: data.registrationTx });
+          addMsg(`${card.name}.hazza.name is yours! view your profile at ${card.name}.hazza.name`, 'system');
+        } else {
+          setCardStatus(cardId, 'error', { error: data.error || 'registration failed' });
+        }
+      } else {
+        // Paid registration — transfer USDC to relayer, then POST with payment header
+        setCardStatus(cardId, 'confirming');
+        const amount = BigInt(card.priceRaw);
+
+        const txHash = await walletClient.writeContract({
+          address: USDC_ADDRESS as Address,
+          abi: USDC_ABI,
+          functionName: 'transfer',
+          args: [card.relayer as Address, amount],
+        });
+
+        // Wait for USDC transfer confirmation
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+        if (receipt.status !== 'success') {
+          setCardStatus(cardId, 'error', { error: 'USDC transfer failed' });
+          return;
+        }
+
+        // Now POST to x402 with payment header
+        const payment = btoa(JSON.stringify({ scheme: 'exact', txHash, from: address }));
+        const res = await fetch('https://hazza.name/x402/register', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-PAYMENT': payment,
+          },
+          body: JSON.stringify({ name: card.name, owner: address }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setCardStatus(cardId, 'success', { txHash: data.registrationTx || txHash });
+          addMsg(`${card.name}.hazza.name is yours! view your profile at ${card.name}.hazza.name`, 'system');
+        } else {
+          setCardStatus(cardId, 'error', { error: data.error || 'registration failed after payment' });
+        }
+      }
+    } catch (err: any) {
+      console.error('Registration error:', err);
+      setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
+    }
+  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+
+  const handleBuy = useCallback(async (card: Extract<ActionCard, { type: 'buy_card' }>, cardId: string) => {
+    if (!walletClient || !address || !publicClient) return;
+    setCardStatus(cardId, 'pending');
+
+    try {
+      if (card.source === 'seaport' && card.orderHash) {
+        // Get fulfillment data from API
+        const res = await fetch('https://hazza.name/api/marketplace/fulfill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderHash: card.orderHash, buyerAddress: address }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setCardStatus(cardId, 'error', { error: data.error || 'failed to get buy data' });
+          return;
+        }
+
+        setCardStatus(cardId, 'confirming');
+
+        // Execute approval transactions if needed
+        if (data.approvals?.length > 0) {
+          for (const approval of data.approvals) {
+            const approveTx = await walletClient.sendTransaction({
+              to: approval.to as Address,
+              data: approval.data as `0x${string}`,
+              value: BigInt(approval.value || '0'),
+            });
+            await publicClient.waitForTransactionReceipt({ hash: approveTx });
+          }
+        }
+
+        // Execute fulfillment
+        const txHash = await walletClient.sendTransaction({
+          to: data.fulfillment.to as Address,
+          data: data.fulfillment.data as `0x${string}`,
+          value: BigInt(data.fulfillment.value || '0'),
+        });
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+        if (receipt.status === 'success') {
+          setCardStatus(cardId, 'success', { txHash });
+          addMsg(`you now own ${card.name}.hazza.name!`, 'system');
+        } else {
+          setCardStatus(cardId, 'error', { error: 'purchase transaction failed' });
+        }
+      } else {
+        setCardStatus(cardId, 'error', { error: 'invalid listing data — missing order' });
+      }
+    } catch (err: any) {
+      console.error('Buy error:', err);
+      setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
+    }
+  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+
+  const handleList = useCallback(async (card: Extract<ActionCard, { type: 'list_card' }>, cardId: string) => {
+    if (!walletClient || !address || !publicClient) return;
+    setCardStatus(cardId, 'pending');
+
+    try {
+      // Step 1: Approve Seaport to transfer the NFT (setApprovalForAll)
+      const isApproved = await publicClient.readContract({
+        address: REGISTRY_ADDRESS as Address,
+        abi: ERC721_ABI,
+        functionName: 'isApprovedForAll',
+        args: [address, SEAPORT_ADDRESS as Address],
+      });
+      if (!isApproved) {
+        setCardStatus(cardId, 'confirming');
+        const approveTx = await walletClient.writeContract({
+          address: REGISTRY_ADDRESS as Address,
+          abi: ERC721_ABI,
+          functionName: 'setApprovalForAll',
+          args: [SEAPORT_ADDRESS as Address, true],
+        });
+        await publicClient.waitForTransactionReceipt({ hash: approveTx });
+      }
+
+      // Step 2: Get Seaport counter
+      const counter = await publicClient.readContract({
+        address: SEAPORT_ADDRESS as Address,
+        abi: SEAPORT_ABI_MINI,
+        functionName: 'getCounter',
+        args: [address],
+      }) as bigint;
+
+      // Step 3: Build Seaport order — seller offers NFT, consideration splits payment
+      const priceWei = BigInt(card.priceWei);
+      const feeAmount = (priceWei * BigInt(MARKETPLACE_FEE_BPS)) / 10000n;
+      const bountyWei = card.bountyWei ? BigInt(card.bountyWei) : 0n;
+      if (bountyWei + feeAmount >= priceWei) {
+        setCardStatus(cardId, 'error', { error: 'bounty cannot exceed listing price' });
+        return;
+      }
+      const sellerAmount = priceWei - feeAmount - bountyWei;
+      const dur = card.duration ? parseInt(card.duration) : 0;
+      const endTime = dur === 0
+        ? BigInt('115792089237316195423570985008687907853269984665640564039457584007913129639935')
+        : BigInt(Math.floor(Date.now() / 1000) + dur);
+
+      const offer = [{
+        itemType: 2, token: REGISTRY_ADDRESS as Address,
+        identifierOrCriteria: BigInt(card.tokenId), startAmount: 1n, endAmount: 1n,
+      }];
+
+      const consideration: any[] = [{
+        itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
+        identifierOrCriteria: 0n, startAmount: sellerAmount, endAmount: sellerAmount, recipient: address,
+      }];
+      if (feeAmount > 0n) {
+        consideration.push({
+          itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
+          identifierOrCriteria: 0n, startAmount: feeAmount, endAmount: feeAmount, recipient: TREASURY_ADDRESS as Address,
+        });
+      }
+      if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
+        consideration.push({
+          itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
+          identifierOrCriteria: 0n, startAmount: bountyWei, endAmount: bountyWei, recipient: BOUNTY_ESCROW_ADDRESS as Address,
+        });
+      }
+
+      const salt = generateSalt();
+
+      // Step 4: EIP-712 sign the order
+      setCardStatus(cardId, 'confirming');
+      const signature = await walletClient.signTypedData({
+        domain: SEAPORT_DOMAIN,
+        types: SEAPORT_EIP712_TYPES,
+        primaryType: 'OrderComponents',
+        message: {
+          offerer: address, zone: ZONE_PUBLIC, offer, consideration,
+          orderType: 2, startTime: 0n, endTime,
+          zoneHash: ZERO_BYTES32, salt, conduitKey: ZERO_BYTES32, counter,
+        },
+      });
+
+      // Step 5: Submit to Bazaar — this makes the listing appear on hazza marketplace AND netprotocol.app/bazaar
+      const txHash = await walletClient.writeContract({
+        address: BAZAAR_ADDRESS as Address,
+        abi: BAZAAR_SUBMIT_ABI,
+        functionName: 'submit',
+        args: [{
+          parameters: {
+            offerer: address, zone: ZONE_PUBLIC,
+            offer: offer.map(o => ({ ...o })),
+            consideration: consideration.map((c: any) => ({ ...c })),
+            orderType: 2, startTime: 0n, endTime,
+            zoneHash: ZERO_BYTES32, salt, conduitKey: ZERO_BYTES32,
+            totalOriginalConsiderationItems: BigInt(consideration.length),
+          },
+          counter, signature,
+        }],
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        // Register bounty on escrow contract if bounty specified
+        if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
+          try {
+            const bountyHash = await walletClient.writeContract({
+              address: BOUNTY_ESCROW_ADDRESS as Address,
+              abi: BOUNTY_ESCROW_ABI,
+              functionName: 'registerBounty',
+              args: [BigInt(card.tokenId), bountyWei],
+            });
+            await publicClient.waitForTransactionReceipt({ hash: bountyHash });
+          } catch (e: any) {
+            console.warn('Bounty registration failed (listing still active):', e.message);
+            addMsg(`warning: listing is live but bounty registration failed. the ${card.bountyEth} ETH agent bounty was not registered.`, 'system');
+          }
+        }
+        setCardStatus(cardId, 'success', { txHash });
+        const bountyMsg = card.bountyEth && card.bountyEth !== '0' ? ` with ${card.bountyEth} ETH agent bounty.` : '.';
+        addMsg(`${card.name}.hazza.name is now listed for ${card.price}${bountyMsg} live on hazza.name/marketplace and netprotocol.app/bazaar.`, 'system');
+      } else {
+        setCardStatus(cardId, 'error', { error: 'listing transaction failed' });
+      }
+    } catch (err: any) {
+      console.error('List error:', err);
+      setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
+    }
+  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+
+  const handleTransfer = useCallback(async (card: Extract<ActionCard, { type: 'transfer_card' }>, cardId: string) => {
+    if (!walletClient || !address || !publicClient) return;
+    setCardStatus(cardId, 'pending');
+
+    try {
+      setCardStatus(cardId, 'confirming');
+      const txHash = await walletClient.writeContract({
+        address: card.registryAddress as Address,
+        abi: REGISTRY_ABI,
+        functionName: 'safeTransferFrom',
+        args: [address as Address, card.to as Address, BigInt(card.tokenId)],
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        setCardStatus(cardId, 'success', { txHash });
+        addMsg(`${card.name}.hazza.name has been transferred to ${card.toName || card.to.slice(0, 8) + '...'}!`, 'system');
+      } else {
+        setCardStatus(cardId, 'error', { error: 'transfer transaction failed' });
+      }
+    } catch (err: any) {
+      console.error('Transfer error:', err);
+      setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
+    }
+  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+
+  const handleSetRecord = useCallback(async (card: Extract<ActionCard, { type: 'set_record_card' }>, cardId: string) => {
+    if (!walletClient || !address || !publicClient) return;
+    setCardStatus(cardId, 'pending');
+
+    try {
+      setCardStatus(cardId, 'confirming');
+      const txHash = await walletClient.writeContract({
+        address: card.registryAddress as Address,
+        abi: REGISTRY_ABI,
+        functionName: 'setText',
+        args: [card.name, card.key, card.value],
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        setCardStatus(cardId, 'success', { txHash });
+        addMsg(`${card.key} updated for ${card.name}.hazza.name!`, 'system');
+      } else {
+        setCardStatus(cardId, 'error', { error: 'set record transaction failed' });
+      }
+    } catch (err: any) {
+      console.error('Set record error:', err);
+      setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
+    }
+  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+
+  const handleCardAction = useCallback((card: ActionCard, cardId: string) => {
+    switch (card.type) {
+      case 'register_card': handleRegister(card, cardId); break;
+      case 'buy_card': handleBuy(card, cardId); break;
+      case 'list_card': handleList(card, cardId); break;
+      case 'transfer_card': handleTransfer(card, cardId); break;
+      case 'set_record_card': handleSetRecord(card, cardId); break;
+    }
+  }, [handleRegister, handleBuy, handleList, handleTransfer, handleSetRecord]);
 
   function handleRetry() {
     setXmtpStatus('idle');
@@ -267,11 +702,10 @@ export default function ChatPanel({
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
     if (xmtpStatus !== 'connected' || !conversationRef.current) {
-      addMsg('connecting to XMTP... please wait', 'system');
       return;
     }
 
-    conversationRef.current.send(text).catch((err: any) => {
+    conversationRef.current.sendText(text).catch((err: any) => {
       addMsg('failed to send: ' + err.message, 'system');
     });
   }
@@ -291,14 +725,109 @@ export default function ChatPanel({
   }
 
   function getStatusText(): string {
+    if (!isConnected) return 'connect wallet to chat';
     switch (xmtpStatus) {
-      case 'creating-client':
+      case 'creating-client': return 'signing in...';
+      case 'client-ready':
       case 'connecting-convo': return 'connecting...';
-      case 'client-ready': return 'connecting...';
       case 'connected': return 'online';
       case 'error': return 'error';
-      default: return 'tap to chat';
+      default: return 'ready';
     }
+  }
+
+  // --- Card rendering ---
+
+  function renderCard(card: ActionCard, msgId: string) {
+    const cs = cardStatuses[msgId] || { status: 'idle' as CardStatus };
+    const disabled = !isConnected || !walletClient || cs.status === 'pending' || cs.status === 'confirming' || cs.status === 'success';
+
+    const buttonLabel = (() => {
+      if (cs.status === 'pending') return 'preparing...';
+      if (cs.status === 'confirming') return 'confirm in wallet...';
+      if (cs.status === 'success') return 'done!';
+      if (cs.status === 'error') return 'retry';
+      switch (card.type) {
+        case 'register_card': return card.free ? 'register (free)' : `register (${card.price})`;
+        case 'buy_card': return `buy (${card.price})`;
+        case 'list_card': return `list for ${card.price}`;
+        case 'transfer_card': return 'transfer';
+        case 'set_record_card': return `set ${card.key}`;
+      }
+    })();
+
+    const title = (() => {
+      switch (card.type) {
+        case 'register_card': return `register ${card.name}.hazza.name`;
+        case 'buy_card': return `buy ${card.name}.hazza.name`;
+        case 'list_card': return `list ${card.name}.hazza.name`;
+        case 'transfer_card': return `transfer ${card.name}.hazza.name`;
+        case 'set_record_card': return `update ${card.key}`;
+      }
+    })();
+
+    const details = (() => {
+      switch (card.type) {
+        case 'register_card':
+          return card.free ? 'free registration (gas only ~$0.01)' : `${card.price} — pay once, own forever`;
+        case 'buy_card':
+          return `${card.price} from ${card.seller.slice(0, 6)}...${card.seller.slice(-4)}`;
+        case 'list_card':
+          if (card.bountyEth && card.bountyEth !== '0') {
+            return `sale price: ${card.price}\nagent bounty: ${card.bountyEth} ETH\nyou receive: ${card.netEth} ETH\nlisted on hazza + bazaar`;
+          }
+          return `${card.price} — no agent bounty\nlisted on hazza + bazaar`;
+        case 'transfer_card':
+          return `to ${card.toName ? card.toName + '.hazza.name' : card.to.slice(0, 8) + '...' + card.to.slice(-4)}`;
+        case 'set_record_card':
+          return `${card.key} = "${card.value}"`;
+      }
+    })();
+
+    const iconColor = cs.status === 'success' ? '#22c55e' : cs.status === 'error' ? '#ef4444' : '#4870D4';
+
+    return (
+      <div className="ch-action-card" style={{
+        alignSelf: 'flex-start', maxWidth: '85%', background: '#fff',
+        border: `2px solid ${iconColor}`, borderRadius: 12,
+        padding: '0.7rem 0.85rem', fontFamily: "'DM Sans', sans-serif",
+        boxShadow: '0 2px 8px rgba(19,19,37,0.1)',
+      }}>
+        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#131325', marginBottom: 4, fontFamily: "'Fredoka', sans-serif" }}>
+          {title}
+        </div>
+        <div style={{ fontSize: '0.78rem', color: '#666', marginBottom: 8, whiteSpace: 'pre-line' }}>
+          {details}
+        </div>
+        {cs.status === 'error' && cs.error && (
+          <div style={{ fontSize: '0.72rem', color: '#ef4444', marginBottom: 6 }}>{cs.error}</div>
+        )}
+        {cs.status === 'success' && cs.txHash && (
+          <a
+            href={`https://basescan.org/tx/${cs.txHash}`}
+            target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: '0.72rem', color: '#4870D4', display: 'block', marginBottom: 6 }}
+          >
+            view on basescan
+          </a>
+        )}
+        <button
+          onClick={() => handleCardAction(card, msgId)}
+          disabled={disabled && cs.status !== 'error'}
+          style={{
+            width: '100%', padding: '0.45rem', background: disabled && cs.status !== 'error'
+              ? (cs.status === 'success' ? '#22c55e' : '#ccc')
+              : 'linear-gradient(180deg, #d94356 0%, #CF3748 100%)',
+            color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700,
+            fontFamily: "'Fredoka', sans-serif", fontSize: '0.82rem', cursor: disabled && cs.status !== 'error' ? 'default' : 'pointer',
+            boxShadow: disabled ? 'none' : '0 2px 6px rgba(207,55,72,0.25)',
+            transition: 'transform 0.15s',
+          }}
+        >
+          {buttonLabel}
+        </button>
+      </div>
+    );
   }
 
   if (!isOpen) return null;
@@ -371,7 +900,7 @@ export default function ChatPanel({
         }
         .chat-panel-input textarea {
           flex: 1; padding: 0.45rem 0.65rem; border: 2px solid #E8DCAB; border-radius: 8px;
-          background: #fff; color: #131325; font-size: 0.88rem; font-family: 'DM Sans', sans-serif;
+          background: #fff; color: #131325; font-size: 16px; font-family: 'DM Sans', sans-serif;
           outline: none; resize: none; min-height: 36px; max-height: 72px;
           box-shadow: inset 0 1px 3px rgba(19,19,37,0.06); transition: border-color 0.2s;
         }
@@ -408,17 +937,24 @@ export default function ChatPanel({
           </div>
 
           <div className="chat-panel-messages" ref={messagesRef}>
-            {messages.map((msg) => (
-              <div key={msg.id} className={`ch-msg ${msg.sender}`}>{msg.content}</div>
-            ))}
+            {messages.map((msg) => {
+              if (msg.card) {
+                return <div key={msg.id}>{renderCard(msg.card, msg.id)}</div>;
+              }
+              return (
+                <div key={msg.id} className={`ch-msg ${msg.sender}`}>{msg.content}</div>
+              );
+            })}
             {xmtpStatus === 'error' && (
               <div className="ch-msg system" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
                 <a href={fallbackUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#4870D4', textDecoration: 'underline' }}>
                   open XMTP chat in new tab
                 </a>
-                <button className="ch-retry-btn" onClick={handleRetry}>
-                  retry
-                </button>
+                {!crossOriginErrorRef.current && (
+                  <button className="ch-retry-btn" onClick={handleRetry}>
+                    retry
+                  </button>
+                )}
               </div>
             )}
           </div>

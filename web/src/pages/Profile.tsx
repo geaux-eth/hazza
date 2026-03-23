@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { API_BASE, EXPLORER_HOST } from '../constants';
 import ChatPanel from '../components/ChatPanel';
+import { useProfileContext } from '../components/ProfileLayout';
 
 interface ProfileData {
   name: string;
@@ -50,10 +52,10 @@ function SocialLinks({ texts }: { texts: Record<string, string> }) {
           style={{
             padding: '0.3rem 0.75rem',
             background: '#fff',
-            border: '2px solid #E8DCAB',
+            border: '2px solid #4870D4',
             borderRadius: 20,
             fontSize: '0.8rem',
-            color: '#8a7d5a',
+            color: '#4870D4',
             textDecoration: 'none',
             fontWeight: 600,
             fontFamily: "'Fredoka', sans-serif",
@@ -99,20 +101,20 @@ function Badges({ texts }: { texts: Record<string, string> }) {
 function Section({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ marginTop: '1rem', border: '2px solid #E8DCAB', borderRadius: 8, overflow: 'hidden' }}>
+    <div style={{ marginTop: '1rem', border: '2px solid #ddd', borderRadius: 8, overflow: 'hidden' }}>
       <button
         onClick={() => setOpen(!open)}
         style={{
           width: '100%', padding: '0.75rem 1rem', background: '#fff', border: 'none',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           cursor: 'pointer', fontFamily: "'Fredoka', sans-serif", fontSize: '0.9rem',
-          fontWeight: 700, color: '#131325',
+          fontWeight: 700, color: '#4870D4',
         }}
       >
         {title}
-        <span style={{ color: '#8a7d5a', fontSize: '0.8rem' }}>{open ? '\u25B2' : '\u25BC'}</span>
+        <span style={{ color: '#4870D4', fontSize: '0.8rem' }}>{open ? '\u25B2' : '\u25BC'}</span>
       </button>
-      {open && <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid #E8DCAB' }}>{children}</div>}
+      {open && <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid #ddd' }}>{children}</div>}
     </div>
   );
 }
@@ -337,6 +339,10 @@ export default function Profile() {
   const [loadError, setLoadError] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
 
+  // Profile layout context (provides nav integration on subdomain routes)
+  const profileCtx = useProfileContext();
+  const outletCtx = (useOutletContext() || {}) as { chatRequested?: boolean; setChatRequested?: (v: boolean) => void };
+
   useEffect(() => {
     // Detect profile name: injected by worker OR from subdomain
     const injected = (window as any).__HAZZA_PROFILE_NAME__;
@@ -363,6 +369,24 @@ export default function Profile() {
       .catch(e => { setError(e.message); setLoadError(true); setLoading(false); });
   }, [profileName]);
 
+  // Report profile info to ProfileLayout nav
+  useEffect(() => {
+    if (!data || !profileName) return;
+    profileCtx.setProfileInfo({
+      name: profileName,
+      owner: data.owner,
+      xmtp: data.texts?.xmtp,
+    });
+  }, [data, profileName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handle chat request from nav "message" button
+  useEffect(() => {
+    if (outletCtx.chatRequested && data?.texts?.xmtp) {
+      setChatOpen(true);
+      outletCtx.setChatRequested?.(false);
+    }
+  }, [outletCtx.chatRequested]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!profileName) return <div style={{ textAlign: 'center', padding: '3rem', color: '#8a7d5a' }}>loading...</div>;
   if (loading) return <div style={{ textAlign: 'center', padding: '3rem', color: '#8a7d5a' }}>loading {profileName}.hazza.name...</div>;
   if (loadError) return <div style={{ textAlign: 'center', padding: '3rem', color: '#CF3748' }}>Failed to load profile. Please try again.</div>;
@@ -373,8 +397,8 @@ export default function Profile() {
   if (!data.registered) {
     return (
       <div style={{ maxWidth: 480, margin: '3rem auto', padding: '2rem', textAlign: 'center' }}>
-        <h1 style={{ color: '#131325', fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem', fontFamily: "'Fredoka', sans-serif" }}>
-          {profileName}<span style={{ color: '#4870D4' }}>.hazza.name</span>
+        <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem', fontFamily: "'Fredoka', sans-serif" }}>
+          <span style={{ color: '#4870D4' }}>{profileName}</span><span style={{ color: '#131325' }}>.hazza.name</span>
         </h1>
         <p style={{ color: '#8a7d5a', marginBottom: '1.5rem' }}>this name is available</p>
         <a
@@ -415,17 +439,17 @@ export default function Profile() {
           />
         ) : (
           <div style={{
-            width: 96, height: 96, borderRadius: '50%', background: '#E8DCAB',
+            width: 96, height: 96, borderRadius: '50%', background: '#4870D4',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             margin: '0 auto 0.75rem', fontSize: '2.5rem', fontWeight: 700,
-            color: '#CF3748', fontFamily: "'Fredoka', sans-serif",
+            color: '#fff', fontFamily: "'Fredoka', sans-serif",
           }}>
             {profileName.charAt(0).toUpperCase()}
           </div>
         )}
 
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#131325', margin: '0 0 0.25rem', fontFamily: "'Fredoka', sans-serif" }}>
-          {profileName}<span style={{ color: '#4870D4' }}>.hazza.name</span>
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0 0 0.25rem', fontFamily: "'Fredoka', sans-serif" }}>
+          <span style={{ color: '#4870D4' }}>{profileName}</span><span style={{ color: '#131325' }}>.hazza.name</span>
         </h1>
 
         {hasBio && <p style={{ color: '#8a7d5a', fontSize: '0.9rem', lineHeight: 1.5, margin: '0.5rem 0' }}>{texts['description']}</p>}
@@ -448,8 +472,8 @@ export default function Profile() {
               onClick={() => setChatOpen(true)}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
-                padding: '0.4rem 1rem', background: '#131325', border: '2px solid #4870D4',
-                borderRadius: 20, color: '#CF3748', fontSize: '0.8rem', fontWeight: 600,
+                padding: '0.4rem 1rem', background: '#4870D4', border: 'none',
+                borderRadius: 20, color: '#fff', fontSize: '0.8rem', fontWeight: 600,
                 cursor: 'pointer', fontFamily: "'Fredoka', sans-serif",
               }}
             >
@@ -504,9 +528,9 @@ export default function Profile() {
           href={`https://hazza.name/manage?name=${encodeURIComponent(profileName)}`}
           style={{
             display: 'inline-block', padding: '0.6rem 1.5rem',
-            border: '2px solid #CF3748', color: '#CF3748', borderRadius: 8,
+            background: '#CF3748', color: '#fff', borderRadius: 8,
             fontWeight: 700, fontSize: '0.9rem', textDecoration: 'none',
-            fontFamily: "'Fredoka', sans-serif",
+            fontFamily: "'Fredoka', sans-serif", border: 'none',
           }}
         >
           manage

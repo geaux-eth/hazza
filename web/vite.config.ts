@@ -5,7 +5,7 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), nodePolyfills({ globals: { Buffer: true, global: true, process: true } })],
-  base: 'https://hazza-app.pages.dev/',
+  base: '/',
   build: {
     manifest: true,
     chunkSizeWarningLimit: 1500,

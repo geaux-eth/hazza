@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
+import ProfileLayout from './components/ProfileLayout';
 import Home from './pages/Home';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
@@ -26,11 +27,11 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 const Marketplace = lazy(() => import('./pages/Marketplace'));
-const Pricing = lazy(() => import('./pages/Pricing'));
+// Pricing consolidated into About page
 const About = lazy(() => import('./pages/About'));
 const Docs = lazy(() => import('./pages/Docs'));
 const Admin = lazy(() => import('./pages/Admin'));
-const Nomi = lazy(() => import('./pages/Nomi'));
+const Messages = lazy(() => import('./pages/Messages'));
 const Domains = lazy(() => import('./pages/Domains'));
 const Profile = lazy(() => import('./pages/Profile'));
 
@@ -52,12 +53,12 @@ function useIsProfileSubdomain(): boolean {
 export default function App() {
   const isProfile = useIsProfileSubdomain();
 
-  // On a subdomain → render Profile page directly
+  // On a subdomain → render Profile page with profile-specific nav
   if (isProfile) {
     return (
       <ErrorBoundary>
         <Routes>
-          <Route element={<Layout />}>
+          <Route element={<ProfileLayout />}>
             <Route path="*" element={<Suspense fallback={<Loading />}><Profile /></Suspense>} />
           </Route>
         </Routes>
@@ -74,13 +75,11 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/manage" element={<Manage />} />
         <Route path="/marketplace" element={<Suspense fallback={<Loading />}><Marketplace /></Suspense>} />
-        <Route path="/pricing" element={<Suspense fallback={<Loading />}><Pricing /></Suspense>} />
-        <Route path="/pricing/protections" element={<Suspense fallback={<Loading />}><Pricing /></Suspense>} />
-        <Route path="/pricing/details" element={<Suspense fallback={<Loading />}><Pricing /></Suspense>} />
+        {/* pricing consolidated into /about */}
         <Route path="/about" element={<Suspense fallback={<Loading />}><About /></Suspense>} />
         <Route path="/docs" element={<Suspense fallback={<Loading />}><Docs /></Suspense>} />
         <Route path="/admin" element={<Suspense fallback={<Loading />}><Admin /></Suspense>} />
-        <Route path="/nomi" element={<Suspense fallback={<Loading />}><Nomi /></Suspense>} />
+        <Route path="/messages" element={<Suspense fallback={<Loading />}><Messages /></Suspense>} />
         <Route path="/domains" element={<Suspense fallback={<Loading />}><Domains /></Suspense>} />
       </Route>
     </Routes>

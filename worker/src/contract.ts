@@ -378,7 +378,6 @@ export type Env = {
   HAZZA_TREASURY: string;
   MARKETPLACE_FEE_BPS: string;
   WETH_ADDRESS: string;
-  BOUNTY_ADDRESS: string;
   WATCHLIST_KV: KVNamespace;
   NOTIFICATION_WEBHOOK?: string;  // Telegram/Discord webhook for alerts
   ADMIN_API_KEY?: string;         // API key for admin endpoints
@@ -423,6 +422,20 @@ export const ERC8004_ABI = [
     stateMutability: "view",
     inputs: [{ name: "owner", type: "address" }],
     outputs: [{ type: "uint256" }],
+  },
+  {
+    name: "tokenURI",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ type: "string" }],
+  },
+  {
+    name: "ownerOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ type: "address" }],
   },
 ] as const;
 

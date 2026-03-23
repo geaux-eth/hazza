@@ -1,9 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignMessage } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { keccak256, toBytes, toHex } from 'viem';
 import { REGISTRY_ADDRESS, REGISTRY_ABI } from '../config/contracts';
-import { API_BASE } from '../constants';
+import { API_BASE, EXPLORER_HOST } from '../constants';
+
+const NET_STORAGE_ADDRESS = '0x00000000db40fcb9f4466330982372e27fd7bbf5' as const;
+const NET_STORAGE_ABI = [{
+  name: 'put', type: 'function', stateMutability: 'nonpayable',
+  inputs: [{ name: 'key', type: 'bytes32' }, { name: 'text', type: 'string' }, { name: 'value', type: 'bytes' }],
+  outputs: [],
+}] as const;
 
 type ProfileData = {
   registered: boolean;
@@ -188,7 +196,24 @@ export default function Manage() {
   useEffect(() => {
     if (!isConfirmed || !pendingAction) return;
 
-    if (pendingAction.type === 'setText') {
+    if (pendingAction.type === 'storeSite') {
+      // Storage tx confirmed — now set site.key to the CDN URL
+      const cdnUrl = pendingSiteCdnUrl.current;
+      if (cdnUrl) {
+        setSiteKeyValue(cdnUrl);
+        showMsg('Stored onchain! Now setting site.key...', false);
+        resetWrite();
+        setPendingAction({ type: 'setText', key: 'site.key' });
+        writeContract({
+          address: REGISTRY_ADDRESS,
+          abi: REGISTRY_ABI,
+          functionName: 'setText',
+          args: [nameParam, 'site.key', cdnUrl],
+        });
+        pendingSiteCdnUrl.current = '';
+        return;
+      }
+    } else if (pendingAction.type === 'setText') {
       showMsg(`${pendingAction.key} saved!`, false);
     } else if (pendingAction.type === 'setPrimary') {
       showMsg('Primary name set!', false);
@@ -301,6 +326,11 @@ export default function Manage() {
     });
   }, [nameParam, domainValue, writeContract, showMsg]);
 
+  // Site upload state
+  const [siteUploading, setSiteUploading] = useState(false);
+  const [siteFileName, setSiteFileName] = useState('');
+  const pendingSiteCdnUrl = useRef('');
+
   // Save site key (text record)
   const handleSaveSiteKey = useCallback(() => {
     showMsg('Saving site.key...', false);
@@ -312,6 +342,41 @@ export default function Manage() {
       args: [nameParam, 'site.key', siteKeyValue.trim()],
     });
   }, [nameParam, siteKeyValue, writeContract, showMsg]);
+
+  // Upload HTML file directly to Net Protocol Storage contract (user pays gas)
+  const handleSiteUpload = useCallback(async (file: File) => {
+    if (!file.name.endsWith('.html') && !file.name.endsWith('.htm')) {
+      showMsg('Only .html files are supported.', true);
+      return;
+    }
+    setSiteUploading(true);
+    setSiteFileName(file.name);
+    showMsg('Preparing upload...', false);
+    try {
+      const html = await file.text();
+      const htmlBytes = new TextEncoder().encode(html);
+      const base64 = btoa(String.fromCharCode(...htmlBytes));
+      const dataHex = toHex(new TextEncoder().encode(base64));
+      const storageKey = keccak256(toBytes(`hazza-site-${nameParam}`));
+      const fileName = `${nameParam}.html`;
+
+      // Build CDN URL using the connected wallet address
+      const cdnUrl = `https://storedon.net/net/8453/storage/load/${address!.toLowerCase()}/${encodeURIComponent(fileName)}`;
+      pendingSiteCdnUrl.current = cdnUrl;
+
+      showMsg(`Storing ${(htmlBytes.length / 1024).toFixed(1)}KB onchain — confirm in your wallet`, false);
+      setPendingAction({ type: 'storeSite' });
+      writeContract({
+        address: NET_STORAGE_ADDRESS,
+        abi: NET_STORAGE_ABI,
+        functionName: 'put',
+        args: [storageKey, fileName, dataHex],
+      });
+    } catch (e: any) {
+      showMsg('Upload failed: ' + (e?.message || 'unknown error'), true);
+    }
+    setSiteUploading(false);
+  }, [nameParam, address, showMsg, writeContract]);
 
   // Register agent
   const handleRegisterAgent = useCallback(() => {
@@ -446,7 +511,7 @@ export default function Manage() {
 
   if (!nameParam) {
     return (
-      <div className="max-w-[720px] mx-auto px-6">
+      <div className="manage-page">
         <div id="manage-body">
           <p style={{ color: '#CF3748', textAlign: 'center' }}>
             No name specified. <Link to="/">Search for a name</Link>
@@ -458,7 +523,7 @@ export default function Manage() {
 
   if (loading) {
     return (
-      <div className="max-w-[720px] mx-auto px-6">
+      <div className="manage-page">
         <p style={{ color: '#8a7d5a', textAlign: 'center', fontSize: '0.85rem' }}>loading...</p>
       </div>
     );
@@ -466,7 +531,7 @@ export default function Manage() {
 
   if (!profileData) {
     return (
-      <div className="max-w-[720px] mx-auto px-6">
+      <div className="manage-page">
         <div id="manage-body">
           <p style={{ color: '#CF3748', textAlign: 'center' }}>
             {nameParam}.hazza.name is not registered.{' '}
@@ -480,32 +545,77 @@ export default function Manage() {
   const shortOwner = profileData.owner.slice(0, 6) + '...' + profileData.owner.slice(-4);
   const canManage = isOwner || isOperator;
 
+  // Batch save all profile + social text records
+  const handleSaveAll = useCallback(() => {
+    const allKeys = [
+      'description', 'avatar', 'url',
+      'com.twitter', 'xyz.farcaster', 'com.github', 'org.telegram', 'com.discord', 'com.linkedin',
+      'xmtp', 'message.delegate', 'message.mode',
+    ];
+    const keys: string[] = [];
+    const values: string[] = [];
+    for (const k of allKeys) {
+      const v = (fieldValues[k] || '').trim();
+      if (v || k in fieldValues) {
+        keys.push(k);
+        values.push(v);
+      }
+    }
+    // Also include badge fields
+    if (helixaId.trim()) { keys.push('helixa.id'); values.push(helixaId.trim()); }
+    if (netLibraryMember.trim()) { keys.push('netlibrary.member'); values.push(netLibraryMember.trim()); }
+    if (netProfileKey.trim()) { keys.push('net.profile'); values.push(netProfileKey.trim()); }
+
+    if (keys.length === 0) {
+      showMsg('No fields to save.', true);
+      return;
+    }
+    showMsg(`Saving ${keys.length} field${keys.length > 1 ? 's' : ''}...`, false);
+    setPendingAction({ type: 'setText', key: 'all' });
+    writeContract({
+      address: REGISTRY_ADDRESS,
+      abi: REGISTRY_ABI,
+      functionName: 'setTexts',
+      args: [nameParam, keys, values],
+    });
+  }, [fieldValues, helixaId, netLibraryMember, netProfileKey, nameParam, writeContract, showMsg]);
+
   return (
-    <div className="max-w-[720px] mx-auto px-6">
+    <div className="manage-page">
       <div id="manage-body">
-        <div className="header" style={{ borderBottom: '2px solid #E8DCAB' }}>
-          <h1 id="manage-name" style={{ wordBreak: 'break-word' }}>
-            {nameParam}.hazza.name
+        <div className="header" style={{ background: '#4870D4', padding: '1rem 1rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
+          <h1 id="manage-name" style={{ color: '#fff', wordBreak: 'break-word', fontSize: '1.5rem' }}>
+            {nameParam}<span style={{ color: 'rgba(255,255,255,0.7)' }}>.hazza.name</span>
           </h1>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
-          <div>
-            <span style={{ color: '#8a7d5a' }}>Status</span>{' '}
-            <span style={{ color: '#131325' }}>{profileData.status}</span>
-          </div>
-          <div>
-            <span style={{ color: '#8a7d5a' }}>Owner</span>{' '}
-            <span style={{ color: '#131325' }}>{shortOwner}</span>
-          </div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+          <span style={{
+            display: 'inline-block', padding: '0.15rem 0.6rem',
+            background: 'rgba(0,230,118,0.15)', borderRadius: 12,
+            fontSize: '0.75rem', fontWeight: 600, color: '#1B7A3D',
+            fontFamily: "'Fredoka', sans-serif",
+          }}>
+            {profileData.status}
+          </span>
+          <a
+            href={`https://${EXPLORER_HOST}/address/${profileData.owner}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'inline-block', padding: '0.15rem 0.6rem',
+              background: '#fff', border: '1px solid #E8DCAB', borderRadius: 12,
+              fontSize: '0.75rem', color: '#8a7d5a', textDecoration: 'none',
+              fontFamily: "'Fredoka', sans-serif",
+            }}
+          >
+            owner: {shortOwner}
+          </a>
         </div>
 
         {!isConnected && (
           <div id="connect-section" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
             <p style={{ color: '#8a7d5a' }}>connect your wallet to manage this name</p>
-            <p style={{ color: '#8a7d5a', fontSize: '0.85rem' }}>
-              tap <strong style={{ color: '#CF3748' }}>connect</strong> in the menu above
-            </p>
             <div style={{ marginTop: '1rem' }}>
               <ConnectButton />
             </div>
@@ -514,101 +624,28 @@ export default function Manage() {
 
         {isConnected && !canManage && (
           <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-            <p style={{ color: '#CF3748' }}>Connected wallet is not the owner or operator of this name.</p>
+            <p style={{ color: '#CF3748', fontSize: '0.85rem' }}>Connected wallet is not the owner or operator of this name.</p>
           </div>
         )}
 
         {/* Status message */}
         {statusMsg && (
-          <div id="manage-status" style={{ textAlign: 'center', padding: '0.75rem', fontSize: '0.9rem', marginBottom: '1rem', color: statusMsg.isError ? '#CF3748' : '#2e7d32' }}>
+          <div id="manage-status" style={{ textAlign: 'center', padding: '0.5rem', fontSize: '0.85rem', marginBottom: '1rem', color: statusMsg.isError ? '#CF3748' : '#1B7A3D', fontFamily: "'Fredoka', sans-serif" }}>
             {statusMsg.msg}
           </div>
         )}
 
-        {/* My Names */}
-        {canManage && myNames.length > 0 && (
-          <div style={{ marginBottom: '1.5rem' }}>
-            <div className="section">
-              <div className="section-title">My Names</div>
-              <div id="my-names-list">
-                {myNamesLoading && (
-                  <span style={{ color: '#8a7d5a', fontSize: '0.85rem' }}>Loading...</span>
-                )}
-                {myNames.map((n) => {
-                  const isCurrent = n.name === nameParam;
-                  return (
-                    <div
-                      key={n.name}
-                      style={{
-                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                        padding: '0.5rem 0.75rem', background: '#fff',
-                        border: `2px solid ${isCurrent ? '#CF3748' : '#E8DCAB'}`,
-                        borderRadius: '6px', marginBottom: '0.35rem',
-                      }}
-                    >
-                      <a
-                        href={`https://${n.name}.hazza.name`}
-                        style={{ color: '#131325', fontWeight: isCurrent ? 700 : 400, fontSize: '0.9rem', textDecoration: 'none' }}
-                      >
-                        {n.name}<span style={{ color: '#4870D4' }}>.hazza.name</span>
-                      </a>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        {!isCurrent ? (
-                          <Link
-                            to={`/manage?name=${encodeURIComponent(n.name)}`}
-                            style={{ color: '#8a7d5a', fontSize: '0.75rem', border: '2px solid #E8DCAB', padding: '0.15rem 0.5rem', borderRadius: '4px', textDecoration: 'none' }}
-                          >
-                            Manage
-                          </Link>
-                        ) : (
-                          <span style={{ color: '#CF3748', fontSize: '0.75rem', padding: '0.15rem 0.5rem' }}>Current</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {myNamesTotal > 50 && (
-                  <span style={{ color: '#8a7d5a', fontSize: '0.8rem' }}>
-                    Showing 50 of {myNamesTotal} names
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Edit section */}
+        {/* Edit section — all text records */}
         {canManage && (
           <div id="edit-section">
-            <p style={{ color: '#8a7d5a', fontSize: '0.8rem', marginBottom: '1rem' }}>
-              Setting text records costs Base gas (~$0.01 per transaction). Changes are onchain and permanent.
-            </p>
+            <div style={{ background: '#FFF3CD', border: '1px solid #E8DCAB', borderRadius: '8px', padding: '0.6rem 0.75rem', marginBottom: '1rem', fontSize: '0.75rem', color: '#856404' }}>
+              Changes are saved onchain via a Base transaction (~$0.01 gas).
+            </div>
 
-            {/* Profile section */}
+            {/* Profile */}
             <div className="section">
               <div className="section-title">Profile</div>
-
-              {/* Bio */}
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Bio</label>
-                <input
-                  type="text"
-                  placeholder="A short bio..."
-                  value={fieldValues.description || ''}
-                  onChange={(e) => setFieldValues((prev) => ({ ...prev, description: e.target.value }))}
-                  maxLength={500}
-                  style={{ flex: 1, minWidth: '150px', padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
-                />
-                <button
-                  onClick={() => saveField('description', 'description')}
-                  disabled={isWriting || isConfirming}
-                  style={{ padding: '0.5rem 1rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.8rem', fontFamily: "'Fredoka',sans-serif", whiteSpace: 'nowrap' }}
-                >
-                  Save
-                </button>
-              </div>
-
-              {/* Avatar with NFT picker */}
+              <FieldInput label="Bio" inputKey="description" placeholder="A short bio..." fieldValues={fieldValues} setFieldValues={setFieldValues} />
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                 <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Avatar</label>
                 <input
@@ -617,85 +654,64 @@ export default function Manage() {
                   value={fieldValues.avatar || ''}
                   onChange={(e) => setFieldValues((prev) => ({ ...prev, avatar: e.target.value }))}
                   maxLength={2048}
-                  style={{ flex: 1, minWidth: '150px', padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
+                  style={{ flex: 1, minWidth: '150px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
                 />
                 <button
-                  onClick={() => saveField('avatar', 'avatar')}
-                  disabled={isWriting || isConfirming}
-                  style={{ padding: '0.5rem 1rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.8rem', fontFamily: "'Fredoka',sans-serif", whiteSpace: 'nowrap' }}
-                >
-                  Save
-                </button>
-                <button
                   onClick={openNftPicker}
-                  style={{ padding: '0.5rem 0.75rem', background: '#fff', color: '#8a7d5a', border: '2px solid #E8DCAB', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer', fontFamily: "'Fredoka',sans-serif", whiteSpace: 'nowrap' }}
+                  style={{ padding: '0.4rem 0.6rem', background: '#fff', color: '#8a7d5a', border: '2px solid #E8DCAB', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', fontFamily: "'Fredoka',sans-serif", whiteSpace: 'nowrap' }}
                   title="Browse your NFTs"
                 >
                   NFTs
                 </button>
               </div>
-
               {/* NFT Picker */}
               {nftPickerOpen && (
-                <div style={{ marginBottom: '1rem', padding: '1rem', background: '#fff', border: '2px solid #E8DCAB', borderRadius: '8px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                    <span style={{ color: '#8a7d5a', fontSize: '0.85rem' }}>Select an NFT as your avatar</span>
-                    <button
-                      onClick={() => setNftPickerOpen(false)}
-                      style={{ background: 'transparent', border: 'none', color: '#8a7d5a', fontSize: '1.2rem', cursor: 'pointer', padding: '0 0.25rem' }}
-                    >
-                      &times;
-                    </button>
+                <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#fff', border: '2px solid #E8DCAB', borderRadius: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <span style={{ color: '#8a7d5a', fontSize: '0.8rem' }}>Select an NFT as your avatar</span>
+                    <button onClick={() => setNftPickerOpen(false)} style={{ background: 'transparent', border: 'none', color: '#8a7d5a', fontSize: '1.2rem', cursor: 'pointer' }}>&times;</button>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(80px,1fr))', gap: '0.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(70px,1fr))', gap: '0.4rem' }}>
                     {nfts.map((nft, i) => (
-                      <div
+                      <img
                         key={i}
-                        style={{ cursor: 'pointer', position: 'relative' }}
+                        src={nft.image}
+                        onClick={() => selectNft(nft.image)}
+                        style={{ width: '70px', height: '70px', objectFit: 'cover', borderRadius: '6px', border: '2px solid transparent', display: 'block', cursor: 'pointer' }}
+                        onMouseOver={(e) => { (e.target as HTMLImageElement).style.borderColor = '#CF3748'; }}
+                        onMouseOut={(e) => { (e.target as HTMLImageElement).style.borderColor = 'transparent'; }}
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        alt={nft.name || `${nft.collection} #${nft.tokenId}`}
                         title={nft.name || `${nft.collection} #${nft.tokenId}`}
-                      >
-                        <img
-                          src={nft.image}
-                          onClick={() => selectNft(nft.image)}
-                          style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '6px', border: '2px solid transparent', display: 'block' }}
-                          onMouseOver={(e) => { (e.target as HTMLImageElement).style.borderColor = '#CF3748'; }}
-                          onMouseOut={(e) => { (e.target as HTMLImageElement).style.borderColor = 'transparent'; }}
-                          onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = 'none'; }}
-                          alt={nft.name || `${nft.collection} #${nft.tokenId}`}
-                        />
-                      </div>
+                      />
                     ))}
                   </div>
-                  <div style={{ textAlign: 'center', color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.5rem' }}>
-                    {nftPickerStatus}
-                  </div>
+                  <div style={{ textAlign: 'center', color: '#8a7d5a', fontSize: '0.75rem', marginTop: '0.4rem' }}>{nftPickerStatus}</div>
                 </div>
               )}
-
-              {/* Website */}
-              <FieldRow label="Website" recordKey="url" inputKey="url" placeholder="https://..." fieldValues={fieldValues} setFieldValues={setFieldValues} saveField={saveField} disabled={isWriting || isConfirming} maxLength={2048} />
+              <FieldInput label="Website" inputKey="url" placeholder="https://..." fieldValues={fieldValues} setFieldValues={setFieldValues} />
             </div>
 
-            {/* Socials section */}
+            {/* Socials */}
             <div className="section">
               <div className="section-title">Socials</div>
-              <FieldRow label="Twitter" recordKey="com.twitter" inputKey="com.twitter" placeholder="@handle" fieldValues={fieldValues} setFieldValues={setFieldValues} saveField={saveField} disabled={isWriting || isConfirming} maxLength={500} />
-              <FieldRow label="Farcaster" recordKey="xyz.farcaster" inputKey="xyz.farcaster" placeholder="@handle" fieldValues={fieldValues} setFieldValues={setFieldValues} saveField={saveField} disabled={isWriting || isConfirming} maxLength={500} />
-              <FieldRow label="GitHub" recordKey="com.github" inputKey="com.github" placeholder="username" fieldValues={fieldValues} setFieldValues={setFieldValues} saveField={saveField} disabled={isWriting || isConfirming} maxLength={500} />
-              <FieldRow label="Telegram" recordKey="org.telegram" inputKey="org.telegram" placeholder="username" fieldValues={fieldValues} setFieldValues={setFieldValues} saveField={saveField} disabled={isWriting || isConfirming} maxLength={500} />
-              <FieldRow label="Discord" recordKey="com.discord" inputKey="com.discord" placeholder="username#1234" fieldValues={fieldValues} setFieldValues={setFieldValues} saveField={saveField} disabled={isWriting || isConfirming} maxLength={500} />
-              <FieldRow label="LinkedIn" recordKey="com.linkedin" inputKey="com.linkedin" placeholder="username" fieldValues={fieldValues} setFieldValues={setFieldValues} saveField={saveField} disabled={isWriting || isConfirming} maxLength={500} />
-              <FieldRow label="XMTP" recordKey="xmtp" inputKey="xmtp" placeholder="0x... XMTP-enabled address" fieldValues={fieldValues} setFieldValues={setFieldValues} saveField={saveField} disabled={isWriting || isConfirming} maxLength={500} />
-              <p style={{ color: '#8a7d5a', fontSize: '0.7rem', marginTop: '-0.25rem', marginBottom: '0.5rem' }}>
+              <FieldInput label="Twitter" inputKey="com.twitter" placeholder="@handle" fieldValues={fieldValues} setFieldValues={setFieldValues} />
+              <FieldInput label="Farcaster" inputKey="xyz.farcaster" placeholder="@handle" fieldValues={fieldValues} setFieldValues={setFieldValues} />
+              <FieldInput label="GitHub" inputKey="com.github" placeholder="username" fieldValues={fieldValues} setFieldValues={setFieldValues} />
+              <FieldInput label="Telegram" inputKey="org.telegram" placeholder="username" fieldValues={fieldValues} setFieldValues={setFieldValues} />
+              <FieldInput label="Discord" inputKey="com.discord" placeholder="username#1234" fieldValues={fieldValues} setFieldValues={setFieldValues} />
+              <FieldInput label="LinkedIn" inputKey="com.linkedin" placeholder="username" fieldValues={fieldValues} setFieldValues={setFieldValues} />
+              <FieldInput label="XMTP" inputKey="xmtp" placeholder="0x... XMTP-enabled address" fieldValues={fieldValues} setFieldValues={setFieldValues} />
+              <p style={{ color: '#8a7d5a', fontSize: '0.7rem', marginTop: '-0.25rem' }}>
                 Set your XMTP address to enable private DMs on your profile.{' '}
                 <a href="https://xmtp.org" style={{ color: '#4870D4' }} target="_blank" rel="noopener noreferrer">What is XMTP?</a>
               </p>
             </div>
 
-            {/* Message Routing section */}
+            {/* Message Routing */}
             <div className="section">
               <div className="section-title">Message Routing</div>
-              <FieldRow label="Delegate" recordKey="message.delegate" inputKey="message.delegate" placeholder="hazza name or 0x address" fieldValues={fieldValues} setFieldValues={setFieldValues} saveField={saveField} disabled={isWriting || isConfirming} maxLength={500} />
+              <FieldInput label="Delegate" inputKey="message.delegate" placeholder="hazza name or 0x address" fieldValues={fieldValues} setFieldValues={setFieldValues} />
               <p style={{ color: '#8a7d5a', fontSize: '0.7rem', marginTop: '-0.25rem', marginBottom: '0.5rem' }}>
                 Forward incoming messages to another name or address (e.g. your agent).
               </p>
@@ -705,366 +721,236 @@ export default function Manage() {
                   value={fieldValues['message.mode'] || 'all'}
                   onChange={(e) => setFieldValues((prev: Record<string, string>) => ({ ...prev, 'message.mode': e.target.value }))}
                   disabled={isWriting || isConfirming}
-                  style={{ flex: 1, padding: '0.4rem', borderRadius: '6px', border: '1px solid #d4c896', background: '#FFF9E6', color: '#131325', fontSize: '0.85rem', fontFamily: "'DM Sans',sans-serif" }}
+                  style={{ flex: 1, padding: '0.4rem', borderRadius: '6px', border: '2px solid #E8DCAB', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'DM Sans',sans-serif" }}
                 >
                   <option value="all">Receive all messages directly</option>
                   <option value="delegate-all">Forward all messages to delegate</option>
                   <option value="delegate-agents">Forward agent messages to delegate, keep human messages</option>
                 </select>
-                <button
-                  onClick={() => saveField('message.mode', 'message.mode')}
-                  disabled={isWriting || isConfirming || !fieldValues['message.mode']}
-                  style={{ padding: '0.4rem 0.75rem', background: '#CF3748', color: '#F7EBBD', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', fontSize: '0.8rem', fontFamily: "'Fredoka',sans-serif" }}
-                >
-                  Save
-                </button>
               </div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.7rem', marginTop: '-0.25rem', marginBottom: '0.5rem' }}>
-                Controls how incoming messages are routed when a delegate is set.
+            </div>
+
+            {/* Badges & Identity */}
+            <div className="section">
+              <div className="section-title">Badges</div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Helixa ID</label>
+                <input type="text" placeholder="e.g. 57" value={helixaId} onChange={(e) => setHelixaId(e.target.value)}
+                  style={{ flex: 1, minWidth: '80px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Net Library</label>
+                <input type="text" placeholder="member #" value={netLibraryMember} onChange={(e) => setNetLibraryMember(e.target.value)}
+                  style={{ flex: 1, minWidth: '80px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Net Profile</label>
+                <input type="text" placeholder="storage key" value={netProfileKey} onChange={(e) => setNetProfileKey(e.target.value)}
+                  style={{ flex: 1, minWidth: '80px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+              </div>
+              <p style={{ color: '#8a7d5a', fontSize: '0.7rem', marginTop: '0.25rem' }}>
+                Exoskeleton and Unlimited Pass badges are auto-detected from your wallet.
               </p>
             </div>
+
+            {/* Save All button */}
+            <button
+              onClick={handleSaveAll}
+              disabled={isWriting || isConfirming}
+              style={{ width: '100%', padding: '0.65rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", marginBottom: '1.5rem', boxShadow: '0 2px 8px rgba(207,55,72,0.25)' }}
+            >
+              {isWriting || isConfirming ? 'Saving...' : 'Save All Records'}
+            </button>
           </div>
         )}
 
-        {/* Actions section */}
+        {/* Advanced Settings */}
         {canManage && (
-          <div id="actions-section">
-            <hr className="divider" />
+          <div>
+            <div className="section-title" style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.75rem' }}>Advanced</div>
 
             {/* Primary Name */}
             <div className="section">
-              <div className="section-title">Primary Name</div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-                Set this as the primary name for your wallet (reverse resolution).
-              </p>
-              <button
-                onClick={handleSetPrimary}
-                disabled={isWriting || isConfirming}
-                style={{ padding: '0.5rem 1.5rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif" }}
-              >
-                Set as Primary
-              </button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif" }}>Primary Name</div>
+                  <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0.15rem 0 0' }}>Set as your wallet's reverse-resolved name</p>
+                </div>
+                <button onClick={handleSetPrimary} disabled={isWriting || isConfirming}
+                  style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif", whiteSpace: 'nowrap' }}>
+                  Set Primary
+                </button>
+              </div>
             </div>
-
-            <hr className="divider" />
 
             {/* Operator */}
             <div className="section">
-              <div className="section-title">Operator</div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-                Grant another address permission to manage this name's records.
-              </p>
+              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>Operator</div>
+              <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Grant another address permission to manage records</p>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <input
-                  type="text"
-                  placeholder="0x..."
-                  value={operatorValue}
-                  onChange={(e) => setOperatorValue(e.target.value)}
-                  style={{ flex: 1, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',monospace", outline: 'none' }}
-                />
-                <button
-                  onClick={handleSaveOperator}
-                  disabled={isWriting || isConfirming}
-                  style={{ padding: '0.5rem 1rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif" }}
-                >
-                  Set
-                </button>
+                <input type="text" placeholder="0x..." value={operatorValue} onChange={(e) => setOperatorValue(e.target.value)}
+                  style={{ flex: 1, padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',monospace", outline: 'none' }} />
+                <button onClick={handleSaveOperator} disabled={isWriting || isConfirming}
+                  style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>Set</button>
               </div>
             </div>
-
-            <hr className="divider" />
 
             {/* Custom Domain */}
             <div className="section">
-              <div className="section-title">Custom Domain</div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-                Link a custom domain to resolve to this name (max 10 per name).
-              </p>
+              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>Custom Domain</div>
+              <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Link a domain to resolve to this name (max 10)</p>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <input
-                  type="text"
-                  placeholder="example.com"
-                  value={domainValue}
-                  onChange={(e) => setDomainValue(e.target.value)}
-                  style={{ flex: 1, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
-                />
-                <button
-                  onClick={handleSaveDomain}
-                  disabled={isWriting || isConfirming}
-                  style={{ padding: '0.5rem 1rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif" }}
-                >
-                  Set
-                </button>
+                <input type="text" placeholder="example.com" value={domainValue} onChange={(e) => setDomainValue(e.target.value)}
+                  style={{ flex: 1, padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+                <button onClick={handleSaveDomain} disabled={isWriting || isConfirming}
+                  style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>Set</button>
               </div>
             </div>
 
-            <hr className="divider" />
-
-            {/* Website */}
+            {/* Onchain Website */}
             <div className="section">
-              <div className="section-title">Website</div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-                Host a custom website on your subdomain via <a href="https://netprotocol.app">Net Protocol</a>. Upload HTML to Net Protocol, then paste the storage key here.
+              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>Onchain Website</div>
+              <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>
+                Replace your profile with a custom HTML page — stored permanently onchain via <a href="https://netprotocol.app" target="_blank" rel="noopener noreferrer" style={{ color: '#4870D4' }}>Net Protocol</a>
               </p>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <input
-                  type="text"
-                  placeholder="my-site-key"
-                  value={siteKeyValue}
-                  onChange={(e) => setSiteKeyValue(e.target.value)}
-                  maxLength={2048}
-                  style={{ flex: 1, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
-                />
-                <button
-                  onClick={handleSaveSiteKey}
-                  disabled={isWriting || isConfirming}
-                  style={{ padding: '0.5rem 1rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif" }}
-                >
-                  Set
-                </button>
-              </div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.75rem', marginTop: '0.5rem' }}>
-                Your subdomain will serve the HTML directly instead of the profile page.
-              </p>
-            </div>
 
-            <hr className="divider" />
-
-            {/* AI Agent (ERC-8004) */}
-            <div className="section">
-              <div className="section-title">AI Agent (ERC-8004)</div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-                Register an AI agent for this name. Once registered, the agent ID is permanent.
-              </p>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Agent URI</label>
-                <input
-                  type="text"
-                  placeholder="https://... agent metadata"
-                  value={agentUri}
-                  onChange={(e) => setAgentUri(e.target.value)}
-                  maxLength={2048}
-                  style={{ flex: 1, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem' }}>
-                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Wallet</label>
-                <input
-                  type="text"
-                  placeholder="0x... (optional)"
-                  value={agentWallet}
-                  onChange={(e) => setAgentWallet(e.target.value)}
-                  style={{ flex: 1, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',monospace", outline: 'none' }}
-                />
-              </div>
-              <button
-                onClick={handleRegisterAgent}
-                disabled={isWriting || isConfirming}
-                style={{ padding: '0.5rem 1.5rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif" }}
+              {/* Upload area */}
+              <div
+                style={{ border: '2px dashed #E8DCAB', borderRadius: '8px', padding: '1rem', textAlign: 'center', cursor: siteUploading ? 'wait' : 'pointer', background: '#FFFDF5', marginBottom: '0.5rem', transition: 'border-color 0.2s' }}
+                onClick={() => { if (!siteUploading) document.getElementById('site-file-input')?.click(); }}
+                onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#4870D4'; }}
+                onDragLeave={(e) => { e.currentTarget.style.borderColor = '#E8DCAB'; }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.currentTarget.style.borderColor = '#E8DCAB';
+                  const file = e.dataTransfer.files[0];
+                  if (file) handleSiteUpload(file);
+                }}
               >
+                <input id="site-file-input" type="file" accept=".html,.htm" style={{ display: 'none' }}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleSiteUpload(f); e.target.value = ''; }} />
+                {siteUploading ? (
+                  <span style={{ color: '#4870D4', fontSize: '0.8rem', fontFamily: "'Fredoka',sans-serif" }}>Uploading {siteFileName}...</span>
+                ) : (
+                  <>
+                    <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>📄</div>
+                    <div style={{ color: '#131325', fontSize: '0.8rem', fontWeight: 600, fontFamily: "'Fredoka',sans-serif" }}>
+                      Drop an HTML file here or click to upload
+                    </div>
+                    <div style={{ color: '#8a7d5a', fontSize: '0.7rem', marginTop: '0.25rem' }}>Stored on Base forever via Net Protocol — the larger the file, the more it costs in gas</div>
+                  </>
+                )}
+              </div>
+
+              {/* Or paste a URL/key manually */}
+              <details style={{ marginTop: '0.25rem' }}>
+                <summary style={{ color: '#8a7d5a', fontSize: '0.7rem', cursor: 'pointer', fontFamily: "'Fredoka',sans-serif" }}>
+                  Or paste a URL / storage key manually
+                </summary>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.4rem' }}>
+                  <input type="text" placeholder="https://... or storage key" value={siteKeyValue} onChange={(e) => setSiteKeyValue(e.target.value)} maxLength={2048}
+                    style={{ flex: 1, padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+                  <button onClick={handleSaveSiteKey} disabled={isWriting || isConfirming}
+                    style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>Set</button>
+                </div>
+              </details>
+
+              {/* Current site indicator */}
+              {siteKeyValue && (
+                <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: '#22c55e', fontSize: '0.75rem' }}>●</span>
+                  <span style={{ color: '#8a7d5a', fontSize: '0.7rem', fontFamily: "'Fredoka',sans-serif" }}>
+                    Custom site active — <a href={`https://${nameParam}.hazza.name`} target="_blank" rel="noopener noreferrer" style={{ color: '#4870D4' }}>view live</a>
+                  </span>
+                  <button onClick={() => { setSiteKeyValue(''); handleSaveSiteKey(); }} style={{ marginLeft: 'auto', padding: '0.2rem 0.5rem', background: 'transparent', color: '#CF3748', border: '1px solid #CF3748', borderRadius: '4px', fontSize: '0.65rem', cursor: 'pointer', fontFamily: "'Fredoka',sans-serif" }}>Remove</button>
+                </div>
+              )}
+            </div>
+
+            {/* Agent */}
+            <div className="section">
+              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>AI Agent (ERC-8004)</div>
+              <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Register a permanent agent identity</p>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
+                <label style={{ color: '#8a7d5a', fontSize: '0.8rem', minWidth: '65px' }}>URI</label>
+                <input type="text" placeholder="https://... agent metadata" value={agentUri} onChange={(e) => setAgentUri(e.target.value)} maxLength={2048}
+                  style={{ flex: 1, minWidth: '150px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                <label style={{ color: '#8a7d5a', fontSize: '0.8rem', minWidth: '65px' }}>Wallet</label>
+                <input type="text" placeholder="0x... (optional)" value={agentWallet} onChange={(e) => setAgentWallet(e.target.value)}
+                  style={{ flex: 1, minWidth: '150px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',monospace", outline: 'none' }} />
+              </div>
+              <button onClick={handleRegisterAgent} disabled={isWriting || isConfirming}
+                style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>
                 Register Agent
               </button>
             </div>
 
-            <hr className="divider" />
-
-            {/* Badges & Identity */}
-            <div className="section">
-              <div className="section-title">Badges & Identity</div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-                Link your onchain identity to display badges and data on your profile.
-              </p>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '110px' }}>Helixa ID</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 57"
-                  value={helixaId}
-                  onChange={(e) => setHelixaId(e.target.value)}
-                  style={{ flex: 1, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
-                />
-                <button
-                  onClick={() => saveBadgeField('helixa.id', helixaId)}
-                  disabled={isWriting || isConfirming}
-                  style={{ padding: '0.5rem 0.75rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.8rem', fontFamily: "'Fredoka',sans-serif" }}
-                >
-                  Save
-                </button>
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '110px' }}>Net Library #</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 1"
-                  value={netLibraryMember}
-                  onChange={(e) => setNetLibraryMember(e.target.value)}
-                  style={{ flex: 1, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
-                />
-                <button
-                  onClick={() => saveBadgeField('netlibrary.member', netLibraryMember)}
-                  disabled={isWriting || isConfirming}
-                  style={{ padding: '0.5rem 0.75rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.8rem', fontFamily: "'Fredoka',sans-serif" }}
-                >
-                  Save
-                </button>
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '110px' }}>Net Profile Key</label>
-                <input
-                  type="text"
-                  placeholder="storedon.net URL or key"
-                  value={netProfileKey}
-                  onChange={(e) => setNetProfileKey(e.target.value)}
-                  style={{ flex: 1, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
-                />
-                <button
-                  onClick={() => saveBadgeField('net.profile', netProfileKey)}
-                  disabled={isWriting || isConfirming}
-                  style={{ padding: '0.5rem 0.75rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.8rem', fontFamily: "'Fredoka',sans-serif" }}
-                >
-                  Save
-                </button>
-              </div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.75rem', marginTop: '0.5rem' }}>
-                Exoskeleton ownership is auto-detected from your wallet. Unlimited Pass badge appears automatically.
-              </p>
-            </div>
-
-            <hr className="divider" />
-
             {/* API Access */}
             <div className="section">
-              <div className="section-title">API Access</div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-                Generate an API key to manage this name programmatically.
-                Bots, CLIs, and other services can use the key to set text records, update your domain, and more &mdash; no wallet needed.
+              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>API Access</div>
+              <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>
+                Generate an API key for programmatic access. See <Link to="/docs#write-api" style={{ color: '#4870D4' }}>docs</Link>.
               </p>
-              <button
-                onClick={handleGenerateKey}
-                disabled={apiKeyLoading}
-                style={{ padding: '0.5rem 1.5rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif" }}
-              >
-                {apiKeyLoading ? 'Generating...' : 'Generate API Key'}
+              <button onClick={handleGenerateKey} disabled={apiKeyLoading}
+                style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>
+                {apiKeyLoading ? 'Generating...' : 'Generate Key'}
               </button>
               {apiKeyVisible && (
-                <div style={{ marginTop: '1rem', padding: '1rem', background: '#fff', border: '2px solid #CF3748', borderRadius: '8px' }}>
+                <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#fff', border: '2px solid #CF3748', borderRadius: '8px' }}>
                   {apiKeyValue && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                      <code style={{ color: '#CF3748', fontSize: '0.8rem', wordBreak: 'break-all', flex: 1 }}>
-                        {apiKeyValue}
-                      </code>
-                      <button
-                        onClick={handleCopyKey}
-                        style={{ padding: '0.3rem 0.75rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '4px', fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                      >
-                        Copy
-                      </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                      <code style={{ color: '#CF3748', fontSize: '0.75rem', wordBreak: 'break-all', flex: 1 }}>{apiKeyValue}</code>
+                      <button onClick={handleCopyKey}
+                        style={{ padding: '0.25rem 0.5rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '4px', fontSize: '0.7rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>Copy</button>
                     </div>
                   )}
-                  {apiKeyNote && (
-                    <p style={{ color: '#8a7d5a', fontSize: '0.8rem', lineHeight: 1.5 }}>
-                      {apiKeyNote}
-                    </p>
-                  )}
+                  {apiKeyNote && <p style={{ color: '#8a7d5a', fontSize: '0.75rem', lineHeight: 1.5 }}>{apiKeyNote}</p>}
                 </div>
               )}
-              <p style={{ color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.75rem' }}>
-                See <Link to="/docs#write-api">API docs</Link> for endpoints and examples.
-              </p>
             </div>
 
-            <hr className="divider" />
-
             {/* Offers */}
-            {isOwner && offersLoaded && (
-              <>
-                <div className="section">
-                  <div className="section-title">Offers</div>
-                  <div id="name-offers-list">
-                    {offers.length === 0 ? (
-                      <p style={{ color: '#8a7d5a', fontSize: '0.85rem' }}>No offers on this name yet.</p>
-                    ) : (
-                      offers.map((o, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                            padding: '0.6rem 0', borderBottom: '1px solid #E8DCAB',
-                          }}
-                        >
-                          <div>
-                            <span style={{ fontWeight: 700, color: '#CF3748' }}>
-                              {o.price} {o.currency || 'ETH'}
-                            </span>
-                            {o.broker && (
-                              <span style={{ fontSize: '0.65rem', background: '#E8DCAB', color: '#CF3748', padding: '0.1rem 0.3rem', borderRadius: '4px', marginLeft: '0.3rem' }}>
-                                brokered
-                              </span>
-                            )}
-                            <div style={{ fontSize: '0.75rem', color: '#8a7d5a' }}>
-                              From: {o.offerer ? `${o.offerer.slice(0, 6)}...${o.offerer.slice(-4)}` : '?'} · Expires: {o.expiresAt ? new Date(o.expiresAt * 1000).toLocaleDateString() : '\u2014'}
-                            </div>
-                          </div>
-                          <Link
-                            to="/marketplace?tab=offers"
-                            style={{ padding: '0.4rem 1rem', background: '#CF3748', color: '#fff', borderRadius: '6px', fontWeight: 700, fontSize: '0.8rem', textDecoration: 'none' }}
-                          >
-                            View
-                          </Link>
-                        </div>
-                      ))
-                    )}
+            {isOwner && offersLoaded && offers.length > 0 && (
+              <div className="section">
+                <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.5rem' }}>Offers</div>
+                {offers.map((o, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0', borderBottom: '1px solid #E8DCAB' }}>
+                    <div>
+                      <span style={{ fontWeight: 700, color: '#CF3748', fontSize: '0.85rem' }}>{o.price} {o.currency || 'ETH'}</span>
+                      {o.broker && <span style={{ fontSize: '0.6rem', background: '#E8DCAB', color: '#CF3748', padding: '0.1rem 0.3rem', borderRadius: '4px', marginLeft: '0.3rem' }}>brokered</span>}
+                      <div style={{ fontSize: '0.7rem', color: '#8a7d5a' }}>
+                        {o.offerer ? `${o.offerer.slice(0, 6)}...${o.offerer.slice(-4)}` : '?'} · {o.expiresAt ? new Date(o.expiresAt * 1000).toLocaleDateString() : '\u2014'}
+                      </div>
+                    </div>
+                    <Link to="/marketplace?tab=offers" style={{ padding: '0.3rem 0.6rem', background: '#CF3748', color: '#fff', borderRadius: '6px', fontWeight: 700, fontSize: '0.7rem', textDecoration: 'none' }}>View</Link>
                   </div>
-                </div>
-                <hr className="divider" />
-              </>
+                ))}
+              </div>
             )}
 
             {/* Transfer */}
             {isOwner && (
-              <>
-                <div className="section">
-                  <div className="section-title">Transfer</div>
-                  <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-                    Transfer ownership of this name to another wallet. This is irreversible.
-                  </p>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input
-                      type="text"
-                      placeholder="0x... recipient address"
-                      value={transferTo}
-                      onChange={(e) => setTransferTo(e.target.value)}
-                      style={{ flex: 1, minWidth: '200px', padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
-                    />
-                    <button
-                      onClick={handleTransfer}
-                      disabled={isWriting || isConfirming}
-                      style={{ padding: '0.5rem 1.5rem', background: '#CF3748', color: '#131325', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif" }}
-                    >
-                      Transfer
-                    </button>
-                  </div>
-                  {transferStatus && (
-                    <p style={{ fontSize: '0.8rem', marginTop: '0.5rem', color: '#8a7d5a' }}>
-                      {transferStatus}
-                    </p>
-                  )}
+              <div className="section">
+                <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#CF3748', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>Transfer</div>
+                <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Transfer ownership to another wallet. This is irreversible.</p>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input type="text" placeholder="0x... recipient" value={transferTo} onChange={(e) => setTransferTo(e.target.value)}
+                    style={{ flex: 1, minWidth: '180px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+                  <button onClick={handleTransfer} disabled={isWriting || isConfirming}
+                    style={{ padding: '0.35rem 0.75rem', background: '#4870D4', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>Transfer</button>
                 </div>
-                <hr className="divider" />
-              </>
+                {transferStatus && <p style={{ fontSize: '0.75rem', marginTop: '0.4rem', color: '#8a7d5a' }}>{transferStatus}</p>}
+              </div>
             )}
           </div>
         )}
 
         {/* View profile link */}
         <div style={{ textAlign: 'center', margin: '1.5rem 0' }}>
-          <a
-            href={nameParam ? `https://${nameParam}.hazza.name` : '#'}
-            style={{ color: '#8a7d5a', fontSize: '0.85rem' }}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            view page &rarr;
+          <a href={`https://${nameParam}.hazza.name`} style={{ color: '#8a7d5a', fontSize: '0.8rem' }} target="_blank" rel="noopener noreferrer">
+            view profile &rarr;
           </a>
         </div>
       </div>
@@ -1072,27 +958,13 @@ export default function Manage() {
   );
 }
 
-// Reusable field row component matching the managePage fieldRow pattern
-function FieldRow({
-  label,
-  recordKey,
-  inputKey,
-  placeholder,
-  fieldValues,
-  setFieldValues,
-  saveField,
-  disabled,
-  maxLength,
+// Input-only field row (no individual save button)
+function FieldInput({
+  label, inputKey, placeholder, fieldValues, setFieldValues,
 }: {
-  label: string;
-  recordKey: string;
-  inputKey: string;
-  placeholder: string;
+  label: string; inputKey: string; placeholder: string;
   fieldValues: Record<string, string>;
   setFieldValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  saveField: (key: string, inputKey: string) => void;
-  disabled: boolean;
-  maxLength?: number;
 }) {
   return (
     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
@@ -1102,16 +974,8 @@ function FieldRow({
         placeholder={placeholder}
         value={fieldValues[inputKey] || ''}
         onChange={(e) => setFieldValues((prev) => ({ ...prev, [inputKey]: e.target.value }))}
-        maxLength={maxLength}
-        style={{ flex: 1, minWidth: '150px', padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.9rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
+        style={{ flex: 1, minWidth: '150px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
       />
-      <button
-        onClick={() => saveField(recordKey, inputKey)}
-        disabled={disabled}
-        style={{ padding: '0.5rem 1rem', background: '#E8DCAB', color: '#CF3748', border: '2px solid #CF3748', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.8rem', fontFamily: "'Fredoka',sans-serif", whiteSpace: 'nowrap' }}
-      >
-        Save
-      </button>
     </div>
   );
 }

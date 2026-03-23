@@ -6,7 +6,7 @@ export default function Docs() {
       <style>{`.section-title { color: #CF3748 !important; }`}</style>
       <div
         className="header"
-        style={{ background: '#4870D4', padding: '1.5rem 1rem', borderRadius: '12px', marginBottom: '1.5rem' }}
+        style={{ background: '#4870D4', padding: '1rem 1rem', borderRadius: '12px', marginBottom: '1.5rem' }}
       >
         <h1 style={{ color: '#fff' }}>docs</h1>
       </div>
@@ -62,6 +62,17 @@ export default function Docs() {
               <a href="#x402">/x402/register</a> &mdash; register a name via HTTP payment
             </span>
           </div>
+        </div>
+
+        <div className="section-title" style={{ marginTop: '1.5rem' }}>Marketplace</div>
+        <div className="info-grid">
+          <div className="info-row"><span className="label">GET</span><span className="value">/api/marketplace/listings &mdash; active listings</span></div>
+          <div className="info-row"><span className="label">GET</span><span className="value">/api/marketplace/offers &mdash; collection offers</span></div>
+          <div className="info-row"><span className="label">GET</span><span className="value">/api/marketplace/offers/:name &mdash; offers on a name</span></div>
+          <div className="info-row"><span className="label">GET</span><span className="value">/api/marketplace/sales &mdash; recent sales</span></div>
+          <div className="info-row"><span className="label">POST</span><span className="value">/api/marketplace/fulfill &mdash; get buy tx data</span></div>
+          <div className="info-row"><span className="label">POST</span><span className="value">/api/marketplace/fulfill-offer &mdash; get offer acceptance tx</span></div>
+          <div className="info-row"><span className="label">POST</span><span className="value">/api/marketplace/offer &mdash; submit an offer</span></div>
         </div>
       </div>
 
@@ -342,6 +353,55 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
       <hr className="divider" />
 
       <div className="section">
+        <div className="section-title">Marketplace API</div>
+        <p style={{ color: '#8a7d5a', lineHeight: 1.7, marginBottom: '1rem' }}>
+          hazza names trade on the <strong style={{ color: '#131325' }}>Seaport protocol</strong> (same as OpenSea) via the Net Protocol Bazaar.
+          The API handles all Seaport complexity &mdash; you get ready-to-execute transaction data.
+        </p>
+
+        <div className="section-title">Browse listings</div>
+        <pre style={{ background: '#f5f0e0', padding: '0.75rem', borderRadius: '6px', overflow: 'auto', fontSize: '0.8rem' }}>
+{`curl -s https://hazza.name/api/marketplace/listings`}
+        </pre>
+        <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+          Returns <code>{`{listings: [{name, tokenId, seller, price, currency, orderHash, ...}], total}`}</code>
+        </p>
+
+        <div className="section-title" style={{ marginTop: '1.25rem' }}>Buy a name (2-step)</div>
+        <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+          <strong style={{ color: '#131325' }}>Step 1</strong> &mdash; Get the transaction data:
+        </p>
+        <pre style={{ background: '#f5f0e0', padding: '0.75rem', borderRadius: '6px', overflow: 'auto', fontSize: '0.8rem' }}>
+{`curl -X POST https://hazza.name/api/marketplace/fulfill \\
+  -H "Content-Type: application/json" \\
+  -d '{"orderHash": "0x...", "buyerAddress": "0x..."}'`}
+        </pre>
+        <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+          Returns <code>{`{approvals: [{to, data, value}], fulfillment: {to, data, value}}`}</code>
+        </p>
+        <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+          <strong style={{ color: '#131325' }}>Step 2</strong> &mdash; Send each approval tx (if any), then send the fulfillment tx. The fulfillment <code>data</code> is complete Seaport calldata, ready to use as-is.
+        </p>
+
+        <div className="section-title" style={{ marginTop: '1.25rem' }}>Accept an offer</div>
+        <pre style={{ background: '#f5f0e0', padding: '0.75rem', borderRadius: '6px', overflow: 'auto', fontSize: '0.8rem' }}>
+{`curl -X POST https://hazza.name/api/marketplace/fulfill-offer \\
+  -H "Content-Type: application/json" \\
+  -d '{"orderHash": "0x...", "tokenId": "42", "sellerAddress": "0x..."}'`}
+        </pre>
+        <p style={{ color: '#8a7d5a', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+          Same <code>{`{approvals, fulfillment}`}</code> format. Execute to accept the offer and transfer your name.
+        </p>
+
+        <div className="info-grid" style={{ marginTop: '1rem' }}>
+          <div className="info-row"><span className="label">Marketplace fee</span><span className="value">None — 0%</span></div>
+          <div className="info-row"><span className="label">Seaport</span><span className="value" style={{ fontSize: '0.75rem' }}>0x0000000000000068F116a894984e2DB1123eB395</span></div>
+        </div>
+      </div>
+
+      <hr className="divider" />
+
+      <div className="section">
         <div className="section-title">Contract</div>
         <div className="info-grid">
           <div className="info-row">
@@ -351,8 +411,8 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
           <div className="info-row">
             <span className="label">Registry</span>
             <span className="value" style={{ fontSize: '0.75rem' }}>
-              <a href="https://basescan.org/address/0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746">
-                0xdf92cA2fc1e588F7A2ebAEA039CF3860826f4746
+              <a href="https://basescan.org/address/0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E">
+                0xD4E420201fE02F44AaF6d28D4c8d3A56fEaE0D3E
               </a>
             </span>
           </div>

@@ -12,6 +12,122 @@ interface SearchResult {
   owner?: string;
 }
 
+interface WalkthroughStep {
+  text: string;
+  btn: string;
+  target: string;
+  position: 'above' | 'below';
+}
+
+function WalkthroughOverlay({ step, onNext, onSkip, avatar }: {
+  step: WalkthroughStep;
+  onNext: () => void;
+  onSkip: () => void;
+  avatar: string;
+}) {
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  useEffect(() => {
+    const el = document.querySelector(step.target);
+    if (el) {
+      // For the search input, spotlight the whole search-box parent
+      const spotlight = step.target === '#name-input' ? el.closest('.search-box') || el : el;
+      setRect(spotlight.getBoundingClientRect());
+    } else {
+      setRect(null);
+    }
+  }, [step.target]);
+
+  const pad = 12;
+
+  // Tooltip positioning
+  let tooltipStyle: React.CSSProperties = {
+    position: 'fixed',
+    zIndex: 10002,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    maxWidth: '340px',
+    width: '85vw',
+  };
+
+  if (rect) {
+    if (step.position === 'below') {
+      tooltipStyle.top = rect.bottom + pad + 8;
+    } else {
+      tooltipStyle.bottom = window.innerHeight - rect.top + pad + 8;
+    }
+  } else {
+    tooltipStyle.top = '50%';
+    tooltipStyle.transform = 'translate(-50%, -50%)';
+  }
+
+  return (
+    <>
+      {/* Dark overlay with cutout for spotlight */}
+      <div
+        style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          zIndex: 10001,
+          pointerEvents: 'auto',
+        }}
+        onClick={onSkip}
+      >
+        {/* SVG overlay with rectangular cutout */}
+        <svg width="100%" height="100%" style={{ position: 'absolute', top: 0, left: 0 }}>
+          <defs>
+            <mask id="wt-mask">
+              <rect width="100%" height="100%" fill="white" />
+              {rect && (
+                <rect
+                  x={rect.left - pad}
+                  y={rect.top - pad}
+                  width={rect.width + pad * 2}
+                  height={rect.height + pad * 2}
+                  rx="12"
+                  fill="black"
+                />
+              )}
+            </mask>
+          </defs>
+          <rect
+            width="100%"
+            height="100%"
+            fill="rgba(19,19,37,0.65)"
+            mask="url(#wt-mask)"
+          />
+        </svg>
+        {/* Spotlight border glow */}
+        {rect && (
+          <div
+            style={{
+              position: 'absolute',
+              top: rect.top - pad,
+              left: rect.left - pad,
+              width: rect.width + pad * 2,
+              height: rect.height + pad * 2,
+              borderRadius: 12,
+              border: '2px solid rgba(72,112,212,0.5)',
+              boxShadow: '0 0 20px rgba(72,112,212,0.3)',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+      </div>
+
+      {/* Tooltip */}
+      <div className="wt-tooltip" style={tooltipStyle} onClick={(e) => e.stopPropagation()}>
+        <div>
+          <img src={avatar} className="wt-av" alt="Nomi" />
+          <div className="wt-text">{step.text}</div>
+          <button className="wt-next" onClick={onNext}>{step.btn}</button>
+          <span className="wt-skip" onClick={onSkip}>skip</span>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Home() {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<SearchResult | null>(null);
@@ -43,20 +159,28 @@ export default function Home() {
 
   const walkthroughSteps = [
     {
-      text: 'this is where the magic starts. type any name and register it in seconds. your first one is free.',
+      text: 'type a name right here. if it\'s available, you can register it instantly. oh — and your first one is free.',
       btn: 'next',
+      target: '#name-input',
+      position: 'below' as const,
     },
     {
-      text: 'your name does five things: onchain website via Net Protocol, DNS-resolvable identity, one-click x402 registration, ERC-8004 agent endpoint, and XMTP messaging.',
+      text: 'every name comes with five things baked in — an onchain website, DNS that actually resolves, x402 payments, an identity endpoint for AI agents, and encrypted messaging.',
       btn: 'next',
+      target: '#landing-features',
+      position: 'above' as const,
     },
     {
-      text: "explore the marketplace, check out docs, see pricing (spoiler: first name is free, after that it is a flat $5, forever) or come find me on my page.",
+      text: 'up here you\'ve got the marketplace for buying and selling names, docs if you\'re building something, and pricing details. first name is free, the next one starts at just $5.',
       btn: 'next',
+      target: '.nav-bar',
+      position: 'below' as const,
     },
     {
-      text: 'ready to claim your onchain identity? type a name right here!',
-      btn: "let's go!",
+      text: 'ok i\'m done. go find your name.',
+      btn: "let's go",
+      target: '#name-input',
+      position: 'below' as const,
     },
   ];
 
@@ -148,7 +272,7 @@ export default function Home() {
         {result && result.available && (
           <>
             <div style={{ textAlign: 'center' }}>
-              <span style={{ color: '#131325', fontWeight: 700 }}>{result.name}</span>
+              <span style={{ color: '#4870D4', fontWeight: 700, fontFamily: "'Fredoka', sans-serif" }}>{result.name}</span>
               <span className="available">.hazza.name</span>
               <br />
               <span style={{ color: '#CF3748', fontSize: '0.85rem' }}>is available</span>
@@ -175,7 +299,7 @@ export default function Home() {
         {result && !result.available && (
           <>
             <div style={{ textAlign: 'center' }}>
-              <span style={{ color: '#131325', fontWeight: 700 }}>{result.name}</span>
+              <span style={{ color: '#4870D4', fontWeight: 700, fontFamily: "'Fredoka', sans-serif" }}>{result.name}</span>
               <span className="taken">.hazza.name</span>
               <br />
               <span style={{ color: '#CF3748', fontSize: '0.85rem' }}>is taken</span>
@@ -211,17 +335,17 @@ export default function Home() {
           }}
         >
           {[
-            { title: 'onchain', desc: 'permanent name + website via Net Protocol' },
-            { title: 'DNS + ENS', desc: 'resolves like a real domain, works with ENS' },
-            { title: 'x402', desc: 'one-click name registration' },
-            { title: 'ERC-8004', desc: 'give your AI agent a discoverable identity' },
-            { title: 'XMTP', desc: 'message Nomi over a secure, decentralized protocol' },
+            { title: 'onchain', desc: 'permanent name + website on Net Protocol' },
+            { title: 'DNS + ENS', desc: 'URLs that work like wallet addresses' },
+            { title: 'x402', desc: 'one USDC transfer, relayer handles the rest' },
+            { title: 'ERC-8004', desc: 'identity endpoint for AI agents' },
+            { title: 'XMTP', desc: 'decentralized, private, quantum-resistant messaging' },
           ].map((card) => (
             <div
               key={card.title}
               style={{
                 background: '#fff',
-                border: '2px solid #E8DCAB',
+                border: '2px solid #4870D4',
                 borderRadius: '10px',
                 padding: '0.85rem 0.6rem',
                 textAlign: 'center',
@@ -256,7 +380,7 @@ export default function Home() {
             <div className="nomi-popup">
               <img src={NOMI_AVATAR} alt="Nomi" className="nomi-av" />
               <div className="nomi-bubble">gm. i'm nomi.<br />names are kinda my thing.</div>
-              <div className="subtext">hazza gives users magical onchain powers! want to learn more?</div>
+              <div className="subtext">want me to show you around?</div>
               <div className="nomi-btns">
                 <button className="nomi-btn-yes" onClick={startWalkthrough}>yes</button>
                 <button className="nomi-btn-no" onClick={dismissWelcome}>no thanks</button>
@@ -266,45 +390,13 @@ export default function Home() {
         </div>
       )}
 
-      {/* Walkthrough tooltip */}
+      {/* Walkthrough spotlight + tooltip */}
       {walkthroughStep >= 0 && walkthroughStep < walkthroughSteps.length && (
-        <div
-          className="wt-tooltip"
-          style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: 10001,
-            display: 'block',
-          }}
-        >
-          <div>
-            <img src={NOMI_AVATAR} className="wt-av" alt="Nomi" />
-            <div className="wt-text">{walkthroughSteps[walkthroughStep].text}</div>
-            <button className="wt-next" onClick={nextWalkthroughStep}>
-              {walkthroughSteps[walkthroughStep].btn}
-            </button>
-            <span className="wt-skip" onClick={endWalkthrough} style={{ cursor: 'pointer' }}>
-              skip
-            </span>
-          </div>
-        </div>
-      )}
-      {walkthroughStep >= 0 && (
-        <div
-          className="wt-highlight"
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            width: '100vw',
-            height: '100vh',
-            background: 'rgba(0,0,0,0.4)',
-            zIndex: 10000,
-            display: 'block',
-          }}
-          onClick={endWalkthrough}
+        <WalkthroughOverlay
+          step={walkthroughSteps[walkthroughStep]}
+          onNext={nextWalkthroughStep}
+          onSkip={endWalkthrough}
+          avatar={NOMI_AVATAR}
         />
       )}
     </>

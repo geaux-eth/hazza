@@ -47,6 +47,15 @@ app.use("/api/*", cors({
   },
 }));
 
+// Security headers — helps corporate firewalls (Zscaler, Fortinet, etc.) classify the site
+app.use("*", async (c, next) => {
+  await next();
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+  c.res.headers.set("X-Frame-Options", "SAMEORIGIN");
+  c.res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+});
+
 /** Fetch with a timeout — rejects if the request takes longer than `ms` */
 function fetchWithTimeout(url: string, opts: RequestInit = {}, ms = 5000): Promise<Response> {
   return Promise.race([
@@ -708,7 +717,7 @@ app.get("/api/icon", async (c) => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
   <rect width="1200" height="1200" fill="#F7EBBD"/>
   <rect x="300" y="300" width="600" height="600" rx="64" ry="64" fill="#CF3748"/>
-  <text x="600" y="600" font-family="Fredoka, sans-serif" font-size="360" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
+  <path fill="#ffffff" d="M520.1 780Q498.2 780 488.9 773.4Q479.6 766.8 477.9 756.6Q476.2 746.3 476.2 735.5V464Q476.2 452.7 478.1 442.7Q480.1 432.7 489.4 426.4Q498.6 420 520.6 420Q542.6 420 551.6 426.6Q560.7 433.2 562.6 443.2Q564.6 453.2 564.6 464.5V553.4Q571.9 546.5 584.4 539.4Q596.8 532.3 613.4 532.3Q644.7 532.3 669.6 548.7Q694.5 565.1 709.2 592.9Q723.8 620.8 723.8 655.9V736Q723.8 746.8 721.9 756.8Q719.9 766.8 710.9 773.4Q701.8 780 679.4 780Q657.9 780 648.4 773.6Q638.8 767.3 636.9 757Q634.9 746.8 634.9 735.1V655.4Q634.9 644.7 631 637.1Q627.1 629.6 619.8 625.2Q612.5 620.8 602.2 620.8Q589 620.8 577.8 629.1Q566.5 637.4 564.6 648.1V736Q564.6 746.8 562.6 757Q560.7 767.3 551.6 773.6Q542.6 780 520.1 780Z"/>
 </svg>`;
 
   try {
@@ -762,38 +771,32 @@ app.get("/api/nft-image/:name", async (c) => {
     isNamespace = !!nsAdmin && nsAdmin !== "0x0000000000000000000000000000000000000000";
   } catch {}
 
-  const nsBadge = isNamespace ? `
-  <!-- Namespace badge (top right) -->
-  <rect x="436" y="28" width="36" height="36" rx="6" fill="#4870D4"/>
-  <text x="454" y="46" font-family="Fredoka, sans-serif" font-size="18" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">N</text>` : '';
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="500" y2="500" gradientUnits="userSpaceOnUse">
+    <linearGradient id="bg" x1="0" y1="0" x2="1000" y2="1000" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#FFF8E1"/>
       <stop offset="100%" stop-color="#F7EBBD"/>
     </linearGradient>
   </defs>
-  <rect width="500" height="500" rx="24" fill="url(#bg)"/>
-  <rect x="0" y="0" width="500" height="4" rx="2" fill="#4870D4"/>
+  <rect width="1000" height="1000" fill="url(#bg)"/>
 
   <!-- Logo icon (top left) -->
-  <rect x="28" y="28" width="36" height="36" rx="6" fill="#CF3748"/>
-  <text x="46" y="46" font-family="Fredoka, sans-serif" font-size="20" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
-  ${nsBadge}
+  <rect x="56" y="56" width="72" height="72" rx="12" fill="#CF3748"/>
+  <text x="92" y="92" font-family="Fredoka, sans-serif" font-size="40" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
+  ${isNamespace ? `<rect x="872" y="56" width="72" height="72" rx="12" fill="#4870D4"/><text x="908" y="92" font-family="Fredoka, sans-serif" font-size="36" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">N</text>` : ''}
 
   <!-- Name -->
-  <text x="250" y="230" font-family="Fredoka, sans-serif" font-size="${fontSize}" fill="#131325" font-weight="700" text-anchor="middle">${svgEsc(displayName)}</text>
+  <text x="500" y="460" font-family="Fredoka, sans-serif" font-size="${fontSize * 2}" fill="#4870D4" font-weight="700" text-anchor="middle">${svgEsc(displayName)}</text>
 
   <!-- .hazza.name suffix -->
-  <text x="250" y="275" font-family="Fredoka, sans-serif" font-size="18" fill="#4870D4" font-weight="700" text-anchor="middle">.hazza.name</text>
+  <text x="500" y="550" font-family="Fredoka, sans-serif" font-size="36" fill="#131325" font-weight="700" text-anchor="middle">.hazza.name</text>
 
   <!-- Accent line -->
-  <rect x="200" y="300" width="100" height="2" rx="1" fill="#E8DCAB"/>
+  <rect x="400" y="600" width="200" height="3" rx="1.5" fill="#E8DCAB"/>
 
   <!-- Footer -->
-  <text x="250" y="440" font-family="Fredoka, sans-serif" font-size="12" fill="#8a7d5a" text-anchor="middle" font-weight="600">immediately useful names</text>
-  <text x="250" y="465" font-family="Fredoka, sans-serif" font-size="10" fill="#5981E7" text-anchor="middle" font-weight="600">powered by x402, XMTP and Net Protocol</text>
+  <text x="500" y="880" font-family="Fredoka, sans-serif" font-size="24" fill="#8a7d5a" text-anchor="middle" font-weight="600">immediately useful names</text>
+  <text x="500" y="930" font-family="Fredoka, sans-serif" font-size="20" fill="#5981E7" text-anchor="middle" font-weight="600">powered by x402, XMTP and Net Protocol</text>
 </svg>`;
 
   try {
@@ -803,7 +806,7 @@ app.get("/api/nft-image/:name", async (c) => {
     }
     const fontData = await getFonts();
     const resvg = new Resvg(svg, {
-      fitTo: { mode: "width", value: 500 },
+      fitTo: { mode: "width", value: 1000 },
       font: {
         fontBuffers: fontData.map(f => new Uint8Array(f)),
         defaultFontFamily: "Fredoka",
@@ -812,11 +815,11 @@ app.get("/api/nft-image/:name", async (c) => {
     const pngData = resvg.render();
     const pngBuffer = pngData.asPng();
     return new Response(pngBuffer, {
-      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=300" },
     });
   } catch {
     return new Response(svg, {
-      headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" },
+      headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=300" },
     });
   }
 });
@@ -988,15 +991,69 @@ app.get("/api/metadata/:name", async (c) => {
     { trait_type: "Registered", value: new Date(Number(registeredAt) * 1000).toISOString().split("T")[0] },
     { trait_type: "Namespace", value: isNamespace ? "Yes" : "No" },
   ];
-  if (agentId > 0n) attributes.push({ trait_type: "Agent", value: `#${agentId}` });
+  if (agentId > 0n) attributes.push({ trait_type: "Agent ID", value: `#${agentId}` });
 
-  return c.json({
+  // Fetch agent + identity text records for ERC-8004 compliance
+  const agentKeys = ["agent.uri", "agent.endpoint", "agent.model", "agent.status", "avatar", "description", "url", "xmtp", "com.twitter", "com.github", "org.telegram", "com.discord", "site.key", "net.profile"];
+  let texts: Record<string, string> = {};
+  try {
+    const values = await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, agentKeys] }) as string[];
+    agentKeys.forEach((key, i) => { if (values[i]) texts[key] = values[i]; });
+  } catch {}
+
+  // Add non-empty text records as attributes
+  for (const [key, val] of Object.entries(texts)) {
+    if (key.startsWith("agent.")) {
+      attributes.push({ trait_type: key, value: val });
+    }
+  }
+
+  // Fetch agent metadata from agent.uri if present
+  let agentMeta: Record<string, unknown> | null = null;
+  if (texts["agent.uri"]) {
+    try {
+      const r = await fetch(texts["agent.uri"], { signal: AbortSignal.timeout(4000) });
+      if (r.ok) agentMeta = await r.json();
+    } catch {}
+  }
+
+  // ERC-8004 agent token metadata (if registered as agent)
+  let erc8004: Record<string, unknown> | null = null;
+  if (agentId > 0n) {
+    try {
+      const [tokenURI, agentOwner] = await Promise.all([
+        client.readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: ERC8004_ABI, functionName: "tokenURI", args: [agentId] }),
+        client.readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: ERC8004_ABI, functionName: "ownerOf", args: [agentId] }),
+      ]);
+      erc8004 = { agentId: Number(agentId), tokenURI, owner: agentOwner, registry: ERC8004_REGISTRY_ADDRESS };
+    } catch {}
+  }
+
+  const metadata: Record<string, unknown> = {
     name: `${name}.hazza.name`,
-    description: `${name}.hazza.name — an onchain name on Base`,
-    image: `https://hazza.name/api/nft-image/${name}`,
+    description: texts.description || `${name}.hazza.name — an onchain name on Base`,
+    image: texts.avatar || `https://hazza.name/api/nft-image/${name}`,
     external_url: `https://${name}.hazza.name`,
     attributes,
-  });
+    // Identity fields
+    owner: nameOwner,
+    texts,
+  };
+
+  // Agent fields (ERC-8004)
+  if (agentId > 0n || texts["agent.uri"]) {
+    metadata.agent = {
+      id: agentId > 0n ? Number(agentId) : null,
+      uri: texts["agent.uri"] || null,
+      endpoint: texts["agent.endpoint"] || null,
+      model: texts["agent.model"] || null,
+      status: texts["agent.status"] || null,
+      meta: agentMeta,
+      erc8004,
+    };
+  }
+
+  return c.json(metadata);
 });
 
 // Collection-level metadata for marketplaces (contractURI)
@@ -1008,7 +1065,7 @@ app.get("/api/collection-metadata", (c) => {
     banner_image: "https://hazza.name/api/share",
     external_link: "https://hazza.name",
     seller_fee_basis_points: 0,
-    fee_recipient: "0x27eBa4D7B8aBae95eFB0A0E0308F4F1c0d3e5B0a",
+    fee_recipient: "0x62B7399B2ac7e938Efad06EF8746fDBA3B351900",
   });
 });
 
@@ -1088,6 +1145,7 @@ app.get("/api/names/:address", async (c) => {
           name: owned[i].name,
           tokenId: String(owned[i].id),
           url: `https://${owned[i].name}.hazza.name`,
+          image: `https://hazza.name/api/nft-image/${encodeURIComponent(owned[i].name)}`,
           status: "active",
           isNamespace,
         });
@@ -1112,6 +1170,89 @@ app.get("/api/stats", async (c) => {
     contract: registryAddress(c.env),
     chain: c.env.CHAIN_ID,
   });
+});
+
+// Directory — paginated list of all registered names with owners
+app.get("/api/directory", async (c) => {
+  const page = Math.max(1, parseInt(c.req.query("page") || "1"));
+  const limit = Math.min(50, Math.max(1, parseInt(c.req.query("limit") || "20")));
+  const search = (c.req.query("q") || "").toLowerCase().trim();
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+
+  try {
+    const total = Number(await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "totalRegistered" }));
+    if (total === 0) return c.json({ entries: [], total: 0, page, pages: 0 });
+
+    // If searching, scan all tokens; otherwise paginate
+    if (search) {
+      // Search by name prefix or exact wallet
+      const isWalletSearch = /^0x[0-9a-f]{4,40}$/i.test(search);
+      const entries: { name: string; owner: string; tokenId: number }[] = [];
+      const BATCH = 50;
+
+      for (let start = 1; start <= total && entries.length < limit; start += BATCH) {
+        const end = Math.min(start + BATCH - 1, total);
+        const ids = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+
+        const nameResults = await Promise.all(
+          ids.map(id => client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(id)] }).catch(() => ""))
+        );
+
+        const validIds: { id: number; name: string }[] = [];
+        nameResults.forEach((n, i) => { if (n) validIds.push({ id: ids[i], name: n as string }); });
+        if (validIds.length === 0) continue;
+
+        const resolveResults = await Promise.all(
+          validIds.map(({ name }) => client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] }).catch(() => null))
+        );
+
+        resolveResults.forEach((result, i) => {
+          if (!result) return;
+          const [owner] = result as [string, ...unknown[]];
+          if (owner === "0x0000000000000000000000000000000000000000") return;
+          const n = validIds[i].name;
+          const o = (owner as string).toLowerCase();
+          if (isWalletSearch ? o.includes(search) : n.includes(search)) {
+            entries.push({ name: n, owner: owner as string, tokenId: validIds[i].id });
+          }
+        });
+      }
+
+      return c.json({ entries: entries.slice(0, limit), total: entries.length, page: 1, pages: 1, search });
+    }
+
+    // Paginated (no search)
+    const pages = Math.ceil(total / limit);
+    const startToken = (page - 1) * limit + 1;
+    const endToken = Math.min(startToken + limit - 1, total);
+    const ids = Array.from({ length: endToken - startToken + 1 }, (_, i) => startToken + i);
+
+    const nameResults = await Promise.all(
+      ids.map(id => client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(id)] }).catch(() => ""))
+    );
+
+    const validIds: { id: number; name: string }[] = [];
+    nameResults.forEach((n, i) => { if (n) validIds.push({ id: ids[i], name: n as string }); });
+
+    const resolveResults = await Promise.all(
+      validIds.map(({ name }) => client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] }).catch(() => null))
+    );
+
+    const entries: { name: string; owner: string; tokenId: number }[] = [];
+    resolveResults.forEach((result, i) => {
+      if (!result) return;
+      const [owner] = result as [string, ...unknown[]];
+      if (owner !== "0x0000000000000000000000000000000000000000") {
+        entries.push({ name: validIds[i].name, owner: owner as string, tokenId: validIds[i].id });
+      }
+    });
+
+    return c.json({ entries, total, page, pages });
+  } catch (e: any) {
+    console.error("Directory error:", e?.message || e);
+    return c.json({ error: "Directory lookup failed" }, 500);
+  }
 });
 
 // ENS name suggestions — look up wallet's ENS name and check HAZZA availability
@@ -2433,50 +2574,45 @@ const FORUM_MAX_MESSAGES = 200;
 const FORUM_MAX_LENGTH = 500;
 const FORUM_RATE_LIMIT_TTL = 60; // 1 post per minute per IP
 
-// GET /api/bounty/:tokenId — check for active agent bounty
-const BOUNTY_ABI = [
-  { name: "getActiveBounty", type: "function", stateMutability: "view",
+// GET /api/bounty/:tokenId — check for active agent bounty on escrow contract
+const BOUNTY_ESCROW_ABI = [
+  { name: "getBounty", type: "function", stateMutability: "view",
     inputs: [{ name: "tokenId", type: "uint256" }],
     outputs: [
-      { name: "bountyId", type: "uint256" },
-      { name: "amount", type: "uint256" },
-      { name: "agent", type: "address" },
-      { name: "expiresAt", type: "uint64" },
       { name: "seller", type: "address" },
+      { name: "bountyAmount", type: "uint256" },
+      { name: "agent", type: "address" },
+      { name: "claimed", type: "bool" },
+      { name: "active", type: "bool" },
     ],
   },
 ] as const;
 
+const BOUNTY_ESCROW_ADDRESS = "0x4Af1B18C01250A52f29CEacA055164628b643ae9";
+
 app.get("/api/bounty/:tokenId", async (c) => {
-  const bountyAddress = c.env.BOUNTY_ADDRESS;
-  if (!bountyAddress) {
-    return c.json({ active: false, message: "Bounty contract not deployed yet" });
-  }
   const tokenIdParam = c.req.param("tokenId");
-  // Validate tokenId is a valid positive integer
   if (!/^\d+$/.test(tokenIdParam) || tokenIdParam === "0") {
     return c.json({ error: "Invalid tokenId: must be a positive integer" }, 400);
   }
-  const tokenId = tokenIdParam;
   try {
     const client = getClient(c.env);
-    const [bountyId, amount, agent, expiresAt, seller] = await client.readContract({
-      address: bountyAddress as `0x${string}`,
-      abi: BOUNTY_ABI,
-      functionName: "getActiveBounty",
-      args: [BigInt(tokenId)],
+    const [seller, bountyAmount, agent, claimed, active] = await client.readContract({
+      address: BOUNTY_ESCROW_ADDRESS as `0x${string}`,
+      abi: BOUNTY_ESCROW_ABI,
+      functionName: "getBounty",
+      args: [BigInt(tokenIdParam)],
     });
-    if (bountyId === 0n) {
+    if (!active) {
       return c.json({ active: false });
     }
     return c.json({
       active: true,
-      bountyId: bountyId.toString(),
-      amount: formatEther(amount),
-      amountWei: amount.toString(),
-      agent: agent === "0x0000000000000000000000000000000000000000" ? null : agent,
-      expiresAt: Number(expiresAt),
       seller,
+      bountyAmount: formatEther(bountyAmount),
+      bountyAmountWei: bountyAmount.toString(),
+      agent: agent === "0x0000000000000000000000000000000000000000" ? null : agent,
+      claimed,
     });
   } catch (e: any) {
     console.error("Bounty lookup failed:", e?.message || e);
@@ -2735,6 +2871,18 @@ app.post("/api/marketplace/watch", async (c) => {
   if (!body?.orderHash || !body?.address) {
     return c.json({ error: "Missing orderHash and address" }, 400);
   }
+  if (!isAddress(body.address)) {
+    return c.json({ error: "Invalid address" }, 400);
+  }
+  // Rate limit: 20 watch actions per IP per hour
+  const watchIp = c.req.header("cf-connecting-ip") || "unknown";
+  const watchRateKey = `watchrate:${watchIp}`;
+  const watchCount = parseInt(await c.env.WATCHLIST_KV.get(watchRateKey) || "0");
+  if (watchCount >= 20) {
+    return c.json({ error: "Rate limited — too many watch actions" }, 429);
+  }
+  await c.env.WATCHLIST_KV.put(watchRateKey, String(watchCount + 1), { expirationTtl: 3600 });
+
   const key = `watch:${body.orderHash}`;
   try {
     const existing = (await c.env.WATCHLIST_KV.get(key, "json") as string[] | null) || [];
@@ -2785,6 +2933,15 @@ app.post("/api/marketplace/fulfill", async (c) => {
     const listing = rawListings.find((l: any) => l.orderHash === body.orderHash);
     if (!listing) return c.json({ error: "Listing not found or no longer active" }, 404);
 
+    // Check order hasn't expired (Seaport would reject anyway, but give a better error)
+    const orderEndTime = listing.endTime || listing.orderComponents?.endTime;
+    if (orderEndTime) {
+      const endTimeSec = Number(orderEndTime);
+      if (endTimeSec > 0 && endTimeSec < Math.floor(Date.now() / 1000)) {
+        return c.json({ error: "This listing has expired" }, 410);
+      }
+    }
+
     const prepared = await bazaar.prepareFulfillListing(listing, body.buyerAddress as `0x${string}`);
     // Return approval txs + fulfillment tx as serialized calldata
     // Parse approve(address,uint256) calldata to extract spender + amount for batch executor
@@ -2797,6 +2954,16 @@ app.post("/api/marketplace/fulfill", async (c) => {
       }
       return { to: a.to, data, value: a.value?.toString() || "0", spender, amount };
     };
+    // Include order metadata so the frontend can verify what the buyer is paying
+    const orderMeta = {
+      seller: listing.offerer || listing.seller || null,
+      price: listing.price || null,
+      currency: listing.currency || "ETH",
+      name: listing.name || null,
+      tokenId: listing.tokenId?.toString() || null,
+      seaportAddress: prepared.fulfillment.to, // should always be Seaport
+    };
+
     return c.json({
       approvals: prepared.approvals.map(parseApproval),
       fulfillment: {
@@ -2804,6 +2971,7 @@ app.post("/api/marketplace/fulfill", async (c) => {
         data: prepared.fulfillment.data,
         value: prepared.fulfillment.value?.toString() || "0",
       },
+      orderMeta,
     });
   } catch (e: any) {
     console.error("Fulfill listing failed:", e?.message || e);
@@ -2893,7 +3061,7 @@ app.post("/api/marketplace/offer", async (c) => {
   // Validate broker — must be on allowlist
   let broker: string | null = null;
   let brokerFeeBps = 0;
-  let platformFeeBps = parseInt(c.env.MARKETPLACE_FEE_BPS) || 200;
+  let platformFeeBps = parseInt(c.env.MARKETPLACE_FEE_BPS) || 0;
   if (body.broker && isAddress(body.broker)) {
     const brokerAddr = body.broker.toLowerCase();
     if (ALLOWED_BROKERS[brokerAddr] !== undefined) {
@@ -2917,6 +3085,27 @@ app.post("/api/marketplace/offer", async (c) => {
     return c.json({ error: "Order components too large" }, 400);
   }
 
+  // Validate orderComponents structure — prevent malicious consideration items
+  const oc = body.orderComponents;
+  if (!oc || !Array.isArray(oc.offer) || !Array.isArray(oc.consideration)) {
+    return c.json({ error: "Invalid orderComponents: missing offer or consideration arrays" }, 400);
+  }
+  if (oc.offerer?.toLowerCase() !== body.offerer.toLowerCase()) {
+    return c.json({ error: "orderComponents.offerer does not match claimed offerer" }, 400);
+  }
+  // Verify the WETH offer amount matches the claimed price
+  const WETH_ADDR = "0x4200000000000000000000000000000000000006".toLowerCase();
+  const offerWeth = oc.offer.filter((o: any) => o.token?.toLowerCase() === WETH_ADDR && (o.itemType === 1 || o.itemType === "1"));
+  if (offerWeth.length === 0) {
+    return c.json({ error: "orderComponents.offer must include WETH" }, 400);
+  }
+  const totalOfferWei = offerWeth.reduce((sum: bigint, o: any) => sum + BigInt(o.startAmount || "0"), 0n);
+  const claimedWei = BigInt(Math.floor(priceNum * 1e18));
+  const tolerance = claimedWei / 1000n; // 0.1% tolerance for rounding
+  if (totalOfferWei < claimedWei - tolerance || totalOfferWei > claimedWei + tolerance) {
+    return c.json({ error: "orderComponents WETH amount does not match claimed price" }, 400);
+  }
+
   // Verify the name exists and get tokenId
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
@@ -2926,6 +3115,25 @@ app.post("/api/marketplace/offer", async (c) => {
     }) as [string, bigint, bigint, bigint, string, bigint, string];
     if (nameOwner === "0x0000000000000000000000000000000000000000") {
       return c.json({ error: "Name not registered" }, 404);
+    }
+
+    // Validate consideration recipients — must only target the name owner, treasury, or known addresses
+    const nftAddr = addr.toLowerCase();
+    const treasuryAddr = (c.env.HAZZA_TREASURY || "").toLowerCase();
+    const bountyEscrowAddr = "0xb2e8181fc2d3417ea0e2df494a9f6152d37a1a27";
+    const allowedRecipients = new Set([
+      (nameOwner as string).toLowerCase(), // seller
+      body.offerer.toLowerCase(),          // offerer (gets NFT back in consideration)
+      treasuryAddr,                        // marketplace fee
+      bountyEscrowAddr,                    // bounty escrow
+    ].filter(Boolean));
+    for (const item of oc.consideration) {
+      const recipient = (item.recipient || "").toLowerCase();
+      // ERC-721 items (type 2) going to the offerer are expected
+      if (item.itemType === 2 || item.itemType === "2") continue;
+      if (!allowedRecipients.has(recipient)) {
+        return c.json({ error: `Unexpected consideration recipient: ${recipient}` }, 400);
+      }
     }
 
     const offer = {
@@ -3231,8 +3439,8 @@ app.get("*", async (c) => {
 
   // Apex domain → landing page
   if (host === "hazza.name" || host === "www.hazza.name" || host.includes("localhost")) {
-    // SPA routes — serve HTML shell with SEO meta, React loads from Cloudflare Pages
-    const spaRoutes = ["/", "/register", "/dashboard", "/manage", "/marketplace", "/pricing", "/pricing/protections", "/pricing/details", "/about", "/docs", "/nomi", "/domains"];
+    // SPA routes — serve HTML shell with SEO meta, React assets served same-origin via Worker static assets
+    const spaRoutes = ["/", "/register", "/dashboard", "/manage", "/marketplace", "/messages", "/pricing", "/pricing/protections", "/pricing/details", "/about", "/docs", "/nomi", "/domains"];
     if (spaRoutes.includes(path) || path === "") {
       return c.html(spaShell(path || "/"));
     }
@@ -3284,7 +3492,7 @@ document.getElementById('btn').onclick = async function() {
       });
     }
     if (path === "/sitemap.xml") {
-      const pages = ["/", "/about", "/nomi", "/pricing", "/pricing/details", "/pricing/protections", "/register", "/dashboard", "/manage", "/marketplace", "/docs", "/domains"];
+      const pages = ["/", "/about", "/register", "/dashboard", "/manage", "/marketplace", "/messages", "/docs", "/domains"];
       const urls = pages.map(p => `<url><loc>https://hazza.name${p}</loc></url>`).join("\n");
       const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`;
       return new Response(xml, {
@@ -3370,9 +3578,11 @@ document.getElementById('btn').onclick = async function() {
               return new Response(html, {
                 headers: {
                   "Content-Type": "text/html; charset=utf-8",
-                  "Content-Security-Policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval' https:; img-src * data:; font-src *;",
-                  "X-Frame-Options": "SAMEORIGIN",
+                  "Content-Security-Policy": "default-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' https:; img-src * data:; font-src *; connect-src *;",
+                  "X-Frame-Options": "DENY",
                   "X-Content-Type-Options": "nosniff",
+                  "Cross-Origin-Opener-Policy": "same-origin",
+                  "Cross-Origin-Resource-Policy": "same-origin",
                 },
               });
             }

@@ -60,18 +60,12 @@ function StepIndicator({ label, status }: { label: string; status: Step }) {
   const icon =
     status === 'done' ? '\u2713' :
     status === 'error' ? '\u2717' :
-    status === 'active' ? '\u25CB' : '\u25CB';
-
-  const color =
-    status === 'done' ? 'text-blue' :
-    status === 'error' ? 'text-red' :
-    status === 'active' ? 'text-navy' : 'text-muted';
+    status === 'active' ? '' : '';
 
   return (
-    <div className={`checkout-step flex items-center gap-2 py-1 text-sm ${status} ${color}`}>
-      <span className="step-icon font-bold">{icon}</span>
-      <span>{label}</span>
-      {status === 'active' && <span className="animate-pulse">...</span>}
+    <div className={`checkout-step ${status}`}>
+      <span className="step-icon">{icon}</span>
+      <span>{label}{status === 'active' ? '...' : ''}</span>
     </div>
   );
 }
@@ -159,8 +153,8 @@ function SearchView() {
           {result.available ? (
             <>
               <p className="mb-1">
-                <span className="text-navy font-bold">{result.name}</span>
-                <span className="text-blue">.hazza.name</span>
+                <span className="text-blue font-bold" style={{ fontFamily: "'Fredoka', sans-serif" }}>{result.name}</span>
+                <span className="text-navy">.hazza.name</span>
               </p>
               <p className="text-red text-sm mb-4">is available</p>
               <Link
@@ -173,8 +167,8 @@ function SearchView() {
           ) : (
             <>
               <p className="mb-1">
-                <span className="text-navy font-bold">{result.name}</span>
-                <span className="text-red">.hazza.name</span>
+                <span className="text-blue font-bold" style={{ fontFamily: "'Fredoka', sans-serif" }}>{result.name}</span>
+                <span className="text-navy">.hazza.name</span>
               </p>
               <p className="text-red text-sm mb-2">is taken</p>
               {result.owner && (
@@ -529,7 +523,7 @@ function CheckoutView({ name }: { name: string }) {
     return (
       <div className="text-center py-8">
         <p className="text-red mb-2">
-          {name}.hazza.name is already taken.
+          <span style={{ fontFamily: "'Fredoka', sans-serif" }}><span className="text-blue">{name}</span><span className="text-navy">.hazza.name</span></span> is already taken.
         </p>
         <Link to="/register" className="text-blue font-bold hover:underline">
           Try another name
@@ -542,7 +536,7 @@ function CheckoutView({ name }: { name: string }) {
     return (
       <div className="text-center mt-8 p-6 bg-white border-2 border-red rounded-xl">
         <p className="text-blue font-bold text-2xl mb-2">registered!</p>
-        <p className="text-navy font-bold text-lg mb-4">{name}.hazza.name</p>
+        <p className="font-bold text-lg mb-4" style={{ fontFamily: "'Fredoka', sans-serif" }}><span className="text-blue">{name}</span><span className="text-navy">.hazza.name</span></p>
         <a
           href={`https://${name}.hazza.name`}
           target="_blank"
@@ -584,32 +578,9 @@ function CheckoutView({ name }: { name: string }) {
         </div>
       )}
 
-      {ensSuggestion && (
-        <div className="mb-4 p-3 bg-white border-2 border-border rounded-lg text-center">
-          <span className="text-muted text-sm">
-            Your ENS: <strong className="text-navy">{ensSuggestion.ensSource}</strong>
-          </span>
-          <br />
-          {ensSuggestion.available ? (
-            <span>
-              <span className="text-red font-bold">{ensSuggestion.name}.hazza.name</span> is available!{' '}
-              <Link
-                to={`/register?name=${encodeURIComponent(ensSuggestion.name)}`}
-                className="inline-block px-3 py-1 bg-red text-white rounded-md font-bold text-xs no-underline ml-2"
-              >
-                Claim it
-              </Link>
-            </span>
-          ) : (
-            <span className="text-muted text-sm">
-              {ensSuggestion.name}.hazza.name is already registered
-            </span>
-          )}
-        </div>
-      )}
 
       <div className="text-center mb-2">
-        <h2 className="text-navy font-bold text-2xl break-words">{name}.hazza.name</h2>
+        <h2 className="font-bold text-2xl break-words" style={{ fontFamily: "'Fredoka', sans-serif" }}><span className="text-blue">{name}</span><span className="text-navy">.hazza.name</span></h2>
       </div>
 
       {!isConnected && (
@@ -721,9 +692,9 @@ export default function Register() {
   const nameParam = sanitizeName(rawName);
 
   return (
-    <div className="max-w-[720px] mx-auto px-6">
-      <div className="bg-blue rounded-xl p-6 mb-6 mt-4">
-        <h1 className="text-white font-heading text-3xl font-bold">register</h1>
+    <div>
+      <div className="header" style={{ background: '#4870D4', padding: '1rem 1rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
+        <h1 style={{ color: '#fff' }}>register</h1>
       </div>
 
       {nameParam ? <CheckoutView name={nameParam} /> : <SearchView />}
