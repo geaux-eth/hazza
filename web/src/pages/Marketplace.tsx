@@ -1521,15 +1521,25 @@ function ForumTab({ address, onContactAuthor }: { address?: Address; onContactAu
                         const isHazza = !!m.authorName;
                         return (
                           <>
-                            <a
-                              href={isHazza ? `https://${encodeURIComponent(displayName)}.hazza.name` : `https://etherscan.io/address/${m.author}`}
-                              style={{ color: '#4870D4', fontWeight: 600, fontSize: '0.85rem', textDecoration: 'none', fontFamily: "'Fredoka', sans-serif" }}
-                              target={isHazza ? undefined : '_blank'}
-                              rel={isHazza ? undefined : 'noopener noreferrer'}
-                              title={m.author}
-                            >
-                              {isHazza ? `${displayName}.hazza` : displayName}
-                            </a>
+                            {isHazza ? (
+                              <a
+                                href={`https://${encodeURIComponent(displayName)}.hazza.name`}
+                                style={{ textDecoration: 'none', fontWeight: 600, fontSize: '0.85rem', fontFamily: "'Fredoka', sans-serif" }}
+                                title={m.author}
+                              >
+                                <span style={{ color: '#4870D4' }}>{displayName}</span><span style={{ color: '#131325' }}>.hazza</span>
+                              </a>
+                            ) : (
+                              <a
+                                href={`https://etherscan.io/address/${m.author}`}
+                                style={{ color: '#131325', fontWeight: 600, fontSize: '0.85rem', textDecoration: 'none', fontFamily: "'Fredoka', sans-serif" }}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={m.author}
+                              >
+                                {displayName}
+                              </a>
+                            )}
                             {onContactAuthor && isHazza && (
                               <button
                                 onClick={() => onContactAuthor(displayName)}
