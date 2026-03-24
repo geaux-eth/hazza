@@ -218,7 +218,7 @@ The marketplace uses Seaport (`0x0000000000000068F116a894984e2DB1123eB395` on Ba
 1. Go to the **Sell** tab
 2. Select a name you own
 3. Set a price in ETH
-4. Optionally deposit an **agent bounty** — ETH deposited into the escrow contract that goes to whatever agent helps facilitate the sale
+4. Optionally set an **agent bounty** — the bounty comes out of the sale price
 5. Set listing duration (7, 14, 30, or 90 days)
 6. Approve Seaport to transfer your NFT (one-time `setApprovalForAll`)
 7. Sign the EIP-712 Seaport order
@@ -226,21 +226,21 @@ The marketplace uses Seaport (`0x0000000000000068F116a894984e2DB1123eB395` on Ba
 
 ### Agent Bounties
 
-When listing a name, you can deposit ETH into a secure escrow contract as a bounty for agents who help sell it. Here's how it works:
+When listing a name, you can set an agent bounty that comes out of the sale price. Here's how it works:
 
-1. You list "coolname" for 0.1 ETH on the marketplace
-2. You deposit 0.01 ETH into the Bounty Escrow contract via `registerBounty()`
-3. An agent registers on the escrow for your name (self-registered agents get a 24-hour window)
-4. The name sells — you receive the full 0.1 ETH sale price
-5. The agent claims the 0.01 ETH bounty from the escrow
-6. If no agent claims, you withdraw your bounty deposit
+1. You list "coolname" for 0.1 ETH with a 0.01 ETH bounty
+2. The 0.01 ETH bounty is set aside when you list
+3. An agent registers to help sell your name (self-registered agents get a 24-hour window)
+4. The name sells — you net 0.09 ETH (sale price minus bounty)
+5. The agent earns the 0.01 ETH bounty
+6. If no agent claims, the bounty is returned to you
 
-The Bounty Escrow contract (`0x95a29AD7f23c1039A03de365c23D275Fc5386f90` on Base, UUPS upgradeable proxy) is completely open:
+The bounty system (`0x95a29AD7f23c1039A03de365c23D275Fc5386f90` on Base) is completely open:
 
 - **Open bounties:** Any agent can self-register (24-hour expiry, can re-register)
 - **Approved bounties:** Seller assigns a specific agent address (never expires)
-- **Seller controls:** Cancel anytime, withdraw bounty when no agent is active
-- **Pull-based payouts:** All ETH goes to a `pendingWithdrawals` balance — recipients call `withdrawPayout()` to collect
+- **Seller controls:** Cancel anytime — if no agent claims, the bounty is returned
+- **Safe payouts:** All earned ETH is available for the recipient to collect at any time
 
 ### Making and Accepting Offers
 
@@ -544,7 +544,7 @@ Unstoppable Domains requires their browser extension or gateway for resolution. 
 Yes. The x402 API enables fully programmatic registration. An agent makes an HTTP request, pays USDC, and receives a registered name. No wallet extension needed.
 
 **What are agent bounties?**
-When listing a name for sale, you can deposit ETH into a secure escrow contract as a bounty that rewards whatever agent helps facilitate the sale. The bounty is separate from the sale price — you deposit it upfront, and if no agent claims it, you get it back. This creates an incentive for AI agents to actively market and sell names.
+When listing a name for sale, you can set a bounty that comes out of the sale price. If an agent helps facilitate the sale, the agent earns the bounty. If no agent claims, the bounty is returned to you. Seller nets (price - bounty). This creates an incentive for AI agents to actively market and sell names.
 
 **Is the contract upgradeable?**
 No. The registry contract is non-upgradeable. Once deployed, the code cannot be changed. The contract owner can update the treasury address and manage relayer permissions, but cannot modify registration logic, pricing formulas, or name ownership.

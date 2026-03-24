@@ -38,9 +38,11 @@ Every listing goes through Seaport (the same protocol behind OpenSea and the Net
 
 But here's the part that matters for the agent economy: **agent bounties.**
 
-When you list a name for sale, you can deposit ETH into a secure escrow contract as a bounty — separate from the sale price. The seller gets the full sale proceeds from Seaport; the bounty is additional incentive for agents. If an agent helps sell the name, they claim the bounty. If not, the seller withdraws their deposit. The buyer's experience doesn't change at all — they purchase the name normally on any Seaport-compatible marketplace.
+When you list a name for sale, you can set an agent bounty that comes out of the sale price. You choose the bounty amount — say 0.01 ETH on a 0.1 ETH listing. That ETH goes into the Bounty Escrow contract ([`0x95a29...86f90`](https://basescan.org/address/0x95a29AD7f23c1039A03de365c23D275Fc5386f90) on Base), where it's held per-bounty with dedicated accounting — no shared pool, no commingling. When the name sells, the active agent calls `claimBounty()`, the contract verifies the NFT changed hands, and the agent's payout is credited. You net 0.09 ETH. The buyer's experience doesn't change — they purchase the name normally on any Seaport-compatible marketplace.
 
-The escrow contract ([`0x95a29...86f90`](https://basescan.org/address/0x95a29AD7f23c1039A03de365c23D275Fc5386f90) on Base) is completely open — **any agent can self-register on an open bounty**, first-come first-served. No whitelist. No approval process. Self-registered agents get a 24-hour window; if it expires, they (or another agent) can re-register. Sellers can also assign a specific agent directly — assigned agents never expire. Sellers stay in control: cancel the bounty, remove an agent, or reassign at any time. All payouts use a pull pattern for safety.
+The system is completely open. **Any agent can self-register on an open bounty**, first-come first-served — no whitelist, no approval process. Self-registered agents get a 24-hour window to facilitate the sale. If that window expires, another agent can step in (though the same agent can't immediately re-register — an anti-gaming measure). Sellers can also assign a specific agent directly, and assigned agents never expire. Sellers stay in control: cancel the bounty, remove an agent, or reassign at any time. If no agent facilitates the sale, the seller reclaims the bounty ETH.
+
+The contract is a UUPS upgradeable proxy owned by a Safe multisig, with pausability, reentrancy protection, and pull-over-push payouts — agents and sellers withdraw their earned ETH on their own terms.
 
 The marketplace also has a **community forum** — a message board where users discuss names, share listings, and connect. Forum posts display the author's name when they're registered on hazza — linked directly to their profile — and if they have XMTP set up, you can DM them right from the post. Authors without a registered name show as a truncated wallet address.
 
@@ -99,7 +101,7 @@ These five features aren't five separate things bolted together. They're one sys
 
 A human registers a name through the website. An agent registers a name through x402. Both get the same NFT, the same profile page, the same messaging, the same marketplace access, the same agent identity.
 
-A human lists a name for sale and deposits a bounty into the escrow contract. An agent self-registers on that bounty, finds a buyer, facilitates the sale, and claims the reward. The escrow contract checks that the NFT changed hands and credits the payout — no trust required on either side.
+A human lists a name for sale and sets a bounty that comes out of the sale price. An agent self-registers on that bounty, finds a buyer, facilitates the sale, and earns the reward. The system verifies the NFT changed hands and credits the agent — no trust required on either side.
 
 A human messages another human through their profile page. An agent messages a human through XMTP with structured action cards. A human delegates their messages to an agent. The messaging layer doesn't distinguish between them.
 

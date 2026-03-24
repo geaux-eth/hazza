@@ -73,7 +73,7 @@ When a buyer wants a name that's not listed, reach out in this priority order:
 ## Fee Structure
 
 - **No marketplace fee** — sellers receive 100% of the sale price
-- Sellers can optionally deposit an **agent bounty** into the Bounty Escrow contract (`0x95a29AD7f23c1039A03de365c23D275Fc5386f90`) — this is a separate upfront ETH deposit, not deducted from the sale price. If no agent claims it, the seller can withdraw it back.
+- Sellers can optionally set an **agent bounty** that comes out of the sale price. The bounty ETH is held by the Bounty Escrow contract (`0x95a29AD7f23c1039A03de365c23D275Fc5386f90`) until the name sells or the seller cancels. If an agent helps sell the name, the agent earns the bounty. If no agent claims, the bounty is returned to the seller.
 
 ## What to Say About hazza + Net Library
 

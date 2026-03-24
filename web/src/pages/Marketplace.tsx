@@ -86,12 +86,12 @@ const BATCH_EXECUTOR_ABI = [
 
 
 const BOUNTY_ESCROW_ABI = [
-  { name: 'registerBounty', type: 'function', stateMutability: 'payable',
-    inputs: [{ name: 'tokenId', type: 'uint256' }],
+  { name: 'registerBounty', type: 'function', stateMutability: 'nonpayable',
+    inputs: [{ name: 'tokenId', type: 'uint256' }, { name: 'bountyAmount', type: 'uint256' }],
     outputs: []
   },
-  { name: 'registerBounty', type: 'function', stateMutability: 'payable',
-    inputs: [{ name: 'tokenId', type: 'uint256' }, { name: 'agent', type: 'address' }],
+  { name: 'registerBounty', type: 'function', stateMutability: 'nonpayable',
+    inputs: [{ name: 'tokenId', type: 'uint256' }, { name: 'bountyAmount', type: 'uint256' }, { name: 'agent', type: 'address' }],
     outputs: []
   },
   { name: 'cancelBounty', type: 'function', stateMutability: 'nonpayable',
@@ -784,8 +784,8 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
         address: SEAPORT_ADDRESS, abi: SEAPORT_ABI, functionName: 'getCounter', args: [address],
       }) as bigint;
 
-      // Build order — consideration splits: seller gets (price - fee - bounty),
-      // treasury gets fee, escrow contract gets bounty (if any).
+      // Build order — consideration splits: seller gets (price - fee),
+      // treasury gets fee. Bounty is deposited separately via escrow contract.
       const priceWei = parseEther(sellPrice);
       const feeAmount = (priceWei * BigInt(MARKETPLACE_FEE_BPS)) / 10000n;
       const bountyWei = bountyAmount && parseFloat(bountyAmount) > 0 ? parseEther(bountyAmount) : 0n;
@@ -812,6 +812,12 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
         consideration.push({
           itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
           identifierOrCriteria: 0n, startAmount: feeAmount, endAmount: feeAmount, recipient: TREASURY_ADDRESS,
+        });
+      }
+      if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
+        consideration.push({
+          itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
+          identifierOrCriteria: 0n, startAmount: bountyWei, endAmount: bountyWei, recipient: BOUNTY_ESCROW_ADDRESS,
         });
       }
       const salt = BigInt(generateSalt());
@@ -848,23 +854,22 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
       if (receipt.status === 'success') {
-        // Register bounty on escrow contract — deposit ETH upfront
+        // Register bounty metadata on escrow contract (no ETH — bounty comes from Seaport consideration split)
         if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
           try {
             const bountyHash = await walletClient.data.writeContract({
               address: BOUNTY_ESCROW_ADDRESS as Address,
               abi: BOUNTY_ESCROW_ABI,
               functionName: 'registerBounty',
-              args: [BigInt(tokenId)],
-              value: bountyWei,
+              args: [BigInt(tokenId), bountyWei],
             });
             await publicClient.waitForTransactionReceipt({ hash: bountyHash });
           } catch (e: any) {
             console.warn('Bounty registration failed (listing still active):', e.message);
-            alert(`Warning: your listing is live, but bounty deposit failed. The agent bounty of ${bountyAmount} ETH was NOT deposited. You can add it later from your listings.`);
+            alert(`Warning: your listing is live, but bounty registration failed. The agent bounty of ${bountyAmount} ETH was NOT registered. You can add it later from your listings.`);
           }
         }
-        alert(`Listed! ${name}.hazza.name is now for sale at ${sellPrice} ETH.${bountyAmount && parseFloat(bountyAmount) > 0 ? ` Agent bounty: ${bountyAmount} ETH (paid from sale proceeds).` : ''}\n\nTx: ${hash}\n\nThis listing appears on hazza.name/marketplace and netprotocol.app/bazaar.`);
+        alert(`Listed! ${name}.hazza.name is now for sale at ${sellPrice} ETH.${bountyAmount && parseFloat(bountyAmount) > 0 ? ` Agent bounty: ${bountyAmount} ETH.` : ''}\n\nTx: ${hash}\n\nThis listing appears on hazza.name/marketplace and netprotocol.app/bazaar.`);
         setSellFormName(null);
         setSellPrice('');
         setBountyAmount('');

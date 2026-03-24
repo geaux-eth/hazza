@@ -218,18 +218,17 @@ All listings go through Seaport and the Net Protocol Bazaar. This ensures every 
 
 The hazza.name UI handles all of this — users just enter a price and sign.
 
-### Agent Bounty (Deposit-Based Escrow)
+### Agent Bounty
 
-When listing, the seller can optionally deposit ETH into the Bounty Escrow contract as an agent bounty. This is a **separate upfront deposit**, not deducted from the sale price.
+When listing, the seller can optionally set an agent bounty. The bounty comes out of the sale price. The bounty ETH is held by the Bounty Escrow contract (`0x95a29AD7f23c1039A03de365c23D275Fc5386f90`) until the name sells or the seller cancels.
 
 **How it works:**
-- Seller calls `registerBounty(tokenId)` with ETH value — the deposit goes into the escrow contract
-- Agents register on the escrow for the name (self-registered agents expire after 24 hours, seller-assigned agents never expire)
-- When the name sells, the agent calls `claimBounty(tokenId)` to collect
-- If seller cancels or no agent claims, seller can withdraw via `withdrawBounty(tokenId)` (only when no agent is active)
-- All payouts use a pull pattern — call `withdrawPayout()` to collect
+- Seller sets a bounty amount when listing — the ETH is held until the sale completes or the listing is cancelled
+- Agents register on the bounty for the name (self-registered agents expire after 24 hours, seller-assigned agents never expire)
+- When the name sells, the agent claims the bounty
+- If the seller cancels or no agent claims, the bounty is returned to the seller
 
-**Example:** Seller deposits 0.01 ETH bounty for "coolname". Agent registers. Name sells. Agent claims 0.01 ETH. The sale price goes entirely to the seller via Seaport — the bounty is separate.
+**Example:** List "coolname" for 0.1 ETH with a 0.01 ETH bounty. Name sells for 0.1 ETH. Seller nets 0.09 ETH (sale price minus bounty). Agent earns 0.01 ETH. If no agent claims, the bounty is returned.
 
 ### Bounty Escrow API
 
@@ -308,10 +307,10 @@ Returns: `cancel` tx (send first), then `newListing.eip712` data to sign and sub
 
 ### Marketplace Fees
 
-- No marketplace fee — sellers receive 100% of the sale price (minus optional agent bounty)
+- No marketplace fee — sellers receive the sale price minus any optional agent bounty
 - Seaport contract: `0x0000000000000068F116a894984e2DB1123eB395` (Base)
 - Bazaar contract: `0x000000058f3ade587388daf827174d0e6fc97595` (Base)
-- Bounty Escrow (UUPS Proxy): `0x95a29AD7f23c1039A03de365c23D275Fc5386f90`
+- Bounty Escrow (Proxy): `0x95a29AD7f23c1039A03de365c23D275Fc5386f90`
 
 ## API Reference
 

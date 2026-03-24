@@ -2617,12 +2617,12 @@ const BOUNTY_ESCROW_ABI = [
     inputs: [{ name: "", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
   },
-  { name: "registerBounty", type: "function", stateMutability: "payable",
-    inputs: [{ name: "tokenId", type: "uint256" }, { name: "agent", type: "address" }],
+  { name: "registerBounty", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "tokenId", type: "uint256" }, { name: "bountyAmount", type: "uint256" }, { name: "agent", type: "address" }],
     outputs: [],
   },
-  { name: "registerBounty", type: "function", stateMutability: "payable",
-    inputs: [{ name: "tokenId", type: "uint256" }],
+  { name: "registerBounty", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "tokenId", type: "uint256" }, { name: "bountyAmount", type: "uint256" }],
     outputs: [],
   },
   { name: "registerAgent", type: "function", stateMutability: "nonpayable",
@@ -2711,18 +2711,18 @@ app.get("/api/bounty/pending/:address", async (c) => {
   }
 });
 
-// POST /api/bounty/register — return unsigned tx to register a bounty (seller deposits ETH)
+// POST /api/bounty/register — return unsigned tx to register bounty metadata (no ETH — bounty comes from Seaport consideration)
 app.post("/api/bounty/register", async (c) => {
   const body = await c.req.json().catch(() => null);
   if (!body?.tokenId) return c.json({ error: "Missing tokenId" }, 400);
-  if (!body?.amountWei) return c.json({ error: "Missing amountWei (bounty deposit in wei)" }, 400);
+  if (!body?.amountWei) return c.json({ error: "Missing amountWei (bounty amount in wei)" }, 400);
   const { tokenId, amountWei, agent } = body;
 
   const data = agent
-    ? encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "registerBounty", args: [BigInt(tokenId), agent] })
-    : encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "registerBounty", args: [BigInt(tokenId)] });
+    ? encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "registerBounty", args: [BigInt(tokenId), BigInt(amountWei), agent] })
+    : encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "registerBounty", args: [BigInt(tokenId), BigInt(amountWei)] });
   return c.json({
-    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: amountWei.toString() },
+    tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: "0" },
     description: agent ? `Register bounty for token ${tokenId} with agent ${agent}` : `Register open bounty for token ${tokenId}`,
   });
 });
@@ -2759,7 +2759,7 @@ app.post("/api/bounty/cancel", async (c) => {
   const data = encodeFunctionData({ abi: BOUNTY_ESCROW_ABI, functionName: "cancelBounty", args: [BigInt(body.tokenId)] });
   return c.json({
     tx: { to: BOUNTY_ESCROW_ADDRESS, data, value: "0" },
-    description: `Cancel bounty for token ${body.tokenId} (refund deposited ETH)`,
+    description: `Cancel bounty for token ${body.tokenId}`,
   });
 });
 

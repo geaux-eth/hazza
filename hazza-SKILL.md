@@ -234,7 +234,7 @@ The hazza marketplace at `hazza.name/marketplace` is a whitelabeled Net Protocol
 
 ### Agent Bounties
 
-Sellers can deposit ETH into the Bounty Escrow contract (`0x95a29AD7f23c1039A03de365c23D275Fc5386f90`, UUPS proxy) to incentivize agents. Bounties are separate from the sale price — deposited upfront via `registerBounty()`. Self-registered agents get 24-hour windows; seller-assigned agents never expire. All payouts use pull pattern (`withdrawPayout()`).
+Sellers can set an agent bounty that comes out of the sale price. The bounty ETH is held by the Bounty Escrow contract (`0x95a29AD7f23c1039A03de365c23D275Fc5386f90`) until the name sells or the seller cancels. If an agent helps sell the name, the agent earns the bounty. If no agent claims, the bounty is returned to the seller. Self-registered agents get 24-hour windows; seller-assigned agents never expire.
 
 ### Features
 - **Dual currency:** List names in ETH or USDC

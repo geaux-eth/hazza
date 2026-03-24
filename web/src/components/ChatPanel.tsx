@@ -140,7 +140,8 @@ const SEAPORT_EIP712_TYPES = {
 } as const;
 
 const BOUNTY_ESCROW_ABI = parseAbi([
-  'function registerBounty(uint256 tokenId) external payable',
+  'function registerBounty(uint256 tokenId, uint256 bountyAmount) external',
+  'function registerBounty(uint256 tokenId, uint256 bountyAmount, address agent) external',
   'function cancelBounty(uint256 tokenId) external',
 ]);
 
@@ -544,7 +545,7 @@ export default function ChatPanel({
         args: [address],
       }) as bigint;
 
-      // Step 3: Build Seaport order — seller offers NFT, consideration splits payment
+      // Step 3: Build Seaport order — seller offers NFT, consideration splits: seller gets (price - fee), treasury gets fee
       const priceWei = BigInt(card.priceWei);
       const feeAmount = (priceWei * BigInt(MARKETPLACE_FEE_BPS)) / 10000n;
       const bountyWei = card.bountyWei ? BigInt(card.bountyWei) : 0n;
@@ -571,6 +572,12 @@ export default function ChatPanel({
         consideration.push({
           itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
           identifierOrCriteria: 0n, startAmount: feeAmount, endAmount: feeAmount, recipient: TREASURY_ADDRESS as Address,
+        });
+      }
+      if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
+        consideration.push({
+          itemType: 0, token: '0x0000000000000000000000000000000000000000' as Address,
+          identifierOrCriteria: 0n, startAmount: bountyWei, endAmount: bountyWei, recipient: BOUNTY_ESCROW_ADDRESS as Address,
         });
       }
       const salt = generateSalt();
@@ -608,20 +615,19 @@ export default function ChatPanel({
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
       if (receipt.status === 'success') {
-        // Register bounty on escrow contract — deposit ETH upfront
+        // Register bounty metadata on escrow contract (no ETH — bounty comes from Seaport consideration split)
         if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
           try {
             const bountyHash = await walletClient.writeContract({
               address: BOUNTY_ESCROW_ADDRESS as Address,
               abi: BOUNTY_ESCROW_ABI,
               functionName: 'registerBounty',
-              args: [BigInt(card.tokenId)],
-              value: bountyWei,
+              args: [BigInt(card.tokenId), bountyWei],
             });
             await publicClient.waitForTransactionReceipt({ hash: bountyHash });
           } catch (e: any) {
-            console.warn('Bounty deposit failed (listing still active):', e.message);
-            addMsg(`warning: listing is live but bounty deposit failed. the ${card.bountyEth} ETH agent bounty was not deposited.`, 'system');
+            console.warn('Bounty registration failed (listing still active):', e.message);
+            addMsg(`warning: listing is live but bounty registration failed. the ${card.bountyEth} ETH agent bounty was not registered.`, 'system');
           }
         }
         setCardStatus(cardId, 'success', { txHash });
