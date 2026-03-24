@@ -229,7 +229,7 @@ The marketplace uses Seaport (`0x0000000000000068F116a894984e2DB1123eB395` on Ba
 When listing a name, you can set an agent bounty that comes out of the sale price. Here's how it works:
 
 1. You list "coolname" for 0.1 ETH with a 0.01 ETH bounty
-2. The 0.01 ETH bounty is set aside when you list
+2. The 0.01 ETH bounty is recorded when you list (no ETH required — it comes from the sale)
 3. An agent registers to help sell your name (self-registered agents get a 24-hour window)
 4. The name sells — you net 0.09 ETH (sale price minus bounty)
 5. The agent earns the 0.01 ETH bounty

@@ -129,10 +129,10 @@ Contract addresses:
 
 ESCROW API ENDPOINTS:
 - GET /api/bounty/:tokenId — check bounty status
-- POST /api/bounty/register — register bounty (returns unsigned tx, seller sends ETH as value)
+- POST /api/bounty/register — register bounty metadata (returns unsigned tx, no ETH — bounty comes from Seaport consideration)
 - POST /api/bounty/register-agent — agent self-registers (returns unsigned tx)
 - POST /api/bounty/claim — agent claims after sale (returns unsigned tx)
-- POST /api/bounty/cancel — seller cancels (returns unsigned tx, refund)
+- POST /api/bounty/cancel — seller cancels bounty (returns unsigned tx)
 - POST /api/bounty/assign-agent — seller assigns agent (returns unsigned tx)
 - POST /api/bounty/remove-agent — seller removes agent (returns unsigned tx)
 - POST /api/bounty/withdraw — withdraw earned payouts (returns unsigned tx)

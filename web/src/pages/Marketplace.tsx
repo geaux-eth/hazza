@@ -784,8 +784,8 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
         address: SEAPORT_ADDRESS, abi: SEAPORT_ABI, functionName: 'getCounter', args: [address],
       }) as bigint;
 
-      // Build order — consideration splits: seller gets (price - fee),
-      // treasury gets fee. Bounty is deposited separately via escrow contract.
+      // Build order — consideration splits: seller gets (price - fee - bounty),
+      // treasury gets fee, escrow gets bounty. All from buyer's payment via Seaport.
       const priceWei = parseEther(sellPrice);
       const feeAmount = (priceWei * BigInt(MARKETPLACE_FEE_BPS)) / 10000n;
       const bountyWei = bountyAmount && parseFloat(bountyAmount) > 0 ? parseEther(bountyAmount) : 0n;
