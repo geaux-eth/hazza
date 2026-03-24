@@ -2,7 +2,7 @@
 
 Most name services give you a name and leave the rest up to you. hazza is built on a different premise: **your name should be useful the moment you register it.**
 
-Here are the five features baked into every hazza name — and why they matter.
+Here are the five main features baked into every hazza name:
 
 ---
 
@@ -20,13 +20,11 @@ But it goes further than a profile page. Every hazza name supports **custom site
 
 ## 2. AI Agents Are First-Class Citizens
 
-Every hazza name can register as an **ERC-8004 AI agent identity**. This isn't an afterthought or a plugin — it's built directly into the registry contract. When you register a name with `wantAgent: true`, the contract mints an agent identity on the ERC-8004 Agent Registry (Base), links it to your name, and stores the agent's wallet address and metadata URI onchain.
+Every hazza name can register as an **ERC-8004 AI agent identity**. This isn't an afterthought or a plugin — it's built directly into the registry contract. When an agent registers a name, the contract mints an agent identity on the ERC-8004 Agent Registry (Base), links it to the agent's name, and stores the agent's wallet address and metadata URI onchain.
 
-Your name's profile page automatically renders agent metadata — capabilities, services, personality traits, communication style, and any associated protocols like Helixa AgentDNA, Exoskeleton, and Bankr profiles.
+With hazza, every name's profile page automatically renders an agent's metadata — capabilities, services, personality traits, communication style, and any associated protocols like Helixa, Exoskeletons by Ollie, and Bankr profiles. If it's registered through that agents 8004 SBT, then it's displayed automatically on the agent's hazza profile page.
 
-**Nomi** proves this works. Nomi is hazza's own AI agent — a name-loving gnome from The Nibbles, an NFT collection on Base from Lonely Lily Studios, creators of Franky the Frog. Nomi has a name — literally, `nomi.hazza.name` — an ERC-8004 agent identity, and runs 24/7 on XMTP. You can message Nomi to check name availability, get pricing quotes, browse marketplace listings, look up profiles, set text records, list names for sale, and even buy names through conversational action cards.
-
-Nomi isn't a chatbot bolted onto a website. Nomi is a registered onchain agent with its own wallet, its own identity, and its own ability to transact. Any agent can be built like this — register on hazza, attach an ERC-8004 identity, set an XMTP address, and you have a fully addressable, fully autonomous agent with a human-readable name.
+**Nomi** proves this works. Nomi is hazza's own AI agent — a name-loving gnome from The Nibbles, an NFT collection on Base from Lonely Lily Studios and creators of Franky the Frog — has its very own onchain webpage profile. Nomi has a name — literally, `nomi.hazza.name` — an ERC-8004 agent identity, and runs 24/7 on XMTP. You can message Nomi to check name availability, get pricing quotes, browse marketplace listings, look up profiles, set text records, list names for sale, and even buy and sell names through conversational action cards. Everything that Nomi's accomplished will be displayed at `nomi.hazza.name` including our soon-to-be deployed token (but more on that later).
 
 **Why it's different:** Most name services were designed before AI agents became a real use case — and that's not a knock on them; the timing just wasn't there. hazza was built for a world where agents need names just as much as humans do, and where the line between "user" and "agent" is disappearing. Native agent identity is baked in from day one.
 
@@ -34,15 +32,15 @@ Nomi isn't a chatbot bolted onto a website. Nomi is a registered onchain agent w
 
 ## 3. A Real Marketplace With Agent Bounties
 
-Every name comes with access to a full Seaport-powered native marketplace. List names for sale, browse listings, make offers in WETH, accept offers, and buy names — all without leaving the site.
+Every name comes with access to a native marketplace. List names for sale, browse listings, make offers in WETH, accept offers, and buy names — all without leaving the site.
 
-Every listing goes through Seaport (the same protocol behind OpenSea and the Net Protocol Bazaar) simultaneously. This means listings appear on hazza.name *and* the Net Protocol *and* anywhere else that indexes Seaport orders. One listing, everywhere.
+Every listing goes through Seaport (the same protocol behind OpenSea and the Net Protocol Bazaar) simultaneously. This means listings appear on hazza.name *and* netprotocol.app *and* anywhere else that indexes Seaport orders. 
 
 But here's the part that matters for the agent economy: **agent bounties.**
 
-When you list a name for sale, you can attach an optional bounty — ETH deposited upfront into a secure escrow contract. The bounty is locked until the name sells. When it does, the agent who was registered on that bounty claims their payout by proving the NFT changed hands. The buyer's experience doesn't change at all — they purchase the name normally on any Seaport-compatible marketplace.
+When you list a name for sale, you can deposit ETH into a secure escrow contract as a bounty — separate from the sale price. The seller gets the full sale proceeds from Seaport; the bounty is additional incentive for agents. If an agent helps sell the name, they claim the bounty. If not, the seller withdraws their deposit. The buyer's experience doesn't change at all — they purchase the name normally on any Seaport-compatible marketplace.
 
-The escrow contract ([`0x95a29...86f90`](https://basescan.org/address/0x95a29AD7f23c1039A03de365c23D275Fc5386f90) on Base) is completely open — **any agent can register on an open bounty**, first-come first-served. No whitelist. No approval process. Agents self-register with a 24-hour window to facilitate the sale. If no agent facilitated it, the seller reclaims the deposited bounty. Sellers can also assign a specific agent they already have a relationship with — and kick, switch, or open the bounty to the public at any time.
+The escrow contract ([`0x95a29...86f90`](https://basescan.org/address/0x95a29AD7f23c1039A03de365c23D275Fc5386f90) on Base) is completely open — **any agent can self-register on an open bounty**, first-come first-served. No whitelist. No approval process. Self-registered agents get a 24-hour window; if it expires, they (or another agent) can re-register. Sellers can also assign a specific agent directly — assigned agents never expire. Sellers stay in control: cancel the bounty, remove an agent, or reassign at any time. All payouts use a pull pattern for safety.
 
 The marketplace also has a **community forum** — a message board where users discuss names, share listings, and connect. Forum posts display the author's name when they're registered on hazza — linked directly to their profile — and if they have XMTP set up, you can DM them right from the post. Authors without a registered name show as a truncated wallet address.
 
@@ -101,7 +99,7 @@ These five features aren't five separate things bolted together. They're one sys
 
 A human registers a name through the website. An agent registers a name through x402. Both get the same NFT, the same profile page, the same messaging, the same marketplace access, the same agent identity.
 
-A human lists a name for sale and deposits a bounty into escrow. An agent registers on that bounty, finds a buyer, facilitates the sale, and claims the reward. The escrow contract verifies the NFT transferred and releases the payout — no trust required on either side.
+A human lists a name for sale and deposits a bounty into the escrow contract. An agent self-registers on that bounty, finds a buyer, facilitates the sale, and claims the reward. The escrow contract checks that the NFT changed hands and credits the payout — no trust required on either side.
 
 A human messages another human through their profile page. An agent messages a human through XMTP with structured action cards. A human delegates their messages to an agent. The messaging layer doesn't distinguish between them.
 
