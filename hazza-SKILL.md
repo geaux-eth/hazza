@@ -1,7 +1,7 @@
 ---
 name: hazza
 description: hazza onchain name registry — register, manage, and resolve immediately useful names on Base, powered by x402 and Net Protocol.
-metadata: {"clawdbot":{"emoji":"📛","always":false,"requires":{"bins":["hazza","cast"]}}}
+metadata: {"clawdbot":{"emoji":"📛","always":true,"requires":{"bins":["hazza","cast"]}}}
 auto_trigger: false
 ---
 

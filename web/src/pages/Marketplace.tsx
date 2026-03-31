@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
-import { parseEther, formatEther, formatUnits, type Address } from 'viem';
+import { parseEther, formatEther, formatUnits, encodeFunctionData, type Address } from 'viem';
 import {
   REGISTRY_ADDRESS, SEAPORT_ADDRESS, BAZAAR_ADDRESS,
   MARKETPLACE_FEE_BPS, TREASURY_ADDRESS, ERC721_ABI, USDC_ADDRESS,
@@ -113,6 +113,7 @@ interface Listing {
   profileUrl: string;
   tokenId?: string;
   bountyAmount?: string;
+  image?: string;
 }
 
 interface CartItem {
@@ -182,7 +183,11 @@ interface ProgressStep {
 // --- Helpers ---
 
 function truncAddr(a: string) { return a ? a.slice(0, 6) + '...' + a.slice(-4) : ''; }
-function formatDate(ts: number) { return ts ? new Date(ts * 1000).toLocaleDateString() : '\u2014'; }
+function formatDate(ts: number) {
+  if (!ts) return '\u2014';
+  if (ts > 4102444800) return 'never'; // past year 2100 = effectively no expiry
+  return new Date(ts * 1000).toLocaleDateString();
+}
 function generateSalt(): `0x${string}` {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -687,6 +692,11 @@ function BrowseTab({
               const watched = isWatched(l.orderHash);
               return (
                 <div className="listing-card" key={l.orderHash}>
+                  {l.image && (
+                    <a href={l.profileUrl} style={{ display: 'block', marginBottom: '0.5rem' }}>
+                      <img src={l.image} alt={`${l.name}.hazza.name`} style={{ width: '100%', borderRadius: 8, aspectRatio: '1', objectFit: 'cover' }} loading="lazy" />
+                    </a>
+                  )}
                   <div className="listing-name">
                     <a href={l.profileUrl}>{l.name}</a>
                     {l.isNamespace && (
@@ -725,7 +735,7 @@ function BrowseTab({
 
 // --- My Names Tab ---
 
-function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab: TabKey) => void }) {
+function MyNamesTab({ address, switchTab, initialSellName, onSellNameConsumed }: { address?: Address; switchTab: (tab: TabKey) => void; initialSellName?: string | null; onSellNameConsumed?: () => void }) {
   const [names, setNames] = useState<UserName[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -756,6 +766,17 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
 
   useEffect(() => { loadNames(); }, [loadNames]);
 
+  // Auto-open sell form when arriving via ?sell=name
+  useEffect(() => {
+    if (initialSellName && names.length > 0) {
+      const match = names.find(n => n.name.toLowerCase() === initialSellName.toLowerCase());
+      if (match) {
+        setSellFormName(match.name);
+        onSellNameConsumed?.();
+      }
+    }
+  }, [initialSellName, names, onSellNameConsumed]);
+
   async function createListing(name: string, tokenId: string) {
     if (!address || !walletClient.data || !publicClient) return;
     if (!tokenId || tokenId === 'undefined') {
@@ -766,17 +787,21 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
 
     setListing(true);
     try {
+      // Timeout helper — if wallet hangs (extension conflicts), don't stay stuck forever
+      const withTimeout = <T,>(p: Promise<T>, ms = 120000, label = 'Wallet'): Promise<T> =>
+        Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${label} did not respond within ${ms / 1000}s. Try refreshing the page or check your wallet extension.`)), ms))]);
+
       // Check approval
       const isApproved = await publicClient.readContract({
         address: REGISTRY_ADDRESS, abi: ERC721_ABI, functionName: 'isApprovedForAll',
         args: [address, SEAPORT_ADDRESS],
       });
       if (!isApproved) {
-        const hash = await walletClient.data.writeContract({
+        const approveHash = await withTimeout(walletClient.data.writeContract({
           address: REGISTRY_ADDRESS, abi: ERC721_ABI, functionName: 'setApprovalForAll',
           args: [SEAPORT_ADDRESS, true],
-        });
-        await publicClient.waitForTransactionReceipt({ hash });
+        }), 120000, 'Approval');
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
       }
 
       // Get counter
@@ -823,7 +848,7 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
       const salt = BigInt(generateSalt());
 
       // EIP-712 sign
-      const signature = await walletClient.data.signTypedData({
+      const signature = await withTimeout(walletClient.data.signTypedData({
         domain: SEAPORT_DOMAIN,
         types: SEAPORT_EIP712_TYPES,
         primaryType: 'OrderComponents',
@@ -832,18 +857,16 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
           orderType: 2, startTime: 0n, endTime,
           zoneHash: ZERO_BYTES32, salt, conduitKey: ZERO_BYTES32, counter,
         },
-      });
+      }), 120000, 'Signature');
 
-      // Submit to Bazaar
-      const hash = await walletClient.data.writeContract({
-        address: BAZAAR_ADDRESS,
+      // Submit to Bazaar — must be called by seller (Bazaar validates msg.sender == consideration[0].recipient)
+      const submitTxData = encodeFunctionData({
         abi: BAZAAR_SUBMIT_ABI,
         functionName: 'submit',
         args: [{
           parameters: {
             offerer: address, zone: ZONE_PUBLIC,
-            offer: offer.map(o => ({ ...o })),
-            consideration: consideration.map((c: any) => ({ ...c })),
+            offer, consideration,
             orderType: 2, startTime: 0n, endTime,
             zoneHash: ZERO_BYTES32, salt, conduitKey: ZERO_BYTES32,
             totalOriginalConsiderationItems: BigInt(consideration.length),
@@ -851,18 +874,24 @@ function MyNamesTab({ address, switchTab }: { address?: Address; switchTab: (tab
           counter, signature,
         }],
       });
+      const hash = await withTimeout(walletClient.data.sendTransaction({
+        to: BAZAAR_ADDRESS,
+        data: submitTxData,
+      }), 120000, 'Bazaar submit');
+
+      // Wait for on-chain confirmation
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
       if (receipt.status === 'success') {
-        // Register bounty metadata on escrow contract (no ETH — bounty comes from Seaport consideration split)
+        // Register bounty metadata on escrow contract (requires wallet — owner must sign)
         if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
           try {
-            const bountyHash = await walletClient.data.writeContract({
+            const bountyHash = await withTimeout(walletClient.data.writeContract({
               address: BOUNTY_ESCROW_ADDRESS as Address,
               abi: BOUNTY_ESCROW_ABI,
               functionName: 'registerBounty',
               args: [BigInt(tokenId), bountyWei],
-            });
+            }), 120000, 'Bounty registration');
             await publicClient.waitForTransactionReceipt({ hash: bountyHash });
           } catch (e: any) {
             console.warn('Bounty registration failed (listing still active):', e.message);
@@ -1732,6 +1761,7 @@ export default function Marketplace() {
   const walletClient = useWalletClient();
   const publicClient = usePublicClient();
   const [activeTab, setActiveTab] = useState<TabKey>('browse');
+  const [initialSellName, setInitialSellName] = useState<string | null>(null);
   const [offerModalName, setOfferModalName] = useState<string | null>(null);
   const [chatTarget, setChatTarget] = useState<{ address: string; name: string; context?: string } | null>(null);
 
@@ -1788,6 +1818,7 @@ export default function Marketplace() {
     const buyHash = params.get('buy');
     if (sellName) {
       setActiveTab('mynames');
+      setInitialSellName(sellName);
     } else if (buyHash) {
       setActiveTab('browse');
     } else if (tabParam && ['browse', 'mynames', 'offers', 'sales', 'forum', 'donate'].includes(tabParam)) {
@@ -2086,7 +2117,7 @@ export default function Marketplace() {
       </div>
 
       <div className={`tab-panel${activeTab === 'mynames' ? ' active' : ''}`} id="panel-mynames">
-        {activeTab === 'mynames' && <MyNamesTab address={address} switchTab={switchTab} />}
+        {activeTab === 'mynames' && <MyNamesTab address={address} switchTab={switchTab} initialSellName={initialSellName} onSellNameConsumed={() => setInitialSellName(null)} />}
       </div>
 
       <div className={`tab-panel${activeTab === 'offers' ? ' active' : ''}`} id="panel-offers">

@@ -252,7 +252,7 @@ export default function Home() {
             ref={inputRef}
             type="text"
             id="name-input"
-            placeholder="find something awesome!"
+            placeholder="search for a name..."
             autoComplete="off"
             spellCheck={false}
             value={query}

@@ -672,7 +672,7 @@
   .listing-name a { color: #4870D4; text-decoration: none; }
   .listing-name a:hover { color: #CF3748; }
   .listing-meta { font-size: 0.8rem; color: #8a7d5a; margin-bottom: 0.75rem; }
-  .listing-price { font-size: 1.3rem; font-weight: 700; color: #fff; }
+  .listing-price { font-size: 1.3rem; font-weight: 700; color: #4870D4; }
   .currency-badge {
     display: inline-block;
     padding: 0.15rem 0.5rem;

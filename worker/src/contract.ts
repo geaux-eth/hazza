@@ -381,6 +381,7 @@ export type Env = {
   WATCHLIST_KV: KVNamespace;
   NOTIFICATION_WEBHOOK?: string;  // Telegram/Discord webhook for alerts
   ADMIN_API_KEY?: string;         // API key for admin endpoints
+  NEYNAR_API_KEY?: string;        // Neynar API key for FID lookups
 };
 
 // Minimal ABI for Exoskeleton NFT (Base mainnet)

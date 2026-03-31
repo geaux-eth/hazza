@@ -31,30 +31,11 @@ interface EnsSuggestion {
   available: boolean;
 }
 
-const nomiAvailablePhrases = [
-  "Ooh! I like that one!",
-  "Yep. That's a keeper.",
-  "Great choice. Register it before someone else does.",
-  "Love it. This one's got main character energy.",
-  "Solid pick. You've got good taste.",
-  "That's the one. I can feel it.",
-  "Nice. Clean, memorable, yours.",
-];
-
-const nomiTakenPhrases = [
-  "Dang. Try another one.",
-  "Someone beat you to it. Keep searching!",
-  "Taken! But there are plenty of great names left.",
-  "That one's spoken for. Try a variation?",
-];
 
 function sanitizeName(raw: string): string {
   return raw.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
 }
 
-function randomPhrase(phrases: string[]): string {
-  return phrases[Math.floor(Math.random() * phrases.length)];
-}
 
 function StepIndicator({ label, status }: { label: string; status: Step }) {
   const icon =
@@ -70,17 +51,39 @@ function StepIndicator({ label, status }: { label: string; status: Step }) {
   );
 }
 
+interface WalletPricing {
+  totalRegistrations: number;
+  hasUnlimitedPass: boolean;
+  nextPriceDollars: number;
+  nextPriceFormatted: string;
+  isFirstFree: boolean;
+}
+
 function SearchView() {
+  const { address, isConnected } = useAccount();
   const [query, setQuery] = useState('');
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<{
     name: string;
     available: boolean;
     owner?: string;
-    nomiPhrase: string;
   } | null>(null);
   const [searched, setSearched] = useState(false);
   const [searchError, setSearchError] = useState('');
+  const [walletPricing, setWalletPricing] = useState<WalletPricing | null>(null);
+
+  useEffect(() => {
+    if (!isConnected || !address) { setWalletPricing(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/wallet-pricing/${address}`);
+        const data = await res.json();
+        if (!cancelled) setWalletPricing(data);
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isConnected, address]);
 
   async function handleSearch() {
     const raw = query.trim();
@@ -97,7 +100,7 @@ function SearchView() {
       const res = await fetch(`${API_BASE}/api/available/${encodeURIComponent(name)}`);
       const data = await res.json();
       if (data.available) {
-        setResult({ name, available: true, nomiPhrase: randomPhrase(nomiAvailablePhrases) });
+        setResult({ name, available: true });
       } else {
         const resolveRes = await fetch(`${API_BASE}/api/resolve/${encodeURIComponent(name)}`);
         const resolveData = await resolveRes.json();
@@ -105,7 +108,6 @@ function SearchView() {
           name,
           available: false,
           owner: resolveData.owner,
-          nomiPhrase: randomPhrase(nomiTakenPhrases),
         });
       }
       setSearched(true);
@@ -125,7 +127,7 @@ function SearchView() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="find something awesome!"
+          placeholder="search for a name..."
           autoComplete="off"
           spellCheck={false}
           className="flex-1 px-4 py-3 rounded-lg border-2 border-border bg-white text-navy font-body text-base outline-none focus:border-blue"
@@ -147,9 +149,6 @@ function SearchView() {
 
       {result && (
         <div className="bg-white border-2 border-border rounded-xl p-6 mb-6 text-center">
-          <p className="font-heading text-blue font-semibold text-sm italic mb-3">
-            &ldquo;{result.nomiPhrase}&rdquo; &mdash; nomi
-          </p>
           {result.available ? (
             <>
               <p className="mb-1">
@@ -191,14 +190,48 @@ function SearchView() {
 
       {!searched && (
         <div className="text-center mt-6">
-          <p className="text-3xl mb-1">
-            <strong className="text-red">
-              your first name is{' '}
-              <span className="text-blue font-heading">FREE</span>
-            </strong>
-          </p>
-          <p className="text-muted text-lg">just pay gas</p>
-          <p className="text-navy text-sm mt-3">additional names $5+</p>
+          {walletPricing ? (
+            walletPricing.isFirstFree ? (
+              <>
+                <p className="text-3xl mb-1">
+                  <strong className="text-red">
+                    your first name is{' '}
+                    <span className="text-blue font-heading">FREE</span>
+                  </strong>
+                </p>
+                <p className="text-muted text-lg">just pay gas</p>
+                <p className="text-navy text-sm mt-3">additional names {walletPricing.hasUnlimitedPass ? '$4' : '$5+'}</p>
+              </>
+            ) : (
+              <>
+                <p className="text-3xl mb-1">
+                  <strong className="text-red">
+                    your next name is{' '}
+                    <span className="text-blue font-heading">{walletPricing.nextPriceFormatted}</span>
+                  </strong>
+                </p>
+                {walletPricing.hasUnlimitedPass ? (
+                  <p className="text-muted text-lg">20% discount applied. <a href="https://netlibrary.app" target="_blank" rel="noopener noreferrer" className="text-red" style={{ fontWeight: 700 }}>Net Library</a> Unlimited Pass detected.</p>
+                ) : (
+                  <p className="text-muted text-sm mt-2" style={{ maxWidth: 340, margin: '0.5rem auto 0' }}>
+                    Get 20% off name registrations FOR LIFE when you hold a Net Library Unlimited Pass.{' '}
+                    <a href="https://netlibrary.app/mint" target="_blank" rel="noopener noreferrer" className="text-red" style={{ fontWeight: 700 }}>Learn more here.</a>
+                  </p>
+                )}
+              </>
+            )
+          ) : (
+            <>
+              <p className="text-3xl mb-1">
+                <strong className="text-red">
+                  your first name is{' '}
+                  <span className="text-blue font-heading">FREE</span>
+                </strong>
+              </p>
+              <p className="text-muted text-lg">just pay gas</p>
+              <p className="text-navy text-sm mt-3">additional names $5+</p>
+            </>
+          )}
         </div>
       )}
 
@@ -298,20 +331,14 @@ function CheckoutView({ name }: { name: string }) {
       } catch { /* non-fatal */ }
     })();
 
-    // Check Unlimited Pass ownership on-chain
-    if (publicClient) {
-      (async () => {
-        try {
-          const result = await publicClient.readContract({
-            address: UNLIMITED_PASS_ADDRESS,
-            abi: UNLIMITED_PASS_ABI,
-            functionName: 'hasUnlimitedPass',
-            args: [address],
-          });
-          if (!cancelled) setHasPass(result as boolean);
-        } catch { /* non-fatal */ }
-      })();
-    }
+    // Check Unlimited Pass via wallet-pricing API (FID-aware — checks all linked wallets)
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/wallet-pricing/${address}`);
+        const data = await res.json();
+        if (!cancelled) setHasPass(data.hasUnlimitedPass === true);
+      } catch { /* non-fatal — fall back to no pass */ }
+    })();
 
     return () => { cancelled = true; };
   }, [isConnected, address, publicClient]);
@@ -392,6 +419,22 @@ function CheckoutView({ name }: { name: string }) {
       clearPendingPayment(name);
       setPendingTxHash(null);
     } catch (e: any) {
+      // Check if the name was actually registered despite the error (timeout/network issue)
+      try {
+        const checkRes = await fetch(`${API_BASE}/api/resolve/${encodeURIComponent(name)}`);
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          if (checkData.owner && checkData.owner.toLowerCase() === address?.toLowerCase()) {
+            setStep2('done');
+            setStep3('done');
+            setSuccess(true);
+            clearPendingPayment(name);
+            setPendingTxHash(null);
+            setStatus({ msg: 'Registration confirmed!', error: false });
+            return;
+          }
+        }
+      } catch {}
       setStep2('error');
       setStatus({ msg: e.message || 'Registration failed', error: true });
       setBusy(false);
@@ -545,7 +588,6 @@ function CheckoutView({ name }: { name: string }) {
         >
           view {name}.hazza.name
         </a>
-        <p className="font-heading text-muted text-sm mt-2">&mdash; nomi approves.</p>
         <div className="mt-3">
           <Link to="/dashboard" className="text-muted text-sm hover:underline">
             go to dashboard &rarr;
@@ -589,6 +631,9 @@ function CheckoutView({ name }: { name: string }) {
           <p className="text-navy text-xs">additional names $5+</p>
           <p className="text-muted text-sm mt-4">
             tap <strong className="text-red">Connect</strong> in the menu to continue
+          </p>
+          <p className="text-muted text-xs mt-2">
+            <a href="https://netlibrary.app/mint" target="_blank" rel="noopener noreferrer" className="text-red" style={{ fontWeight: 700 }}>Unlimited Pass</a> holders get 20% off every name, for life.
           </p>
         </div>
       )}

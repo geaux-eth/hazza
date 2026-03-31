@@ -1,13 +1,30 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useDisconnect } from 'wagmi';
+import { useDisconnect, useAccount, useSwitchChain, useChainId } from 'wagmi';
+import { base } from 'wagmi/chains';
 
 export default function Nav() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const walletMenuRef = useRef<HTMLDivElement>(null);
   const { disconnect } = useDisconnect();
+  const { isConnected } = useAccount();
+  const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
+
+  // Auto-switch to Base when connected on wrong chain (only on initial connect)
+  const hasAutoSwitched = useRef(false);
+  useEffect(() => {
+    if (!isConnected) {
+      hasAutoSwitched.current = false;
+      return;
+    }
+    if (isConnected && chainId !== base.id && !hasAutoSwitched.current) {
+      hasAutoSwitched.current = true;
+      switchChain({ chainId: base.id });
+    }
+  }, [isConnected, chainId, switchChain]);
 
   const closeMenu = () => setMenuOpen(false);
 
@@ -46,7 +63,7 @@ export default function Nav() {
           <Link to="/docs" onClick={closeMenu}>docs</Link>
           <ConnectButton.Custom>
             {({ account, chain, openChainModal, openConnectModal, mounted }) => {
-              const connected = mounted && account && chain;
+              const connected = mounted && account && chain && isConnected;
               if (!mounted) {
                 return (
                   <div aria-hidden style={{ opacity: 0, pointerEvents: 'none' as const, userSelect: 'none' as const }}>
@@ -80,7 +97,7 @@ export default function Nav() {
                       boxShadow: '0 4px 16px rgba(19,19,37,0.15)', minWidth: 140, zIndex: 10000,
                     }}>
                       <button
-                        onClick={() => { disconnect(); setWalletMenuOpen(false); }}
+                        onClick={() => { setWalletMenuOpen(false); disconnect(); }}
                         style={{
                           display: 'block', width: '100%', padding: '0.5rem 1rem',
                           background: 'none', border: 'none', textAlign: 'left',

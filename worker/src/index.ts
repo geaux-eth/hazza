@@ -38,20 +38,35 @@ type Bindings = Env;
 const app = new Hono<{ Bindings: Bindings }>();
 
 // CORS — restrict to hazza.name origins
-app.use("/api/*", cors({
+const corsMiddleware = cors({
   origin: (origin) => {
     if (!origin) return "https://hazza.name";
     if (origin === "https://hazza.name" || origin.endsWith(".hazza.name")) return origin;
     if (origin === "https://hazza-app.pages.dev" || origin.endsWith(".hazza-app.pages.dev")) return origin;
     return "https://hazza.name";
   },
-}));
+});
+// NFT metadata + images must be accessible from any marketplace/wallet/indexer
+const openCorsMiddleware = cors({ origin: "*" });
+app.use("/api/*", async (c, next) => {
+  const path = c.req.path;
+  if (path.startsWith("/api/metadata/") || path.startsWith("/api/nft-image/") || path === "/api/collection-metadata") {
+    return openCorsMiddleware(c, next);
+  }
+  return corsMiddleware(c, next);
+});
+app.use("/x402/*", corsMiddleware);
+// Frames must be accessible from any XMTP client
+app.use("/frames/*", cors({ origin: "*" }));
 
 // Security headers — helps corporate firewalls (Zscaler, Fortinet, etc.) classify the site
 app.use("*", async (c, next) => {
   await next();
   c.res.headers.set("X-Content-Type-Options", "nosniff");
-  c.res.headers.set("X-Frame-Options", "SAMEORIGIN");
+  // Frames need to be embeddable by XMTP clients
+  if (!c.req.path.startsWith("/frames/")) {
+    c.res.headers.set("X-Frame-Options", "SAMEORIGIN");
+  }
   c.res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
 });
@@ -261,6 +276,124 @@ app.get("/api/quote/:name", async (c) => {
     ...(isFirstFree ? { firstRegistration: true, message: "Your first name is free — just pay gas!" } : {}),
     lineItems,
   });
+});
+
+// Get wallet pricing context — registration count, FID-aware pass status, next name price
+app.get("/api/wallet-pricing/:address", async (c) => {
+  const wallet = c.req.param("address") as Address;
+  if (!isAddress(wallet)) return c.json({ error: "Invalid address" }, 400);
+
+  try {
+    const client = getClient(c.env);
+    const addr = registryAddress(c.env);
+
+    // Read wallet info (totalRegistrations, pricingWindowStart, pricingWindowCount)
+    const [totalRegistrations, pricingWindowStart, pricingWindowCount] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "walletInfo", args: [wallet],
+    }) as [bigint, bigint, bigint];
+
+    // Check Unlimited Pass — FID-aware: connected wallet → FID → all verified wallets → check each
+    const UNLIMITED_PASS = "0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB" as Address;
+    const BALANCE_OF_ABI = [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }] as const;
+    let hasPass = false;
+    let passWallet: string | null = null;
+
+    // Step 1: Check connected wallet directly
+    try {
+      const bal = await client.readContract({
+        address: UNLIMITED_PASS, abi: BALANCE_OF_ABI, functionName: "balanceOf", args: [wallet],
+      });
+      if ((bal as bigint) > 0n) {
+        hasPass = true;
+        passWallet = wallet;
+      }
+    } catch { /* pass contract may not exist on testnet */ }
+
+    // Step 2: If not found on connected wallet, check FID-linked wallets via Neynar
+    if (!hasPass && c.env.NEYNAR_API_KEY) {
+      try {
+        const bulkRes = await fetch(
+          `https://api.neynar.com/v2/farcaster/user/bulk-by-address?addresses=${wallet.toLowerCase()}`,
+          { headers: { accept: "application/json", "x-api-key": c.env.NEYNAR_API_KEY } }
+        );
+        if (bulkRes.ok) {
+          const bulkData = await bulkRes.json() as Record<string, any[]>;
+          const users = bulkData[wallet.toLowerCase()];
+          if (users?.length > 0) {
+            const allAddresses = new Set<string>();
+            for (const user of users) {
+              for (const a of (user.verified_addresses?.eth_addresses || [])) {
+                if (a.toLowerCase() !== wallet.toLowerCase()) allAddresses.add(a.toLowerCase());
+              }
+              if (user.custody_address && user.custody_address.toLowerCase() !== wallet.toLowerCase()) {
+                allAddresses.add(user.custody_address.toLowerCase());
+              }
+            }
+            for (const linkedAddr of allAddresses) {
+              try {
+                const bal = await client.readContract({
+                  address: UNLIMITED_PASS, abi: BALANCE_OF_ABI, functionName: "balanceOf",
+                  args: [linkedAddr as Address],
+                });
+                if ((bal as bigint) > 0n) { hasPass = true; passWallet = linkedAddr; break; }
+              } catch { /* skip */ }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("FID lookup failed:", e);
+      }
+    }
+
+    const regs = Number(totalRegistrations);
+    const basePrice = 5_000_000; // $5 USDC (6 decimals)
+
+    // Calculate next name price
+    let nextPrice: number;
+    if (regs === 0) {
+      nextPrice = 0; // first name free
+    } else {
+      // Check if pricing window expired (90 days = 7776000 seconds)
+      const now = Math.floor(Date.now() / 1000);
+      const windowStart = Number(pricingWindowStart);
+      const windowCount = (windowStart !== 0 && now - windowStart <= 7776000) ? Number(pricingWindowCount) : 0;
+
+      // Progressive multiplier
+      let adjusted: number;
+      if (windowCount < 3) {
+        adjusted = basePrice;
+      } else if (windowCount < 5) {
+        adjusted = Math.floor((basePrice * 25) / 10);
+      } else if (windowCount < 7) {
+        adjusted = basePrice * 5;
+      } else {
+        adjusted = basePrice * 10;
+      }
+
+      // 20% discount for Unlimited Pass holders
+      if (hasPass) {
+        adjusted = Math.floor((adjusted * 80) / 100);
+      }
+
+      nextPrice = adjusted;
+    }
+
+    // Format as dollars
+    const nextPriceDollars = nextPrice / 1_000_000;
+
+    return c.json({
+      totalRegistrations: regs,
+      hasUnlimitedPass: hasPass,
+      ...(passWallet && passWallet.toLowerCase() !== wallet.toLowerCase() ? { passDetectedVia: "farcaster-linked-wallet" } : {}),
+      nextPriceRaw: nextPrice.toString(),
+      nextPriceDollars,
+      nextPriceFormatted: nextPrice === 0 ? "FREE" : `$${nextPriceDollars}`,
+      isFirstFree: regs === 0,
+    });
+  } catch (e: any) {
+    console.error("Wallet pricing failed:", e?.message || e);
+    return c.json({ error: "Failed to get wallet pricing" }, 500);
+  }
 });
 
 // Check free claim eligibility — first registration free for everyone + Unlimited Pass bonus
@@ -966,10 +1099,20 @@ app.get("/api/nfts/:address", async (c) => {
 
 // ERC-721 metadata (served by tokenURI base URL)
 app.get("/api/metadata/:name", async (c) => {
-  const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  let name = c.req.param("name").toLowerCase();
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
+
+  // Support token ID lookups (e.g. /api/metadata/8) — marketplaces call tokenURI which appends the ID
+  if (/^\d+$/.test(name)) {
+    try {
+      const resolved = await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(name)] }) as string;
+      if (resolved) name = resolved.toLowerCase();
+      else return c.json({ error: "Name not registered" }, 404);
+    } catch { return c.json({ error: "Name not registered" }, 404); }
+  }
+
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
 
   const [nameOwner, tokenId, registeredAt, , agentId] =
     await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] });
@@ -1984,9 +2127,10 @@ app.post("/x402/register", async (c) => {
   });
   if (!available) return c.json({ error: "Name not available" }, 409);
 
-  // Verify Unlimited Pass ownership on-chain if claimed
+  // Verify Unlimited Pass ownership — FID-aware (checks all Farcaster-linked wallets)
   let verifiedPass = false;
   if (body.hasPass) {
+    // Step 1: Direct on-chain check
     try {
       const ownsPass = await client.readContract({
         address: UNLIMITED_PASS_ADDRESS,
@@ -1995,8 +2139,41 @@ app.post("/x402/register", async (c) => {
         args: [owner],
       });
       verifiedPass = !!ownsPass;
-    } catch {
-      // Pass check failure is non-fatal — proceed without discount
+    } catch { /* non-fatal */ }
+
+    // Step 2: If not found, check FID-linked wallets via Neynar
+    if (!verifiedPass && c.env.NEYNAR_API_KEY) {
+      try {
+        const bulkRes = await fetch(
+          `https://api.neynar.com/v2/farcaster/user/bulk-by-address?addresses=${owner.toLowerCase()}`,
+          { headers: { accept: "application/json", "x-api-key": c.env.NEYNAR_API_KEY } }
+        );
+        if (bulkRes.ok) {
+          const bulkData = await bulkRes.json() as Record<string, any[]>;
+          const users = bulkData[owner.toLowerCase()];
+          if (users?.length > 0) {
+            const BALANCE_OF_ABI = [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }] as const;
+            const PASS_ADDR = "0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB" as Address;
+            for (const user of users) {
+              const addrs = [...(user.verified_addresses?.eth_addresses || [])];
+              if (user.custody_address) addrs.push(user.custody_address);
+              for (const a of addrs) {
+                if (a.toLowerCase() === owner.toLowerCase()) continue;
+                try {
+                  const bal = await client.readContract({
+                    address: PASS_ADDR, abi: BALANCE_OF_ABI, functionName: "balanceOf",
+                    args: [a as Address],
+                  });
+                  if ((bal as bigint) > 0n) { verifiedPass = true; break; }
+                } catch { /* skip */ }
+              }
+              if (verifiedPass) break;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("FID pass lookup failed in registration:", e);
+      }
     }
   }
 
@@ -2026,13 +2203,16 @@ app.post("/x402/register", async (c) => {
       });
 
       let regTxHash: `0x${string}`;
-      const primaryRpc = c.env.PAYMASTER_BUNDLER_RPC || c.env.RPC_URL;
-      try {
-        const walletClient = createWalletClient({ account, chain, transport: http(primaryRpc) });
-        regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
-      } catch {
-        const walletClient = createWalletClient({ account, chain, transport: http(c.env.RPC_URL) });
-        regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+      const rpcs = [c.env.BASE_MAINNET_RPC, c.env.PAYMASTER_BUNDLER_RPC, c.env.RPC_URL].filter(Boolean);
+      for (const rpc of rpcs) {
+        try {
+          const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+          regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+          break;
+        } catch (err: any) {
+          console.warn(`RPC failed (${rpc?.slice(0, 30)}...):`, err?.message);
+          if (rpc === rpcs[rpcs.length - 1]) throw err;
+        }
       }
 
       const regReceipt = await client.waitForTransactionReceipt({ hash: regTxHash, timeout: 20_000 });
@@ -2110,13 +2290,16 @@ app.post("/x402/register", async (c) => {
       });
 
       let regTxHash: `0x${string}`;
-      const primaryRpc = c.env.PAYMASTER_BUNDLER_RPC || c.env.RPC_URL;
-      try {
-        const walletClient = createWalletClient({ account, chain, transport: http(primaryRpc) });
-        regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
-      } catch {
-        const walletClient = createWalletClient({ account, chain, transport: http(c.env.RPC_URL) });
-        regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+      const rpcs = [c.env.BASE_MAINNET_RPC, c.env.PAYMASTER_BUNDLER_RPC, c.env.RPC_URL].filter(Boolean);
+      for (const rpc of rpcs) {
+        try {
+          const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+          regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+          break;
+        } catch (err: any) {
+          console.warn(`RPC failed (${rpc?.slice(0, 30)}...):`, err?.message);
+          if (rpc === rpcs[rpcs.length - 1]) throw err;
+        }
       }
 
       const regReceipt = await client.waitForTransactionReceipt({ hash: regTxHash, timeout: 20_000 });
@@ -2274,21 +2457,17 @@ app.post("/x402/register", async (c) => {
       ],
     });
 
-    // Try Coinbase RPC first (faster, validated for mainnet), fall back to public RPC
-    const primaryRpc = c.env.PAYMASTER_BUNDLER_RPC || c.env.RPC_URL;
-    const fallbackRpc = c.env.RPC_URL;
-
-    try {
-      const walletClient = createWalletClient({
-        account, chain, transport: http(primaryRpc),
-      });
-      regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
-    } catch {
-      // Fallback to public RPC
-      const walletClient = createWalletClient({
-        account, chain, transport: http(fallbackRpc),
-      });
-      regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+    // Try paid RPCs first (Alchemy → Coinbase → public fallback)
+    const rpcs = [c.env.BASE_MAINNET_RPC, c.env.PAYMASTER_BUNDLER_RPC, c.env.RPC_URL].filter(Boolean);
+    for (const rpc of rpcs) {
+      try {
+        const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+        regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+        break;
+      } catch (err: any) {
+        console.warn(`RPC failed (${rpc?.slice(0, 30)}...):`, err?.message);
+        if (rpc === rpcs[rpcs.length - 1]) throw err;
+      }
     }
 
     // Wait for confirmation
@@ -2308,6 +2487,25 @@ app.post("/x402/register", async (c) => {
       });
       tokenId = tid.toString();
     } catch { /* non-critical */ }
+
+    // Forward USDC payment from relayer to treasury (fire-and-forget, don't block response)
+    const treasuryAddr = c.env.HAZZA_TREASURY as Address;
+    if (treasuryAddr && totalCost > 0n) {
+      (async () => {
+        try {
+          const transferData = encodeFunctionData({
+            abi: [{ name: "transfer", type: "function", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] }] as const,
+            functionName: "transfer",
+            args: [treasuryAddr, totalCost],
+          });
+          const fwdClient = createWalletClient({ account, chain, transport: http(rpcs[0]) });
+          const fwdTx = await fwdClient.sendTransaction({ to: c.env.USDC_ADDRESS as Address, data: transferData });
+          console.log(`Treasury forward: ${totalCost.toString()} USDC (${fwdTx}) for ${name}`);
+        } catch (err: any) {
+          console.error(`Treasury forward failed for ${name}:`, err?.shortMessage || err?.message);
+        }
+      })();
+    }
 
     const paidIp = c.req.header("cf-connecting-ip") || "unknown";
     await incrementGlobalDailyCap(c.env);
@@ -2473,13 +2671,13 @@ app.post("/api/refund", async (c) => {
 // Helper: create BazaarClient for current chain
 function getBazaarClient(env: Env) {
   const chainId = Number(env.CHAIN_ID);
-  return new BazaarClient({ chainId, rpcUrl: env.RPC_URL });
+  return new BazaarClient({ chainId, rpcUrl: env.BASE_MAINNET_RPC || env.RPC_URL });
 }
 
 // Helper: create StorageClient for Net Protocol
 function getStorageClient(env: Env) {
   const chainId = Number(env.CHAIN_ID);
-  return new StorageClient({ chainId, overrides: { rpcUrls: [env.RPC_URL] } });
+  return new StorageClient({ chainId, overrides: { rpcUrls: [env.BASE_MAINNET_RPC || env.RPC_URL] } });
 }
 
 // Enrich a listing with name data from the registry
@@ -2551,6 +2749,7 @@ async function enrichListing(listing: any, client: any, addr: Address) {
       nameStatus: "active",
       isNamespace,
       avatar: avatar || null,
+      image: `https://hazza.name/api/nft-image/${name}`,
       bounty,
       profileUrl: `https://${name}.hazza.name`,
       messageData: listing.messageData || null,
@@ -2809,6 +3008,409 @@ app.post("/api/bounty/withdraw-bounty", async (c) => {
   });
 });
 
+// =========================================================================
+//                     XMTP OPEN FRAMES (register, buy)
+// =========================================================================
+
+/** Build Open Frame HTML with XMTP support */
+function frameHtml(opts: {
+  title: string; image: string; buttons: { label: string; action: "tx" | "post" | "link"; target: string; postUrl?: string }[];
+  state?: string; aspectRatio?: string;
+}): string {
+  let meta = `
+<meta property="of:version" content="vNext" />
+<meta property="of:accepts:xmtp" content="2024-02-09" />
+<meta property="of:image" content="${opts.image}" />
+<meta property="og:image" content="${opts.image}" />
+<meta property="og:title" content="${opts.title}" />`;
+  if (opts.aspectRatio) meta += `\n<meta property="of:image:aspect_ratio" content="${opts.aspectRatio}" />`;
+  if (opts.state) meta += `\n<meta property="of:state" content="${opts.state.replace(/"/g, '&quot;')}" />`;
+  opts.buttons.forEach((b, i) => {
+    const n = i + 1;
+    meta += `\n<meta property="of:button:${n}" content="${b.label}" />`;
+    meta += `\n<meta property="of:button:${n}:action" content="${b.action}" />`;
+    meta += `\n<meta property="of:button:${n}:target" content="${b.target}" />`;
+    if (b.postUrl) meta += `\n<meta property="of:button:${n}:post_url" content="${b.postUrl}" />`;
+  });
+  return `<!DOCTYPE html><html><head>${meta}\n<title>${opts.title}</title></head><body><h1>${opts.title}</h1></body></html>`;
+}
+
+/** Generate a dynamic SVG frame image */
+function frameImageSvg(name: string, price: string, status?: string): string {
+  const bgColor = status === "success" ? "#10b981" : status === "error" ? "#ef4444" : "#131325";
+  const statusText = status === "success" ? "Registered!" : status === "error" ? "Failed" : price;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="628" viewBox="0 0 1200 628">
+  <rect width="1200" height="628" fill="${bgColor}" rx="24"/>
+  <text x="600" y="240" text-anchor="middle" fill="white" font-family="sans-serif" font-size="72" font-weight="bold">${name}.hazza.name</text>
+  <text x="600" y="340" text-anchor="middle" fill="#a5b4fc" font-family="sans-serif" font-size="48">${statusText}</text>
+  <text x="600" y="520" text-anchor="middle" fill="#6b7280" font-family="sans-serif" font-size="28">hazza.name — onchain names on Base</text>
+</svg>`;
+}
+
+// GET /frames/register/:name — Frame HTML for name registration
+app.get("/frames/register/:name", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.text("Invalid name", 400);
+  const baseUrl = "https://hazza.name";
+
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+
+  const available = await client.readContract({
+    address: addr, abi: REGISTRY_ABI, functionName: "available", args: [name],
+  });
+
+  if (!available) {
+    // Name is taken — show info frame
+    const html = frameHtml({
+      title: `${name}.hazza.name — Taken`,
+      image: `${baseUrl}/frames/register/${name}/image?status=taken`,
+      buttons: [{ label: "View Profile", action: "link", target: `https://${name}.hazza.name` }],
+      aspectRatio: "1.91:1",
+    });
+    return c.html(html);
+  }
+
+  // Name is available — the frame needs the user's address to quote accurately.
+  // Use a tx button: the /tx endpoint will get the user's address and return the right transaction.
+  const html = frameHtml({
+    title: `Register ${name}.hazza.name`,
+    image: `${baseUrl}/frames/register/${name}/image`,
+    buttons: [{
+      label: "Register",
+      action: "tx",
+      target: `${baseUrl}/frames/register/${name}/tx`,
+      postUrl: `${baseUrl}/frames/register/${name}/callback`,
+    }],
+    aspectRatio: "1.91:1",
+  });
+  return c.html(html);
+});
+
+// GET /frames/register/:name/image — Dynamic SVG image
+app.get("/frames/register/:name/image", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  const status = c.req.query("status");
+
+  if (status === "taken") {
+    return c.body(frameImageSvg(name, "Already Registered"), 200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=60" });
+  }
+  if (status === "success") {
+    return c.body(frameImageSvg(name, "", "success"), 200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-cache" });
+  }
+  if (status === "error") {
+    const msg = c.req.query("msg") || "Failed";
+    return c.body(frameImageSvg(name, msg, "error"), 200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-cache" });
+  }
+
+  // Default: show price. We don't know the user's wallet here, so show base price.
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+  let price = "$5 USDC";
+  try {
+    const available = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "available", args: [name],
+    });
+    if (!available) {
+      return c.body(frameImageSvg(name, "Already Registered"), 200, { "Content-Type": "image/svg+xml" });
+    }
+    // Can't know wallet-specific price without the user's address — show "from FREE"
+    price = "from FREE";
+  } catch { /* fallback */ }
+
+  return c.body(frameImageSvg(name, price), 200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=30" });
+});
+
+// POST /frames/register/:name/tx — Return transaction data for the user to sign
+app.post("/frames/register/:name/tx", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name" }, 400);
+
+  const body = await c.req.json().catch(() => null);
+  const userAddress = (body?.untrustedData?.address || body?.untrustedData?.walletAddress || "") as Address;
+  if (!userAddress || !isAddress(userAddress)) {
+    return c.json({ error: "No wallet address provided" }, 400);
+  }
+
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+  const relayerAddr = c.env.RELAYER_ADDRESS as Address;
+
+  // Check availability
+  const available = await client.readContract({
+    address: addr, abi: REGISTRY_ABI, functionName: "available", args: [name],
+  });
+  if (!available) return c.json({ error: "Name no longer available" }, 409);
+
+  // FID-aware Unlimited Pass detection (same as x402/register)
+  let verifiedPass = false;
+  try {
+    const ownsPass = await client.readContract({
+      address: UNLIMITED_PASS_ADDRESS, abi: UNLIMITED_PASS_ABI,
+      functionName: "hasUnlimitedPass", args: [userAddress],
+    });
+    verifiedPass = !!ownsPass;
+  } catch { /* non-fatal */ }
+  if (!verifiedPass && c.env.NEYNAR_API_KEY) {
+    try {
+      const bulkRes = await fetch(
+        `https://api.neynar.com/v2/farcaster/user/bulk-by-address?addresses=${userAddress.toLowerCase()}`,
+        { headers: { accept: "application/json", "x-api-key": c.env.NEYNAR_API_KEY } }
+      );
+      if (bulkRes.ok) {
+        const bulkData = await bulkRes.json() as Record<string, any[]>;
+        const users = bulkData[userAddress.toLowerCase()];
+        if (users?.length > 0) {
+          const BALANCE_OF_ABI = [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }] as const;
+          const PASS_ADDR = "0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB" as Address;
+          for (const user of users) {
+            const addrs = [...(user.verified_addresses?.eth_addresses || [])];
+            if (user.custody_address) addrs.push(user.custody_address);
+            for (const a of addrs) {
+              if (a.toLowerCase() === userAddress.toLowerCase()) continue;
+              try {
+                const bal = await client.readContract({ address: PASS_ADDR, abi: BALANCE_OF_ABI, functionName: "balanceOf", args: [a as Address] });
+                if ((bal as bigint) > 0n) { verifiedPass = true; break; }
+              } catch { /* skip */ }
+            }
+            if (verifiedPass) break;
+          }
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  // Get quote for this specific wallet (with pass detection)
+  const [totalCost] = await client.readContract({
+    address: addr, abi: REGISTRY_ABI, functionName: "quoteName",
+    args: [name, userAddress, 0, false, verifiedPass],
+  });
+
+  if (totalCost === 0n) {
+    // FREE registration — return a 0-value tx to our callback URL as a "claim" intent.
+    // We use a minimal ETH transfer (0 value) to the relayer just to get the signed tx hash
+    // proving the user wants this registration. The callback handles the actual registerDirect call.
+    return c.json({
+      chainId: "eip155:8453",
+      method: "eth_sendTransaction",
+      params: {
+        to: relayerAddr,
+        value: "0",
+        data: "0x",
+      },
+    });
+  }
+
+  // PAID registration — return USDC transfer tx
+  const usdcAddress = c.env.USDC_ADDRESS as Address;
+  // ERC-20 transfer(address,uint256) selector = 0xa9059cbb
+  const amountHex = totalCost.toString(16).padStart(64, "0");
+  const toHex = relayerAddr.slice(2).toLowerCase().padStart(64, "0");
+  const data = `0xa9059cbb${toHex}${amountHex}` as `0x${string}`;
+
+  return c.json({
+    chainId: "eip155:8453",
+    method: "eth_sendTransaction",
+    params: {
+      to: usdcAddress,
+      data,
+      value: "0",
+    },
+  });
+});
+
+// POST /frames/register/:name/callback — After tx signed, complete registration
+app.post("/frames/register/:name/callback", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.html(frameHtml({
+    title: "Error", image: `https://hazza.name/frames/register/${name}/image?status=error&msg=Invalid+name`,
+    buttons: [], aspectRatio: "1.91:1",
+  }));
+
+  const body = await c.req.json().catch(() => null);
+  const userAddress = (body?.untrustedData?.address || body?.untrustedData?.walletAddress || "") as Address;
+  const txHash = (body?.untrustedData?.transactionId || "") as `0x${string}`;
+
+  if (!userAddress || !isAddress(userAddress)) {
+    return c.html(frameHtml({
+      title: "Error", image: `https://hazza.name/frames/register/${name}/image?status=error&msg=No+wallet`,
+      buttons: [{ label: "Try Again", action: "link", target: `https://hazza.name/register?name=${name}` }],
+      aspectRatio: "1.91:1",
+    }));
+  }
+
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+  const relayerAddr = c.env.RELAYER_ADDRESS as Address;
+
+  // Re-check availability
+  const available = await client.readContract({
+    address: addr, abi: REGISTRY_ABI, functionName: "available", args: [name],
+  });
+  if (!available) {
+    return c.html(frameHtml({
+      title: `${name} — Already Taken`,
+      image: `https://hazza.name/frames/register/${name}/image?status=error&msg=Already+taken`,
+      buttons: [{ label: "Browse Names", action: "link", target: "https://hazza.name/register" }],
+      aspectRatio: "1.91:1",
+    }));
+  }
+
+  // Get quote
+  const [totalCost] = await client.readContract({
+    address: addr, abi: REGISTRY_ABI, functionName: "quoteName",
+    args: [name, userAddress, 0, false, false],
+  });
+
+  // For PAID registrations, verify the USDC transfer
+  if (totalCost > 0n) {
+    if (!txHash || !txHash.startsWith("0x") || txHash.length !== 66) {
+      return c.html(frameHtml({
+        title: "Payment Error",
+        image: `https://hazza.name/frames/register/${name}/image?status=error&msg=No+payment+tx`,
+        buttons: [{ label: "Try Again", action: "link", target: `https://hazza.name/register?name=${name}` }],
+        aspectRatio: "1.91:1",
+      }));
+    }
+
+    // Replay protection
+    if (await isPaymentUsed(c.env, txHash)) {
+      return c.html(frameHtml({
+        title: "Payment Already Used",
+        image: `https://hazza.name/frames/register/${name}/image?status=error&msg=Payment+already+used`,
+        buttons: [{ label: "Try Again", action: "link", target: `https://hazza.name/register?name=${name}` }],
+        aspectRatio: "1.91:1",
+      }));
+    }
+
+    await markPaymentUsed(c.env, txHash);
+
+    // Verify tx on-chain
+    let receipt;
+    try {
+      receipt = await client.getTransactionReceipt({ hash: txHash });
+    } catch {
+      await unmarkPayment(c.env, txHash);
+      return c.html(frameHtml({
+        title: "Payment Not Found",
+        image: `https://hazza.name/frames/register/${name}/image?status=error&msg=Tx+not+confirmed`,
+        buttons: [{ label: "Try Again", action: "link", target: `https://hazza.name/register?name=${name}` }],
+        aspectRatio: "1.91:1",
+      }));
+    }
+
+    if (receipt.status !== "success") {
+      await unmarkPayment(c.env, txHash);
+      return c.html(frameHtml({
+        title: "Payment Failed",
+        image: `https://hazza.name/frames/register/${name}/image?status=error&msg=Tx+failed`,
+        buttons: [{ label: "Try Again", action: "link", target: `https://hazza.name/register?name=${name}` }],
+        aspectRatio: "1.91:1",
+      }));
+    }
+
+    // Verify USDC transfer
+    const usdcAddr = c.env.USDC_ADDRESS.toLowerCase();
+    const transferTopic = keccak256(toBytes("Transfer(address,address,uint256)"));
+    let verified = false;
+    for (const log of receipt.logs) {
+      if (log.address.toLowerCase() !== usdcAddr) continue;
+      if (log.topics[0] !== transferTopic) continue;
+      const toAddr = ("0x" + (log.topics[2] || "").slice(26)).toLowerCase();
+      const fromAddr = ("0x" + (log.topics[1] || "").slice(26)).toLowerCase();
+      if (toAddr !== relayerAddr.toLowerCase()) continue;
+      if (fromAddr !== userAddress.toLowerCase()) continue;
+      const transferAmount = BigInt(log.data);
+      if (transferAmount >= totalCost) { verified = true; break; }
+    }
+
+    if (!verified) {
+      await unmarkPayment(c.env, txHash);
+      return c.html(frameHtml({
+        title: "Payment Verification Failed",
+        image: `https://hazza.name/frames/register/${name}/image?status=error&msg=Payment+not+verified`,
+        buttons: [{ label: "Try Again", action: "link", target: `https://hazza.name/register?name=${name}` }],
+        aspectRatio: "1.91:1",
+      }));
+    }
+  }
+
+  // --- Execute registration via relayer ---
+  try {
+    const chainId = Number(c.env.CHAIN_ID);
+    const chain = chainId === 8453 ? base : baseSepolia;
+    const account = privateKeyToAccount(c.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+
+    const txData = encodeFunctionData({
+      abi: REGISTRY_ABI,
+      functionName: "registerDirect",
+      args: [name, userAddress, 0, false, "0x0000000000000000000000000000000000000000" as Address, "", false, false],
+    });
+
+    let regTxHash: `0x${string}` = "0x" as `0x${string}`;
+    const rpcs = [c.env.BASE_MAINNET_RPC, c.env.PAYMASTER_BUNDLER_RPC, c.env.RPC_URL].filter(Boolean);
+    for (const rpc of rpcs) {
+      try {
+        const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+        regTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+        break;
+      } catch (err: any) {
+        console.warn(`Frame reg RPC failed (${rpc?.slice(0, 30)}...):`, err?.message);
+        if (rpc === rpcs[rpcs.length - 1]) throw err;
+      }
+    }
+
+    const regReceipt = await client.waitForTransactionReceipt({ hash: regTxHash, timeout: 20_000 });
+    if (regReceipt.status !== "success") {
+      return c.html(frameHtml({
+        title: "Registration Failed",
+        image: `https://hazza.name/frames/register/${name}/image?status=error&msg=Tx+reverted`,
+        buttons: [{ label: "Try Again", action: "link", target: `https://hazza.name/register?name=${name}` }],
+        aspectRatio: "1.91:1",
+      }));
+    }
+
+    // Forward USDC payment from relayer to treasury
+    const treasuryAddr = c.env.HAZZA_TREASURY as Address;
+    if (treasuryAddr && totalCost > 0n) {
+      (async () => {
+        try {
+          const transferData = encodeFunctionData({
+            abi: [{ name: "transfer", type: "function", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] }] as const,
+            functionName: "transfer",
+            args: [treasuryAddr, totalCost],
+          });
+          const fwdClient = createWalletClient({ account, chain, transport: http(rpcs[0]) });
+          const fwdTx = await fwdClient.sendTransaction({ to: c.env.USDC_ADDRESS as Address, data: transferData });
+          console.log(`Treasury forward: ${totalCost.toString()} USDC (${fwdTx}) for ${name}`);
+        } catch (err: any) {
+          console.error(`Treasury forward failed for ${name}:`, err?.shortMessage || err?.message);
+        }
+      })();
+    }
+
+    const clientIp = c.req.header("cf-connecting-ip") || "frame";
+    await incrementGlobalDailyCap(c.env);
+    await logRegistration(c.env, { name, owner: userAddress, ip: clientIp, type: totalCost === 0n ? "frame_free" : "frame_paid", txHash: regTxHash, timestamp: Date.now() });
+
+    return c.html(frameHtml({
+      title: `${name}.hazza.name — Registered!`,
+      image: `https://hazza.name/frames/register/${name}/image?status=success`,
+      buttons: [{ label: "View Profile", action: "link", target: `https://${name}.hazza.name` }],
+      aspectRatio: "1.91:1",
+    }));
+
+  } catch (e: any) {
+    console.error("Frame registration failed:", e?.shortMessage || e?.message || e);
+    return c.html(frameHtml({
+      title: "Registration Error",
+      image: `https://hazza.name/frames/register/${name}/image?status=error&msg=Server+error`,
+      buttons: [{ label: "Try Again", action: "link", target: `https://hazza.name/register?name=${name}` }],
+      aspectRatio: "1.91:1",
+    }));
+  }
+});
+
 // GET /api/board — fetch forum messages from Net Protocol storage
 app.get("/api/board", async (c) => {
   try {
@@ -2929,7 +3531,8 @@ app.post("/api/board", async (c) => {
     const chainId = Number(c.env.CHAIN_ID);
     const chain = chainId === 8453 ? base : baseSepolia;
     const account = privateKeyToAccount(c.env.RELAYER_PRIVATE_KEY as `0x${string}`);
-    const walletClient = createWalletClient({ account, chain, transport: http(c.env.RPC_URL) });
+    const rpcUrl = c.env.BASE_MAINNET_RPC || c.env.PAYMASTER_BUNDLER_RPC || c.env.RPC_URL;
+    const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) });
 
     await walletClient.writeContract({
       address: txConfig.to as `0x${string}`,
@@ -2949,12 +3552,105 @@ app.post("/api/board", async (c) => {
   }
 });
 
+// POST /api/marketplace/submit-listing — relay a signed Seaport order to Bazaar
+// Eliminates the second wallet interaction: user signs EIP-712, we submit to Bazaar via relayer
+app.post("/api/marketplace/submit-listing", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { order } = body; // { parameters, counter, signature }
+    if (!order?.parameters || !order?.signature) {
+      return c.json({ error: "Missing order parameters or signature" }, 400);
+    }
+
+    const chainId = Number(c.env.CHAIN_ID);
+    const chain = chainId === 8453 ? base : baseSepolia;
+    const account = privateKeyToAccount(c.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const bazaarAddr = c.env.BAZAAR_ADDRESS as Address;
+
+    // Encode the Bazaar submit call
+    const BAZAAR_SUBMIT_ABI_WORKER = [{
+      name: 'submit', type: 'function', stateMutability: 'nonpayable',
+      inputs: [{ name: 'submission', type: 'tuple', components: [
+        { name: 'parameters', type: 'tuple', components: [
+          { name: 'offerer', type: 'address' }, { name: 'zone', type: 'address' },
+          { name: 'offer', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }] },
+          { name: 'consideration', type: 'tuple[]', components: [{ name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' }, { name: 'identifierOrCriteria', type: 'uint256' }, { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' }, { name: 'recipient', type: 'address' }] },
+          { name: 'orderType', type: 'uint8' }, { name: 'startTime', type: 'uint256' }, { name: 'endTime', type: 'uint256' },
+          { name: 'zoneHash', type: 'bytes32' }, { name: 'salt', type: 'uint256' }, { name: 'conduitKey', type: 'bytes32' }, { name: 'totalOriginalConsiderationItems', type: 'uint256' }
+        ]},
+        { name: 'counter', type: 'uint256' },
+        { name: 'signature', type: 'bytes' }
+      ]}], outputs: []
+    }] as const;
+
+    const p = order.parameters;
+    const txData = encodeFunctionData({
+      abi: BAZAAR_SUBMIT_ABI_WORKER,
+      functionName: "submit",
+      args: [{
+        parameters: {
+          offerer: p.offerer as Address,
+          zone: p.zone as Address,
+          offer: p.offer.map((o: any) => ({
+            itemType: o.itemType,
+            token: o.token as Address,
+            identifierOrCriteria: BigInt(o.identifierOrCriteria),
+            startAmount: BigInt(o.startAmount),
+            endAmount: BigInt(o.endAmount),
+          })),
+          consideration: p.consideration.map((c2: any) => ({
+            itemType: c2.itemType,
+            token: c2.token as Address,
+            identifierOrCriteria: BigInt(c2.identifierOrCriteria),
+            startAmount: BigInt(c2.startAmount),
+            endAmount: BigInt(c2.endAmount),
+            recipient: c2.recipient as Address,
+          })),
+          orderType: p.orderType,
+          startTime: BigInt(p.startTime),
+          endTime: BigInt(p.endTime),
+          zoneHash: p.zoneHash as `0x${string}`,
+          salt: BigInt(p.salt),
+          conduitKey: p.conduitKey as `0x${string}`,
+          totalOriginalConsiderationItems: BigInt(p.totalOriginalConsiderationItems),
+        },
+        counter: BigInt(order.counter),
+        signature: order.signature as `0x${string}`,
+      }],
+    });
+
+    // Use paid RPC (Alchemy) first, then Coinbase, then public fallback
+    const rpcs = [c.env.BASE_MAINNET_RPC, c.env.PAYMASTER_BUNDLER_RPC, c.env.RPC_URL].filter(Boolean);
+    let txHash: `0x${string}` | undefined;
+
+    for (const rpc of rpcs) {
+      try {
+        const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+        txHash = await walletClient.sendTransaction({ to: bazaarAddr, data: txData });
+        break;
+      } catch (err: any) {
+        console.warn(`RPC failed (${rpc?.slice(0, 30)}...):`, err?.message);
+        if (rpc === rpcs[rpcs.length - 1]) throw err;
+      }
+    }
+    if (!txHash) throw new Error("All RPCs failed");
+
+    return c.json({ success: true, txHash });
+  } catch (e: any) {
+    console.error("Submit listing relay failed:", e?.message || e);
+    return c.json({ error: e?.message || "Failed to submit listing" }, 500);
+  }
+});
+
 // GET /api/marketplace/listings — active HAZZA name listings
 app.get("/api/marketplace/listings", async (c) => {
   try {
     const bazaar = getBazaarClient(c.env);
     const nftAddress = registryAddress(c.env);
     const rawListings = await bazaar.getListings({ nftAddress });
+    if (!rawListings || rawListings.length === 0) {
+      return c.json({ listings: [], total: 0 });
+    }
 
     const client = getClient(c.env);
     const addr = registryAddress(c.env);
@@ -2968,8 +3664,8 @@ app.get("/api/marketplace/listings", async (c) => {
       total: enriched.filter(Boolean).length,
     });
   } catch (e: any) {
-    console.error("Marketplace listings failed:", e?.message || e);
-    return c.json({ listings: [], total: 0, error: "Failed to fetch listings" });
+    console.error("Marketplace listings failed:", e?.message || e, e?.stack);
+    return c.json({ listings: [], total: 0, error: `Failed to fetch listings: ${e?.message || e}` });
   }
 });
 

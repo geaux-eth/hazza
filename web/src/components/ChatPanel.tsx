@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useAccount, useWalletClient, usePublicClient } from 'wagmi';
-import { parseAbi, type Address } from 'viem';
+import { useAccount, useWalletClient, usePublicClient, useWriteContract, useSendTransaction } from 'wagmi';
+import { parseAbi, encodeFunctionData, type Address } from 'viem';
 import {
   REGISTRY_ADDRESS, USDC_ADDRESS, RELAYER_ADDRESS, USDC_ABI, REGISTRY_ABI, ERC721_ABI,
   SEAPORT_ADDRESS, BAZAAR_ADDRESS, MARKETPLACE_FEE_BPS, TREASURY_ADDRESS, BOUNTY_ESCROW_ADDRESS,
@@ -36,8 +36,15 @@ function parseActionCard(text: string): ActionCard | null {
   return null;
 }
 
+/** Detect hazza.name frame URLs and extract the action type + name */
+const FRAME_URL_RE = /^https:\/\/hazza\.name\/frames\/(register|buy)\/([a-z0-9-]{1,63})$/;
+function parseFrameUrl(text: string): { action: string; name: string } | null {
+  const m = text.trim().match(FRAME_URL_RE);
+  return m ? { action: m[1], name: m[2] } : null;
+}
+
 type ActionCard =
-  | { type: 'register_card'; name: string; price: string; priceRaw: string; free: boolean; relayer: string; freeClaim: any }
+  | { type: 'register_card'; name: string; price: string; priceRaw: string; free: boolean; relayer: string; freeClaim: any; hasPass?: boolean }
   | { type: 'buy_card'; name: string; price: string; priceRaw: string; currency: string; orderHash?: string; seller: string; source: 'seaport' }
   | { type: 'list_card'; name: string; price: string; priceWei: string; bountyWei?: string; bountyEth?: string; netEth?: string; tokenId: string; owner: string; registryAddress: string; duration?: string }
   | { type: 'transfer_card'; name: string; tokenId: string; from: string; to: string; toName: string | null; registryAddress: string }
@@ -155,9 +162,7 @@ export default function ChatPanel({
   isOpen, onClose, targetAddress, targetName, targetAvatar, greeting, context, xmtpClient,
 }: ChatPanelProps) {
   const defaultGreeting = useMemo(() => greeting || `gm. you're chatting with ${targetName}.`, [greeting, targetName]);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 'greeting', content: defaultGreeting, sender: 'remote', timestamp: new Date() },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [xmtpStatus, setXmtpStatus] = useState<XmtpStatus>('idle');
   const [cardStatuses, setCardStatuses] = useState<Record<string, { status: CardStatus; error?: string; txHash?: string }>>({});
@@ -173,6 +178,8 @@ export default function ChatPanel({
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
+  const { writeContractAsync } = useWriteContract();
+  const { sendTransactionAsync } = useSendTransaction();
 
   const scrollToBottom = useCallback(() => {
     if (messagesRef.current) {
@@ -217,9 +224,10 @@ export default function ChatPanel({
       closeClient();
 
       setXmtpStatus('idle');
-      setMessages([
-        { id: 'greeting', content: defaultGreeting, sender: 'remote', timestamp: new Date() },
-      ]);
+      setMessages(address
+        ? [{ id: 'greeting', content: defaultGreeting, sender: 'remote', timestamp: new Date() }]
+        : []
+      );
     }
   }, [address, closeClient, defaultGreeting]);
 
@@ -227,9 +235,10 @@ export default function ChatPanel({
     if (targetAddress !== prevTargetRef.current) {
       prevTargetRef.current = targetAddress;
 
-      setMessages([
-        { id: 'greeting', content: defaultGreeting, sender: 'remote', timestamp: new Date() },
-      ]);
+      setMessages(address
+        ? [{ id: 'greeting', content: defaultGreeting, sender: 'remote', timestamp: new Date() }]
+        : []
+      );
       stopStream();
       conversationRef.current = null;
       if (clientRef.current) {
@@ -238,7 +247,7 @@ export default function ChatPanel({
         setXmtpStatus('idle');
       }
     }
-  }, [targetAddress, defaultGreeting, stopStream]);
+  }, [targetAddress, defaultGreeting, stopStream, address]);
 
   useEffect(() => {
     if (xmtpClient && !clientRef.current) {
@@ -282,9 +291,16 @@ export default function ChatPanel({
         },
       };
 
-      const client = await xmtp.Client.create(signer, {
-        env: 'production',
-      });
+      const dbPath = `xmtp-${address.toLowerCase()}`;
+      const client = await xmtp.Client.create(signer, { env: 'production', dbPath });
+
+      // Prevent installation buildup — keep only this session
+      try {
+        await client.revokeAllOtherInstallations();
+      } catch (revokeErr) {
+        console.warn('Could not revoke old installations:', revokeErr);
+      }
+
       clientRef.current = client;
 
       setXmtpStatus('client-ready');
@@ -295,6 +311,8 @@ export default function ChatPanel({
       if (msg.includes('cannot be accessed from origin') || msg.includes('Worker')) {
         crossOriginErrorRef.current = true;
         addMsg('in-page XMTP chat isn\'t available yet — use the direct link below to message ' + targetName + '.', 'system');
+      } else if (msg.includes('10/10') || msg.includes('installation')) {
+        addMsg('too many XMTP sessions — please clear your browser data for this site (Settings → Privacy → Site data → hazza.name → Delete), then refresh. if it persists, contact us for a session reset.', 'system');
       } else {
         addMsg('XMTP error: ' + msg, 'system');
       }
@@ -324,6 +342,8 @@ export default function ChatPanel({
         const text = extractTextContent(m.content);
         if (text) {
           const card = parseActionCard(text);
+          const frame = !card ? parseFrameUrl(text) : null;
+          if (frame) continue; // Frame URLs are rendered as cards — skip the raw URL message, the card will be built async below
           mapped.push({
             id: m.id || `msg-${i}`,
             content: card ? '' : text,
@@ -332,6 +352,49 @@ export default function ChatPanel({
             card,
           });
         }
+      }
+
+      // Build cards from frame URLs in existing messages
+      for (let i = 0; i < existing.length; i++) {
+        const m = existing[i];
+        const text = extractTextContent(m.content);
+        if (!text) continue;
+        const frame = parseFrameUrl(text);
+        if (!frame) continue;
+        if (!address) {
+          // No wallet connected — show frame URL as text, can't build accurate card
+          mapped.push({
+            id: m.id || `frame-${i}`,
+            content: text,
+            sender: m.senderInboxId !== inboxId ? 'remote' : 'user',
+            timestamp: m.sentAt || new Date(),
+          });
+          continue;
+        }
+        try {
+          let hasPass = false;
+          const wpRes = await fetch(`/api/wallet-pricing/${address}`);
+          if (wpRes.ok) { const wp = await wpRes.json() as any; hasPass = wp.hasUnlimitedPass === true; }
+          const qp = [`wallet=${address}`, hasPass ? 'verifiedPass=true' : ''].filter(Boolean).join('&');
+          const quoteRes = await fetch(`/api/quote/${frame.name}?${qp}`);
+          const quote = quoteRes.ok ? await quoteRes.json() as any : null;
+          const totalRaw = quote?.totalRaw || quote?.totalCost || '5000000';
+          const isFree = totalRaw === '0' || totalRaw === 0;
+          const freeClaimRes = await fetch(`/api/free-claim/${address}`).then(r => r.ok ? r.json() : null).catch(() => null);
+          const regCard: ActionCard = {
+            type: 'register_card', name: frame.name,
+            price: isFree ? 'FREE' : `$${(parseInt(totalRaw) / 1e6).toFixed(2)} USDC`,
+            priceRaw: String(totalRaw), free: isFree,
+            relayer: RELAYER_ADDRESS, freeClaim: freeClaimRes, hasPass,
+          };
+          mapped.push({
+            id: m.id || `frame-${i}`,
+            content: '',
+            sender: 'remote',
+            timestamp: m.sentAt || new Date(),
+            card: regCard,
+          });
+        } catch { /* frame card build failed — skip */ }
       }
 
       if (mapped.length > 0) {
@@ -350,6 +413,56 @@ export default function ChatPanel({
             const streamText = msg?.content ? extractTextContent(msg.content) : null;
             if (streamText && msg.senderInboxId !== inboxId) {
               const card = parseActionCard(streamText);
+              const frame = !card ? parseFrameUrl(streamText) : null;
+
+              // Frame URL → build card, don't show raw URL
+              if (frame) {
+                let built = false;
+                try {
+                  const walletAddr = address;
+                  if (!walletAddr) throw new Error('No wallet connected');
+                  // Use wallet-pricing for FID-aware pass detection, then quote with pass flag
+                  let hasPass = false;
+                  const wpRes = await fetch(`/api/wallet-pricing/${walletAddr}`);
+                  if (wpRes.ok) {
+                    const wp = await wpRes.json() as any;
+                    hasPass = wp.hasUnlimitedPass === true;
+                  }
+                  const qp = [`wallet=${walletAddr}`, hasPass ? 'verifiedPass=true' : ''].filter(Boolean).join('&');
+                  const qRes = await fetch(`/api/quote/${frame.name}?${qp}`);
+                  const q = qRes.ok ? await qRes.json() as any : null;
+                  if (q) {
+                    const raw = q.totalRaw || q.totalCost || '5000000';
+                    const free = raw === '0' || raw === 0;
+                    const fc = await fetch(`/api/free-claim/${walletAddr}`).then(r => r.ok ? r.json() : null).catch(() => null);
+                    const regCard: ActionCard = {
+                      type: 'register_card', name: frame.name,
+                      price: free ? 'FREE' : `$${(parseInt(raw) / 1e6).toFixed(2)} USDC`,
+                      priceRaw: String(raw), free, relayer: RELAYER_ADDRESS, freeClaim: fc, hasPass,
+                    };
+                    const cardMsg: ChatMessage = {
+                      id: msg.id || `frame-${Date.now()}`,
+                      content: '', sender: 'remote',
+                      timestamp: msg.sentAt || new Date(), card: regCard,
+                    };
+                    setMessages((prev) => prev.some((m) => m.id === cardMsg.id) ? prev : [...prev, cardMsg]);
+                    built = true;
+                  }
+                } catch (e) {
+                  console.warn('Frame card build failed:', e);
+                }
+                if (!built) {
+                  // Fallback: show the frame URL as text if card build failed
+                  const fallbackMsg: ChatMessage = {
+                    id: msg.id || `frame-fallback-${Date.now()}`,
+                    content: streamText, sender: 'remote',
+                    timestamp: msg.sentAt || new Date(), card: undefined,
+                  };
+                  setMessages((prev) => prev.some((m) => m.id === fallbackMsg.id) ? prev : [...prev, fallbackMsg]);
+                }
+                continue;
+              }
+
               const chatMsg: ChatMessage = {
                 id: msg.id || `stream-${Date.now()}`,
                 content: card ? '' : streamText,
@@ -375,6 +488,45 @@ export default function ChatPanel({
     }
   }, [isOpen, isConnected, walletClient, address, xmtpStatus, targetAddress, createClient]);
 
+  // When wallet connects, convert any frame-URL text messages into action cards
+  useEffect(() => {
+    if (!address) return;
+    setMessages(prev => {
+      const hasFrameText = prev.some(m => m.content && parseFrameUrl(m.content));
+      if (!hasFrameText) return prev;
+      // Replace frame URL text messages with placeholder, then build cards async
+      const updated = prev.map(m => {
+        if (!m.content || !parseFrameUrl(m.content)) return m;
+        return { ...m, content: 'loading...' };
+      });
+      // Build cards in background
+      (async () => {
+        const newMsgs = await Promise.all(prev.map(async (m) => {
+          if (!m.content) return m;
+          const frame = parseFrameUrl(m.content);
+          if (!frame) return m;
+          try {
+            let hasPass = false;
+            const wpRes = await fetch(`/api/wallet-pricing/${address}`);
+            if (wpRes.ok) { const wp = await wpRes.json() as any; hasPass = wp.hasUnlimitedPass === true; }
+            const qp = [`wallet=${address}`, hasPass ? 'verifiedPass=true' : ''].filter(Boolean).join('&');
+            const quoteRes = await fetch(`/api/quote/${frame.name}?${qp}`);
+            const quote = quoteRes.ok ? await quoteRes.json() as any : null;
+            const totalRaw = quote?.totalRaw || quote?.totalCost || '5000000';
+            const isFree = totalRaw === '0' || totalRaw === 0;
+            const freeClaimRes = await fetch(`/api/free-claim/${address}`).then(r => r.ok ? r.json() : null).catch(() => null);
+            return {
+              ...m, content: '',
+              card: { type: 'register_card' as const, name: frame.name, price: isFree ? 'FREE' : `$${(parseInt(totalRaw) / 1e6).toFixed(2)} USDC`, priceRaw: String(totalRaw), free: isFree, relayer: RELAYER_ADDRESS, freeClaim: freeClaimRes, hasPass },
+            };
+          } catch { return m; }
+        }));
+        setMessages(newMsgs);
+      })();
+      return updated;
+    });
+  }, [address]);
+
   useEffect(() => {
     if (isOpen && xmtpStatus === 'client-ready' && targetAddress && clientRef.current) {
       createConversation();
@@ -398,7 +550,7 @@ export default function ChatPanel({
   }, []);
 
   const handleRegister = useCallback(async (card: Extract<ActionCard, { type: 'register_card' }>, cardId: string) => {
-    if (!walletClient || !address || !publicClient) return;
+    if (!address || !publicClient) return;
     setCardStatus(cardId, 'pending');
 
     try {
@@ -407,7 +559,7 @@ export default function ChatPanel({
         const res = await fetch('https://hazza.name/x402/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: card.name, owner: address }),
+          body: JSON.stringify({ name: card.name, owner: address, hasPass: card.hasPass || false }),
         });
         const data = await res.json();
         if (res.ok) {
@@ -421,7 +573,7 @@ export default function ChatPanel({
         setCardStatus(cardId, 'confirming');
         const amount = BigInt(card.priceRaw);
 
-        const txHash = await walletClient.writeContract({
+        const txHash = await writeContractAsync({
           address: USDC_ADDRESS as Address,
           abi: USDC_ABI,
           functionName: 'transfer',
@@ -443,7 +595,7 @@ export default function ChatPanel({
             'Content-Type': 'application/json',
             'X-PAYMENT': payment,
           },
-          body: JSON.stringify({ name: card.name, owner: address }),
+          body: JSON.stringify({ name: card.name, owner: address, hasPass: card.hasPass || false }),
         });
         const data = await res.json();
         if (res.ok) {
@@ -457,10 +609,10 @@ export default function ChatPanel({
       console.error('Registration error:', err);
       setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
     }
-  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+  }, [address, publicClient, writeContractAsync, setCardStatus, addMsg]);
 
   const handleBuy = useCallback(async (card: Extract<ActionCard, { type: 'buy_card' }>, cardId: string) => {
-    if (!walletClient || !address || !publicClient) return;
+    if (!address || !publicClient) return;
     setCardStatus(cardId, 'pending');
 
     try {
@@ -482,7 +634,7 @@ export default function ChatPanel({
         // Execute approval transactions if needed
         if (data.approvals?.length > 0) {
           for (const approval of data.approvals) {
-            const approveTx = await walletClient.sendTransaction({
+            const approveTx = await sendTransactionAsync({
               to: approval.to as Address,
               data: approval.data as `0x${string}`,
               value: BigInt(approval.value || '0'),
@@ -492,7 +644,7 @@ export default function ChatPanel({
         }
 
         // Execute fulfillment
-        const txHash = await walletClient.sendTransaction({
+        const txHash = await sendTransactionAsync({
           to: data.fulfillment.to as Address,
           data: data.fulfillment.data as `0x${string}`,
           value: BigInt(data.fulfillment.value || '0'),
@@ -512,10 +664,10 @@ export default function ChatPanel({
       console.error('Buy error:', err);
       setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
     }
-  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+  }, [address, publicClient, sendTransactionAsync, setCardStatus, addMsg]);
 
   const handleList = useCallback(async (card: Extract<ActionCard, { type: 'list_card' }>, cardId: string) => {
-    if (!walletClient || !address || !publicClient) return;
+    if (!walletClient || !address || !publicClient) return; // walletClient still needed for signTypedData
     setCardStatus(cardId, 'pending');
 
     try {
@@ -528,7 +680,7 @@ export default function ChatPanel({
       });
       if (!isApproved) {
         setCardStatus(cardId, 'confirming');
-        const approveTx = await walletClient.writeContract({
+        const approveTx = await writeContractAsync({
           address: REGISTRY_ADDRESS as Address,
           abi: ERC721_ABI,
           functionName: 'setApprovalForAll',
@@ -556,7 +708,7 @@ export default function ChatPanel({
       const sellerAmount = priceWei - feeAmount - bountyWei;
       const dur = card.duration ? parseInt(card.duration) : 0;
       const endTime = dur === 0
-        ? BigInt('115792089237316195423570985008687907853269984665640564039457584007913129639935')
+        ? BigInt(Math.floor(Date.now() / 1000) + 315360000) // 10 years
         : BigInt(Math.floor(Date.now() / 1000) + dur);
 
       const offer = [{
@@ -595,8 +747,12 @@ export default function ChatPanel({
         },
       });
 
-      // Step 5: Submit to Bazaar — this makes the listing appear on hazza marketplace AND netprotocol.app/bazaar
-      const txHash = await walletClient.writeContract({
+      // Step 5: Submit to Bazaar — must be called by seller (Bazaar validates msg.sender == consideration[0].recipient)
+      // Small delay to let wallet modal reset after signTypedData
+      await new Promise(r => setTimeout(r, 500));
+      addMsg('order signed — now confirm the listing transaction...', 'system');
+
+      const txHash = await writeContractAsync({
         address: BAZAAR_ADDRESS as Address,
         abi: BAZAAR_SUBMIT_ABI,
         functionName: 'submit',
@@ -612,13 +768,14 @@ export default function ChatPanel({
           counter, signature,
         }],
       });
+
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
       if (receipt.status === 'success') {
-        // Register bounty metadata on escrow contract (no ETH — bounty comes from Seaport consideration split)
+        // Register bounty metadata on escrow contract (requires wallet — owner must sign)
         if (bountyWei > 0n && BOUNTY_ESCROW_ADDRESS) {
           try {
-            const bountyHash = await walletClient.writeContract({
+            const bountyHash = await writeContractAsync({
               address: BOUNTY_ESCROW_ADDRESS as Address,
               abi: BOUNTY_ESCROW_ABI,
               functionName: 'registerBounty',
@@ -638,17 +795,20 @@ export default function ChatPanel({
       }
     } catch (err: any) {
       console.error('List error:', err);
-      setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
+      const msg = err.shortMessage || err.message || 'transaction failed';
+      // Surface actual revert reason instead of misleading "User rejected"
+      const reason = msg.includes('User rejected') ? 'wallet rejected the transaction — try disconnecting and reconnecting your wallet, then retry' : msg;
+      setCardStatus(cardId, 'error', { error: reason });
     }
-  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+  }, [walletClient, address, publicClient, writeContractAsync, setCardStatus, addMsg]);
 
   const handleTransfer = useCallback(async (card: Extract<ActionCard, { type: 'transfer_card' }>, cardId: string) => {
-    if (!walletClient || !address || !publicClient) return;
+    if (!address || !publicClient) return;
     setCardStatus(cardId, 'pending');
 
     try {
       setCardStatus(cardId, 'confirming');
-      const txHash = await walletClient.writeContract({
+      const txHash = await writeContractAsync({
         address: card.registryAddress as Address,
         abi: REGISTRY_ABI,
         functionName: 'safeTransferFrom',
@@ -666,15 +826,15 @@ export default function ChatPanel({
       console.error('Transfer error:', err);
       setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
     }
-  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+  }, [address, publicClient, writeContractAsync, setCardStatus, addMsg]);
 
   const handleSetRecord = useCallback(async (card: Extract<ActionCard, { type: 'set_record_card' }>, cardId: string) => {
-    if (!walletClient || !address || !publicClient) return;
+    if (!address || !publicClient) return;
     setCardStatus(cardId, 'pending');
 
     try {
       setCardStatus(cardId, 'confirming');
-      const txHash = await walletClient.writeContract({
+      const txHash = await writeContractAsync({
         address: card.registryAddress as Address,
         abi: REGISTRY_ABI,
         functionName: 'setText',
@@ -692,10 +852,10 @@ export default function ChatPanel({
       console.error('Set record error:', err);
       setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
     }
-  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+  }, [address, publicClient, writeContractAsync, setCardStatus, addMsg]);
 
   const handleCancel = useCallback(async (card: Extract<ActionCard, { type: 'cancel_card' }>, cardId: string) => {
-    if (!walletClient || !address || !publicClient) return;
+    if (!address || !publicClient) return;
     setCardStatus(cardId, 'pending');
 
     try {
@@ -713,7 +873,7 @@ export default function ChatPanel({
 
       // Send the cancel tx via the user's wallet
       setCardStatus(cardId, 'confirming');
-      const txHash = await walletClient.sendTransaction({
+      const txHash = await sendTransactionAsync({
         to: data.cancel.to as Address,
         data: data.cancel.data as `0x${string}`,
         value: 0n,
@@ -730,7 +890,7 @@ export default function ChatPanel({
       console.error('Cancel error:', err);
       setCardStatus(cardId, 'error', { error: err.shortMessage || err.message || 'transaction failed' });
     }
-  }, [walletClient, address, publicClient, setCardStatus, addMsg]);
+  }, [address, publicClient, sendTransactionAsync, setCardStatus, addMsg]);
 
   const handleCardAction = useCallback((card: ActionCard, cardId: string) => {
     switch (card.type) {
@@ -745,7 +905,6 @@ export default function ChatPanel({
 
   function handleRetry() {
     setXmtpStatus('idle');
-    xmtpAttemptedRef.current = false;
   }
 
   function handleSend() {
