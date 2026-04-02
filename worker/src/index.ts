@@ -2534,6 +2534,387 @@ app.post("/x402/register", async (c) => {
 });
 
 // =========================================================================
+//                    x402 TEXT RECORD UPDATE
+// =========================================================================
+
+const TEXT_RECORD_PRICE_USDC = 20000n; // $0.02 USDC (6 decimals)
+
+app.post("/x402/text/:name", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+
+  const body = await c.req.json().catch(() => null);
+  if (!body || !body.key || typeof body.key !== "string") {
+    return c.json({ error: "Missing 'key' in request body" }, 400);
+  }
+  if (typeof body.value !== "string") {
+    return c.json({ error: "Missing 'value' in request body" }, 400);
+  }
+
+  const { key, value } = body;
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+  const relayerAddr = c.env.RELAYER_ADDRESS as Address;
+
+  // Verify name exists and get owner
+  let nameOwner: string;
+  try {
+    const [ownerAddr] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+    });
+    nameOwner = (ownerAddr as string).toLowerCase();
+    if (!nameOwner || nameOwner === "0x0000000000000000000000000000000000000000") {
+      return c.json({ error: "Name not registered" }, 404);
+    }
+  } catch {
+    return c.json({ error: "Name not registered" }, 404);
+  }
+
+  const paymentHeader = c.req.header("X-PAYMENT");
+
+  // --- No payment → return 402 ---
+  if (!paymentHeader) {
+    const requirements = {
+      x402Version: "1",
+      accepts: [{
+        scheme: "exact",
+        network: Number(c.env.CHAIN_ID) === 8453 ? "base" : "base-sepolia",
+        maxAmountRequired: TEXT_RECORD_PRICE_USDC.toString(),
+        asset: c.env.USDC_ADDRESS,
+        payTo: relayerAddr,
+        resource: `/x402/text/${name}`,
+      }],
+      name,
+      key,
+      price: "0.02",
+      currency: "USDC",
+    };
+
+    return new Response(JSON.stringify({
+      error: "Payment required",
+      ...requirements,
+    }), {
+      status: 402,
+      headers: {
+        "Content-Type": "application/json",
+        "PAYMENT-REQUIRED": btoa(JSON.stringify(requirements)),
+      },
+    });
+  }
+
+  // --- Payment provided → validate and execute ---
+  let payment: any;
+  try {
+    payment = JSON.parse(atob(paymentHeader));
+  } catch {
+    return c.json({ error: "Invalid X-PAYMENT header (expected base64 JSON)" }, 400);
+  }
+
+  if (payment.scheme !== "exact") {
+    return c.json({ error: `Unsupported payment scheme: ${payment.scheme}. Use "exact".` }, 400);
+  }
+
+  const txHash = payment.txHash as `0x${string}`;
+  if (!txHash || !txHash.startsWith("0x") || txHash.length !== 66) {
+    return c.json({ error: "Invalid txHash in payment" }, 400);
+  }
+
+  // Verify payer owns the name
+  const payerAddr = (payment.from || "").toLowerCase();
+  if (!payerAddr || payerAddr !== nameOwner) {
+    return c.json({ error: "Payment sender does not own this name" }, 403);
+  }
+
+  // Replay protection
+  if (await isPaymentUsed(c.env, txHash)) {
+    return c.json({ error: "Payment already used" }, 400);
+  }
+  await markPaymentUsed(c.env, txHash);
+
+  // Verify tx on-chain
+  let receipt;
+  try {
+    receipt = await client.getTransactionReceipt({ hash: txHash });
+  } catch {
+    await unmarkPayment(c.env, txHash);
+    return c.json({ error: "Transaction not found or not confirmed. Please try again." }, 400);
+  }
+
+  if (receipt.status !== "success") {
+    await unmarkPayment(c.env, txHash);
+    return c.json({ error: "Transaction failed" }, 400);
+  }
+
+  // Verify USDC transfer to relayer with sufficient amount
+  const usdcAddr = c.env.USDC_ADDRESS.toLowerCase();
+  const transferTopic = keccak256(toBytes("Transfer(address,address,uint256)"));
+  let verified = false;
+
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== usdcAddr) continue;
+    if (log.topics[0] !== transferTopic) continue;
+    const fromAddr = ("0x" + (log.topics[1] || "").slice(26)).toLowerCase();
+    const toAddr = ("0x" + (log.topics[2] || "").slice(26)).toLowerCase();
+    if (toAddr !== relayerAddr.toLowerCase()) continue;
+    if (fromAddr !== payerAddr) continue;
+    const transferAmount = BigInt(log.data);
+    if (transferAmount >= TEXT_RECORD_PRICE_USDC) {
+      verified = true;
+      break;
+    }
+  }
+
+  if (!verified) {
+    await unmarkPayment(c.env, txHash);
+    return c.json({ error: "Payment verification failed: no matching USDC transfer to relayer" }, 400);
+  }
+
+  // --- Payment verified — set text record via relayer using setTextsDirect ---
+  try {
+    const chainId = Number(c.env.CHAIN_ID);
+    const chain = chainId === 8453 ? base : baseSepolia;
+    const account = privateKeyToAccount(c.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+
+    const txData = encodeFunctionData({
+      abi: REGISTRY_ABI,
+      functionName: "setTextsDirect",
+      args: [name, [key], [value]],
+    });
+
+    let setTxHash: `0x${string}`;
+    const rpcs = [c.env.BASE_MAINNET_RPC, c.env.PAYMASTER_BUNDLER_RPC, c.env.RPC_URL].filter(Boolean);
+    for (const rpc of rpcs) {
+      try {
+        const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+        setTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+        break;
+      } catch (err: any) {
+        console.warn(`RPC failed (${rpc?.slice(0, 30)}...):`, err?.message);
+        if (rpc === rpcs[rpcs.length - 1]) throw err;
+      }
+    }
+
+    const setReceipt = await client.waitForTransactionReceipt({ hash: setTxHash!, timeout: 20_000 });
+    if (setReceipt.status !== "success") {
+      await unmarkPayment(c.env, payment.txHash);
+      return c.json({ error: "setText transaction reverted on-chain. Payment released — you can retry.", tx: setTxHash! }, 500);
+    }
+
+    // Forward USDC to treasury (fire-and-forget)
+    const treasuryAddr = c.env.HAZZA_TREASURY as Address;
+    if (treasuryAddr) {
+      (async () => {
+        try {
+          const transferData = encodeFunctionData({
+            abi: [{ name: "transfer", type: "function", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] }] as const,
+            functionName: "transfer",
+            args: [treasuryAddr, TEXT_RECORD_PRICE_USDC],
+          });
+          const walletClient = createWalletClient({ account, chain, transport: http(c.env.BASE_MAINNET_RPC || c.env.RPC_URL) });
+          await walletClient.sendTransaction({ to: c.env.USDC_ADDRESS as Address, data: transferData });
+        } catch (e) { console.warn("Treasury forward failed:", e); }
+      })();
+    }
+
+    return c.json({
+      name, key, value,
+      tx: setTxHash!,
+      profileUrl: `https://${name}.hazza.name`,
+    });
+  } catch (e: any) {
+    console.error("setText via x402 failed:", e?.shortMessage || e?.message || e);
+    await unmarkPayment(c.env, payment.txHash);
+    return c.json({ error: "Text record update failed. Payment released — you can retry." }, 500);
+  }
+});
+
+// x402 batch text records — $0.02 for up to 10 records in one tx
+app.post("/x402/text/:name/batch", async (c) => {
+  const name = c.req.param("name").toLowerCase();
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+
+  const body = await c.req.json().catch(() => null);
+  if (!body || !body.records || !Array.isArray(body.records) || body.records.length === 0) {
+    return c.json({ error: "Missing 'records' array in request body (each: {key, value})" }, 400);
+  }
+  for (const r of body.records) {
+    if (!r.key || typeof r.key !== "string" || typeof r.value !== "string") {
+      return c.json({ error: "Each record must have 'key' (string) and 'value' (string)" }, 400);
+    }
+  }
+
+  const keys = body.records.map((r: any) => r.key);
+  const values = body.records.map((r: any) => r.value);
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+  const relayerAddr = c.env.RELAYER_ADDRESS as Address;
+
+  // Verify name exists and get owner
+  let nameOwner: string;
+  try {
+    const [ownerAddr] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+    });
+    nameOwner = (ownerAddr as string).toLowerCase();
+    if (!nameOwner || nameOwner === "0x0000000000000000000000000000000000000000") {
+      return c.json({ error: "Name not registered" }, 404);
+    }
+  } catch {
+    return c.json({ error: "Name not registered" }, 404);
+  }
+
+  const paymentHeader = c.req.header("X-PAYMENT");
+
+  if (!paymentHeader) {
+    const requirements = {
+      x402Version: "1",
+      accepts: [{
+        scheme: "exact",
+        network: Number(c.env.CHAIN_ID) === 8453 ? "base" : "base-sepolia",
+        maxAmountRequired: TEXT_RECORD_PRICE_USDC.toString(),
+        asset: c.env.USDC_ADDRESS,
+        payTo: relayerAddr,
+        resource: `/x402/text/${name}/batch`,
+      }],
+      name,
+      recordCount: body.records.length,
+      price: "0.02",
+      currency: "USDC",
+    };
+
+    return new Response(JSON.stringify({
+      error: "Payment required",
+      ...requirements,
+    }), {
+      status: 402,
+      headers: {
+        "Content-Type": "application/json",
+        "PAYMENT-REQUIRED": btoa(JSON.stringify(requirements)),
+      },
+    });
+  }
+
+  let payment: any;
+  try {
+    payment = JSON.parse(atob(paymentHeader));
+  } catch {
+    return c.json({ error: "Invalid X-PAYMENT header (expected base64 JSON)" }, 400);
+  }
+
+  if (payment.scheme !== "exact") {
+    return c.json({ error: `Unsupported payment scheme: ${payment.scheme}. Use "exact".` }, 400);
+  }
+
+  const txHash = payment.txHash as `0x${string}`;
+  if (!txHash || !txHash.startsWith("0x") || txHash.length !== 66) {
+    return c.json({ error: "Invalid txHash in payment" }, 400);
+  }
+
+  const payerAddr = (payment.from || "").toLowerCase();
+  if (!payerAddr || payerAddr !== nameOwner) {
+    return c.json({ error: "Payment sender does not own this name" }, 403);
+  }
+
+  if (await isPaymentUsed(c.env, txHash)) {
+    return c.json({ error: "Payment already used" }, 400);
+  }
+  await markPaymentUsed(c.env, txHash);
+
+  let receipt;
+  try {
+    receipt = await client.getTransactionReceipt({ hash: txHash });
+  } catch {
+    await unmarkPayment(c.env, txHash);
+    return c.json({ error: "Transaction not found or not confirmed. Please try again." }, 400);
+  }
+
+  if (receipt.status !== "success") {
+    await unmarkPayment(c.env, txHash);
+    return c.json({ error: "Transaction failed" }, 400);
+  }
+
+  const usdcAddr = c.env.USDC_ADDRESS.toLowerCase();
+  const transferTopic = keccak256(toBytes("Transfer(address,address,uint256)"));
+  let verified = false;
+
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== usdcAddr) continue;
+    if (log.topics[0] !== transferTopic) continue;
+    const fromAddr = ("0x" + (log.topics[1] || "").slice(26)).toLowerCase();
+    const toAddr = ("0x" + (log.topics[2] || "").slice(26)).toLowerCase();
+    if (toAddr !== relayerAddr.toLowerCase()) continue;
+    if (fromAddr !== payerAddr) continue;
+    const transferAmount = BigInt(log.data);
+    if (transferAmount >= TEXT_RECORD_PRICE_USDC) {
+      verified = true;
+      break;
+    }
+  }
+
+  if (!verified) {
+    await unmarkPayment(c.env, txHash);
+    return c.json({ error: "Payment verification failed: no matching USDC transfer to relayer" }, 400);
+  }
+
+  try {
+    const chainId = Number(c.env.CHAIN_ID);
+    const chain = chainId === 8453 ? base : baseSepolia;
+    const account = privateKeyToAccount(c.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+
+    const txData = encodeFunctionData({
+      abi: REGISTRY_ABI,
+      functionName: "setTextsDirect",
+      args: [name, keys, values],
+    });
+
+    let setTxHash: `0x${string}`;
+    const rpcs = [c.env.BASE_MAINNET_RPC, c.env.PAYMASTER_BUNDLER_RPC, c.env.RPC_URL].filter(Boolean);
+    for (const rpc of rpcs) {
+      try {
+        const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+        setTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+        break;
+      } catch (err: any) {
+        console.warn(`RPC failed (${rpc?.slice(0, 30)}...):`, err?.message);
+        if (rpc === rpcs[rpcs.length - 1]) throw err;
+      }
+    }
+
+    const setReceipt = await client.waitForTransactionReceipt({ hash: setTxHash!, timeout: 20_000 });
+    if (setReceipt.status !== "success") {
+      await unmarkPayment(c.env, payment.txHash);
+      return c.json({ error: "setTexts transaction reverted on-chain. Payment released — you can retry.", tx: setTxHash! }, 500);
+    }
+
+    const treasuryAddr = c.env.HAZZA_TREASURY as Address;
+    if (treasuryAddr) {
+      (async () => {
+        try {
+          const transferData = encodeFunctionData({
+            abi: [{ name: "transfer", type: "function", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] }] as const,
+            functionName: "transfer",
+            args: [treasuryAddr, TEXT_RECORD_PRICE_USDC],
+          });
+          const walletClient = createWalletClient({ account, chain, transport: http(c.env.BASE_MAINNET_RPC || c.env.RPC_URL) });
+          await walletClient.sendTransaction({ to: c.env.USDC_ADDRESS as Address, data: transferData });
+        } catch (e) { console.warn("Treasury forward failed:", e); }
+      })();
+    }
+
+    return c.json({
+      name,
+      records: body.records,
+      tx: setTxHash!,
+      profileUrl: `https://${name}.hazza.name`,
+    });
+  } catch (e: any) {
+    console.error("setTexts via x402 failed:", e?.shortMessage || e?.message || e);
+    await unmarkPayment(c.env, payment.txHash);
+    return c.json({ error: "Batch text record update failed. Payment released — you can retry." }, 500);
+  }
+});
+
+// =========================================================================
 //                         REFUND API
 // =========================================================================
 

@@ -66,14 +66,15 @@ This isn't just for individual names. If you own a collection of hazza names —
 
 ---
 
-## 5. x402 — Agents and CLIs Can Register Names Without a Wallet Extension
+## 5. x402 — Agents and CLIs Can Do Everything Without a Wallet Extension
 
 This is the glue that makes everything else work for non-human users.
 
-The registry implements the **x402 payment protocol** — an HTTP-native payment standard where the server returns a `402 Payment Required` response with payment instructions, the client pays, and then retries the request with proof of payment. The 402 status code has been reserved in the HTTP spec since the beginning — x402 finally puts it to work.
+hazza implements the **x402 payment protocol** — an HTTP-native payment standard where the server returns a `402 Payment Required` response with payment instructions, the client pays, and then retries the request with proof of payment. The 402 status code has been reserved in the HTTP spec since the beginning — x402 finally puts it to work.
 
-Here's what this means in practice: an AI agent, a CLI script, or any HTTP client can register a hazza name with a single POST request. No MetaMask. No wallet extension. No browser. Just HTTP.
+Here's what this means in practice: an AI agent, a CLI script, or any HTTP client can register a hazza name and manage text records with simple POST requests. No MetaMask. No wallet extension. No browser. Just HTTP.
 
+**Register a name:**
 ```
 POST /x402/register
 {"name": "myagent", "owner": "0x..."}
@@ -87,11 +88,29 @@ X-PAYMENT: <base64 payment proof>
 → 200: {"name": "myagent", "tokenId": "42", "profileUrl": "https://myagent.hazza.name"}
 ```
 
-The same API powers the CLI (`hazza register <name>`) and the web UI. There's one registration path, not three. The difference is just how the payment gets signed — the browser uses wagmi, the CLI uses Foundry's `cast`, and agents use a private key directly. Agents with a **Bankr wallet** don't even need to manage keys — Bankr's Sign-In With Agent (SIWA) protocol lets agents transact on behalf of users through delegated wallet access, making the entire flow seamless.
+**Set text records ($0.02 USDC per update):**
+```
+POST /x402/text/myagent
+{"key": "avatar", "value": "https://example.com/pfp.png"}
+
+→ 402: Pay 20000 USDC to 0xa6eB...
+
+POST /x402/text/myagent
+X-PAYMENT: <base64 payment proof>
+{"key": "avatar", "value": "https://example.com/pfp.png"}
+
+→ 200: {"name": "myagent", "key": "avatar", "tx": "0x..."}
+```
+
+Batch updates work the same way — `POST /x402/text/myagent/batch` with `{"records": [{key, value}, ...]}` sets any number of records in one transaction for a single $0.02 payment.
+
+The same APIs power the CLI (`hazza register <name>`) and the web UI. There's one path, not three. The difference is just how the payment gets signed — the browser uses wagmi, the CLI uses Foundry's `cast`, and agents use a private key directly. Agents with a **Bankr wallet** don't even need to manage keys — Bankr's Sign-In With Agent (SIWA) protocol lets agents transact on behalf of users through delegated wallet access, making the entire flow seamless.
 
 If the name is free (first registration per wallet, or Unlimited Pass holder's bonus free name), the 402 step is skipped entirely — the name is minted immediately.
 
-**Why it's different:** hazza's x402 flow treats programmatic registration as a first-class use case. When an agent needs a name, it just makes an HTTP request. No browser automation, no wallet extension wrappers, no complex signing workarounds. That's it.
+There's also an **API key path** for agents who prefer to sign their own transactions — generate a key on-chain, use it to get unsigned transaction data, sign and submit yourself. No $0.02 fee, but you manage your own gas. Two paths, same capabilities.
+
+**Why it's different:** hazza's x402 flow treats programmatic access as a first-class use case. When an agent needs a name or wants to update a profile, it just makes an HTTP request. No browser automation, no wallet extension wrappers, no complex signing workarounds. That's it.
 
 ---
 

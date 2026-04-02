@@ -76,6 +76,8 @@ All endpoints at `hazza.name`.
 | `/api/free-claim/:address` | GET | Check free claim eligibility (NL membership + Unlimited Pass + unclaimed) |
 | `/api/collection-metadata` | GET | Collection-level metadata (contractURI) |
 | `/x402/register` | POST | Register a name via x402 payment protocol |
+| `/x402/text/:name` | POST | Set text record via x402 ($0.02 USDC, no API key) |
+| `/x402/text/:name/batch` | POST | Batch set text records via x402 ($0.02 USDC, no API key) |
 | `/api/ens-names/:address` | GET | ENS name suggestions for wallet |
 | `/api/marketplace/listings` | GET | Active marketplace listings |
 | `/api/marketplace/offers` | GET | Collection offers |

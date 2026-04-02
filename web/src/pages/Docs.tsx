@@ -54,12 +54,24 @@ export default function Docs() {
           <div className="info-row"><span className="label">GET</span><span className="value">/api/names/:address</span></div>
           <div className="info-row"><span className="label">GET</span><span className="value">/api/stats</span></div>
         </div>
-        <div className="section-title" style={{ marginTop: '1.5rem' }}>x402 Registration</div>
+        <div className="section-title" style={{ marginTop: '1.5rem' }}>x402 Endpoints</div>
         <div className="info-grid">
           <div className="info-row">
             <span className="label">POST</span>
             <span className="value">
               <a href="#x402">/x402/register</a> &mdash; register a name via HTTP payment
+            </span>
+          </div>
+          <div className="info-row">
+            <span className="label">POST</span>
+            <span className="value">
+              <a href="#x402-text">/x402/text/:name</a> &mdash; set a text record ($0.02 USDC)
+            </span>
+          </div>
+          <div className="info-row">
+            <span className="label">POST</span>
+            <span className="value">
+              <a href="#x402-text">/x402/text/:name/batch</a> &mdash; set multiple text records ($0.02 USDC)
             </span>
           </div>
         </div>
@@ -347,6 +359,66 @@ X-PAYMENT-RESPONSE: 0x...registrationTxHash
         <p style={{ color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.75rem' }}>
           The X-PAYMENT header is base64-encoded JSON. The server verifies the USDC transfer onchain
           before registering. Each tx hash can only be used once (replay protection).
+        </p>
+      </div>
+
+      <hr className="divider" />
+
+      <div id="x402-text" className="section">
+        <div className="section-title">x402 &mdash; Update text records via HTTP payment</div>
+        <p style={{ color: '#8a7d5a', lineHeight: 1.7, marginBottom: '1rem' }}>
+          Set text records on any name you own &mdash; no API key, no wallet extension. Pay <strong style={{ color: '#131325' }}>$0.02 USDC</strong> per
+          request and the relayer executes the transaction for you. Same x402 flow as registration.
+        </p>
+
+        <div className="section-title">Single record</div>
+        <div style={{ background: '#fff', border: '2px solid #E8DCAB', borderRadius: '8px', padding: '1rem', marginBottom: '0.75rem' }}>
+          <code style={{ color: '#CF3748', fontSize: '0.85rem' }}>POST /x402/text/:name</code>
+          <pre style={{ color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.5rem', whiteSpace: 'pre-wrap' }}>
+{`curl -X POST https://hazza.name/x402/text/alice \\
+  -H "Content-Type: application/json" \\
+  -d '{"key": "avatar", "value": "https://example.com/pfp.png"}'
+
+← 402 Payment Required
+{
+  "x402Version": "1",
+  "accepts": [{ "maxAmountRequired": "20000", "asset": "USDC", "payTo": "0x..." }],
+  "price": "0.02", "currency": "USDC"
+}
+
+# Pay $0.02 USDC, then retry with payment proof:
+PAYMENT=$(echo -n '{"scheme":"exact","txHash":"0x...","from":"0x..."}' | base64)
+
+curl -X POST https://hazza.name/x402/text/alice \\
+  -H "Content-Type: application/json" \\
+  -H "X-PAYMENT: $PAYMENT" \\
+  -d '{"key": "avatar", "value": "https://example.com/pfp.png"}'
+
+← 200 OK
+{ "name": "alice", "key": "avatar", "value": "https://...", "tx": "0x..." }`}
+          </pre>
+        </div>
+
+        <div className="section-title">Batch records</div>
+        <div style={{ background: '#fff', border: '2px solid #E8DCAB', borderRadius: '8px', padding: '1rem', marginBottom: '0.75rem' }}>
+          <code style={{ color: '#CF3748', fontSize: '0.85rem' }}>POST /x402/text/:name/batch</code>
+          <pre style={{ color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.5rem', whiteSpace: 'pre-wrap' }}>
+{`curl -X POST https://hazza.name/x402/text/alice/batch \\
+  -H "Content-Type: application/json" \\
+  -H "X-PAYMENT: $PAYMENT" \\
+  -d '{"records": [
+    {"key": "avatar", "value": "https://example.com/pfp.png"},
+    {"key": "description", "value": "Builder on Base"},
+    {"key": "com.twitter", "value": "alice"}
+  ]}'
+
+← 200 OK
+{ "name": "alice", "records": [...], "tx": "0x..." }`}
+          </pre>
+        </div>
+        <p style={{ color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+          Batch updates any number of records in a single transaction for one $0.02 payment.
+          The <code>from</code> address in the payment must be the name owner.
         </p>
       </div>
 

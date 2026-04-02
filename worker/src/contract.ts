@@ -218,6 +218,17 @@ export const REGISTRY_ABI = [
     outputs: [],
   },
   {
+    name: "setTextsDirect",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "keys", type: "string[]" },
+      { name: "values", type: "string[]" },
+    ],
+    outputs: [],
+  },
+  {
     name: "setAddr",
     type: "function",
     stateMutability: "nonpayable",
