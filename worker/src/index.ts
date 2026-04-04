@@ -4282,6 +4282,230 @@ app.post("/api/marketplace/fulfill-offer", async (c) => {
   }
 });
 
+// POST /api/marketplace/list-helper — build Seaport order for agent listing
+// Returns EIP-712 typed data to sign + Bazaar submit calldata to execute
+app.post("/api/marketplace/list-helper", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.name || !body?.price || !body?.seller) {
+    return c.json({ error: "Missing required fields: name, price (ETH string), seller (address)" }, 400);
+  }
+
+  const name = String(body.name).toLowerCase();
+  const seller = body.seller as Address;
+  const duration = body.duration ? parseInt(body.duration) : 0;
+  const bountyEth = body.bountyAmount ? String(body.bountyAmount) : null;
+
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isAddress(seller)) return c.json({ error: "Invalid seller address" }, 400);
+
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+  const seaportAddr = c.env.SEAPORT_ADDRESS as Address;
+  const bazaarAddr = c.env.BAZAAR_ADDRESS as Address;
+  const treasuryAddr = c.env.HAZZA_TREASURY as Address;
+  const feeBps = parseInt(c.env.MARKETPLACE_FEE_BPS || "0");
+
+  try {
+    // Resolve name → tokenId + verify ownership
+    const [nameOwner, tokenId] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+    });
+    if (!nameOwner || (nameOwner as string).toLowerCase() === "0x0000000000000000000000000000000000000000") {
+      return c.json({ error: "Name not registered" }, 404);
+    }
+    if ((nameOwner as string).toLowerCase() !== seller.toLowerCase()) {
+      return c.json({ error: "Seller does not own this name" }, 403);
+    }
+
+    // Check if Seaport is approved
+    const ERC721_APPROVAL_ABI = [{ name: "isApprovedForAll", type: "function", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "operator", type: "address" }], outputs: [{ type: "bool" }] }] as const;
+    const isApproved = await client.readContract({
+      address: addr, abi: ERC721_APPROVAL_ABI, functionName: "isApprovedForAll", args: [seller, seaportAddr],
+    });
+
+    // Get Seaport counter
+    const SEAPORT_COUNTER_ABI = [{ name: "getCounter", type: "function", stateMutability: "view", inputs: [{ name: "offerer", type: "address" }], outputs: [{ type: "uint256" }] }] as const;
+    const counter = await client.readContract({
+      address: seaportAddr, abi: SEAPORT_COUNTER_ABI, functionName: "getCounter", args: [seller],
+    });
+
+    // Parse price
+    const priceParts = String(body.price).split(".");
+    const whole = BigInt(priceParts[0] || "0") * 1000000000000000000n;
+    const frac = priceParts[1] ? BigInt((priceParts[1] + "000000000000000000").slice(0, 18)) : 0n;
+    const priceWei = whole + frac;
+    if (priceWei <= 0n) return c.json({ error: "Price must be greater than 0" }, 400);
+
+    const feeAmount = feeBps > 0 ? (priceWei * BigInt(feeBps)) / 10000n : 0n;
+
+    let bountyWei = 0n;
+    if (bountyEth) {
+      const bParts = bountyEth.split(".");
+      const bWhole = BigInt(bParts[0] || "0") * 1000000000000000000n;
+      const bFrac = bParts[1] ? BigInt((bParts[1] + "000000000000000000").slice(0, 18)) : 0n;
+      bountyWei = bWhole + bFrac;
+    }
+
+    if (bountyWei + feeAmount >= priceWei) {
+      return c.json({ error: "Bounty + fee cannot exceed listing price" }, 400);
+    }
+    const sellerAmount = priceWei - feeAmount - bountyWei;
+
+    const endTime = duration === 0
+      ? BigInt(Math.floor(Date.now() / 1000) + 315360000) // 10 years
+      : BigInt(Math.floor(Date.now() / 1000) + duration);
+
+    // Generate salt
+    const saltArray = new Uint8Array(32);
+    crypto.getRandomValues(saltArray);
+    const salt = BigInt("0x" + Array.from(saltArray).map(b => b.toString(16).padStart(2, "0")).join(""));
+
+    const zeroAddr = "0x0000000000000000000000000000000000000000" as Address;
+    const zeroBytes32 = "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+    const zonePublic = "0x000000007F8c58fbf215bF91Bda7421A806cf3ae" as Address;
+
+    // Build offer (the NFT)
+    const offer = [{
+      itemType: 2, token: addr,
+      identifierOrCriteria: (tokenId as bigint).toString(),
+      startAmount: "1", endAmount: "1",
+    }];
+
+    // Build consideration (ETH splits)
+    const consideration: any[] = [{
+      itemType: 0, token: zeroAddr,
+      identifierOrCriteria: "0",
+      startAmount: sellerAmount.toString(), endAmount: sellerAmount.toString(),
+      recipient: seller,
+    }];
+    if (feeAmount > 0n) {
+      consideration.push({
+        itemType: 0, token: zeroAddr,
+        identifierOrCriteria: "0",
+        startAmount: feeAmount.toString(), endAmount: feeAmount.toString(),
+        recipient: treasuryAddr,
+      });
+    }
+    if (bountyWei > 0n) {
+      consideration.push({
+        itemType: 0, token: zeroAddr,
+        identifierOrCriteria: "0",
+        startAmount: bountyWei.toString(), endAmount: bountyWei.toString(),
+        recipient: BOUNTY_ESCROW_ADDRESS,
+      });
+    }
+
+    // EIP-712 typed data for signing
+    const typedData = {
+      types: {
+        OrderComponents: [
+          { name: "offerer", type: "address" },
+          { name: "zone", type: "address" },
+          { name: "offer", type: "OfferItem[]" },
+          { name: "consideration", type: "ConsiderationItem[]" },
+          { name: "orderType", type: "uint8" },
+          { name: "startTime", type: "uint256" },
+          { name: "endTime", type: "uint256" },
+          { name: "zoneHash", type: "bytes32" },
+          { name: "salt", type: "uint256" },
+          { name: "conduitKey", type: "bytes32" },
+          { name: "counter", type: "uint256" },
+        ],
+        OfferItem: [
+          { name: "itemType", type: "uint8" },
+          { name: "token", type: "address" },
+          { name: "identifierOrCriteria", type: "uint256" },
+          { name: "startAmount", type: "uint256" },
+          { name: "endAmount", type: "uint256" },
+        ],
+        ConsiderationItem: [
+          { name: "itemType", type: "uint8" },
+          { name: "token", type: "address" },
+          { name: "identifierOrCriteria", type: "uint256" },
+          { name: "startAmount", type: "uint256" },
+          { name: "endAmount", type: "uint256" },
+          { name: "recipient", type: "address" },
+        ],
+      },
+      primaryType: "OrderComponents" as const,
+      domain: {
+        name: "Seaport",
+        version: "1.6",
+        chainId: Number(c.env.CHAIN_ID),
+        verifyingContract: seaportAddr,
+      },
+      message: {
+        offerer: seller,
+        zone: zonePublic,
+        offer,
+        consideration,
+        orderType: 2,
+        startTime: "0",
+        endTime: endTime.toString(),
+        zoneHash: zeroBytes32,
+        salt: salt.toString(),
+        conduitKey: zeroBytes32,
+        counter: (counter as bigint).toString(),
+      },
+    };
+
+    // Bazaar submit calldata — agent signs the EIP-712, then calls Bazaar.submit() with order + signature
+    // We return the order parameters so the agent can construct the submit call after signing
+    const orderParameters = {
+      offerer: seller,
+      zone: zonePublic,
+      offer: offer.map(o => ({ ...o, itemType: Number(o.itemType) })),
+      consideration: consideration.map((c2: any) => ({ ...c2, itemType: Number(c2.itemType) })),
+      orderType: 2,
+      startTime: "0",
+      endTime: endTime.toString(),
+      zoneHash: zeroBytes32,
+      salt: salt.toString(),
+      conduitKey: zeroBytes32,
+      totalOriginalConsiderationItems: consideration.length,
+    };
+
+    return c.json({
+      name,
+      tokenId: (tokenId as bigint).toString(),
+      seller,
+      price: body.price,
+      priceWei: priceWei.toString(),
+      currency: "ETH",
+      duration,
+      endTime: endTime.toString(),
+      bountyAmount: bountyEth || null,
+      bountyWei: bountyWei > 0n ? bountyWei.toString() : null,
+      seaportApproved: !!isApproved,
+      // If not approved, agent must call setApprovalForAll(seaport, true) on the registry first
+      approvalNeeded: !isApproved ? {
+        to: addr,
+        functionName: "setApprovalForAll",
+        args: [seaportAddr, true],
+      } : null,
+      // EIP-712 typed data — agent signs this with their wallet
+      typedData,
+      // After signing, agent calls Bazaar.submit() with these parameters + signature
+      bazaarSubmit: {
+        to: bazaarAddr,
+        functionName: "submit",
+        orderParameters,
+        counter: (counter as bigint).toString(),
+        // Agent fills in signature after signing typedData
+      },
+      // Bounty registration — if bounty was set, agent calls registerBounty after listing
+      bountyRegistration: bountyWei > 0n ? {
+        to: BOUNTY_ESCROW_ADDRESS,
+        functionName: "registerBounty",
+        args: [(tokenId as bigint).toString(), bountyWei.toString()],
+      } : null,
+    });
+  } catch (e: any) {
+    console.error("List helper failed:", e?.shortMessage || e?.message || e);
+    return c.json({ error: "Failed to build listing data" }, 500);
+  }
+});
+
 // POST /api/marketplace/cancel — prepare cancel transaction for a listing
 // Used by Bankr (SIWA delegate) and CLI. Returns unsigned Seaport cancel tx.
 app.post("/api/marketplace/cancel", async (c) => {

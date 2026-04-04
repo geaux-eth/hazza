@@ -79,6 +79,7 @@ All endpoints at `hazza.name`.
 | `/x402/text/:name` | POST | Set text record via x402 ($0.02 USDC, no API key) |
 | `/x402/text/:name/batch` | POST | Batch set text records via x402 ($0.02 USDC, no API key) |
 | `/api/ens-names/:address` | GET | ENS name suggestions for wallet |
+| `/api/marketplace/list-helper` | POST | Build Seaport listing data for agent signing (`{name, price, seller}`) |
 | `/api/marketplace/listings` | GET | Active marketplace listings |
 | `/api/marketplace/offers` | GET | Collection offers |
 | `/api/marketplace/offers/:name` | GET | Offers on a specific name |

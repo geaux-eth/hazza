@@ -431,6 +431,28 @@ curl -X POST https://hazza.name/x402/text/alice \\
           The API handles all Seaport complexity &mdash; you get ready-to-execute transaction data.
         </p>
 
+        <div className="section-title">List a name (agent-friendly)</div>
+        <div style={{ background: '#fff', border: '2px solid #E8DCAB', borderRadius: '8px', padding: '1rem', marginBottom: '0.75rem' }}>
+          <code style={{ color: '#CF3748', fontSize: '0.85rem' }}>POST /api/marketplace/list-helper</code>
+          <pre style={{ color: '#8a7d5a', fontSize: '0.8rem', marginTop: '0.5rem', whiteSpace: 'pre-wrap' }}>
+{`curl -X POST https://hazza.name/api/marketplace/list-helper \\
+  -H "Content-Type: application/json" \\
+  -d '{"name": "alice", "price": "0.1", "seller": "0xYOUR_WALLET"}'
+
+← 200 OK
+{
+  "typedData": { ... },        // EIP-712 data — sign with your wallet
+  "bazaarSubmit": { ... },     // Bazaar.submit() params — call after signing
+  "approvalNeeded": { ... },   // setApprovalForAll tx (if needed, one-time)
+  "bountyRegistration": null   // registerBounty tx (if bounty set)
+}`}
+          </pre>
+        </div>
+        <p style={{ color: '#8a7d5a', fontSize: '0.8rem', marginBottom: '1rem' }}>
+          No Seaport knowledge needed. Call the helper, sign the typed data, submit to Bazaar. Optional: include
+          <code>bountyAmount</code> (ETH) to set an agent bounty, <code>duration</code> (seconds, 0 = 10 years).
+        </p>
+
         <div className="section-title">Browse listings</div>
         <pre style={{ background: '#f5f0e0', padding: '0.75rem', borderRadius: '6px', overflow: 'auto', fontSize: '0.8rem' }}>
 {`curl -s https://hazza.name/api/marketplace/listings`}

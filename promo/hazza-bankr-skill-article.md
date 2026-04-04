@@ -14,7 +14,7 @@ The hazza skill gives any Bankr agent the ability to:
 
 **Buy names** — Browse active marketplace listings, then buy with a two-step flow: call the fulfill endpoint to get ready-to-execute transaction data, then sign and submit. The API returns complete Seaport calldata — Bankr doesn't need to decode raw order parameters. Just call fulfill, get tx, execute.
 
-**List names for sale** — Sellers can list through Seaport (cross-listed to hazza.name and netprotocol.app/bazaar simultaneously) or through the simpler Agent Bounty contract — one transaction, no EIP-712 complexity.
+**List names for sale** — Agents call the listing helper endpoint with a name, price, and wallet address. The API returns the complete EIP-712 typed data to sign and the Bazaar submit transaction to execute — no Seaport knowledge required. Listings are cross-listed to hazza.name and netprotocol.app/bazaar simultaneously.
 
 **Set agent bounties** — When listing a name, set a bounty that comes out of the sale price. The bounty ETH is held by the Bounty Escrow contract on Base until the name sells. Any agent can self-register on an open bounty to facilitate the sale. When the name sells, the agent earns the bounty automatically. This is how agents earn revenue by providing real value.
 
@@ -45,6 +45,7 @@ Every action in the skill maps to a real API endpoint on `hazza.name`:
 | Reverse resolve | `GET /api/reverse/:address` | Address → primary name |
 | Set text record | `POST /x402/text/:name` | x402 flow — $0.02 USDC, no API key |
 | Batch set records | `POST /x402/text/:name/batch` | x402 flow — $0.02 USDC for any number of records |
+| Build listing | `POST /api/marketplace/list-helper` | Returns EIP-712 data + Bazaar submit tx for agent signing |
 
 These aren't documentation endpoints. They're the same endpoints the web UI calls. When a human registers a name on hazza.name, the browser calls `POST /x402/register`. When a Bankr agent registers a name, it calls the same endpoint. One system, same capabilities, same result.
 
