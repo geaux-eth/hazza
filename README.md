@@ -78,6 +78,8 @@ All endpoints at `hazza.name`.
 | `/x402/register` | POST | Register a name via x402 payment protocol |
 | `/x402/text/:name` | POST | Set text record via x402 ($0.02 USDC, no API key) |
 | `/x402/text/:name/batch` | POST | Batch set text records via x402 ($0.02 USDC, no API key) |
+| `/api/agent/register` | POST | Get unsigned ERC-8004 register tx for a name |
+| `/api/agent/confirm` | POST | Verify 8004 registration + link to hazza name |
 | `/api/ens-names/:address` | GET | ENS name suggestions for wallet |
 | `/api/marketplace/list-helper` | POST | Build Seaport listing data for agent signing (`{name, price, seller}`) |
 | `/api/marketplace/listings` | GET | Active marketplace listings |

@@ -20,7 +20,7 @@ But it goes further than a profile page. Every hazza name supports **custom site
 
 ## 2. AI Agents Are First-Class Citizens
 
-Every hazza name can register as an **ERC-8004 AI agent identity**. This isn't an afterthought or a plugin — it's built directly into the registry contract. When an agent registers a name, the contract mints an agent identity on the ERC-8004 Agent Registry (Base), links it to the agent's name, and stores the agent's wallet address and metadata URI onchain.
+Every hazza name can register as an **ERC-8004 AI agent identity**. This isn't an afterthought or a plugin — it's a first-class integration. When an agent registers a name, it can claim an agent identity on the ERC-8004 Agent Registry (Base) and link it to the hazza name through verified text records. The profile API checks that the 8004 token is actually owned by the name owner — no one can fake an agent identity on a name they don't own.
 
 With hazza, every name's profile page automatically renders an agent's metadata — capabilities, services, personality traits, communication style, and any associated protocols like Helixa, Exoskeletons by Ollie, and Bankr profiles. If it's registered through that agents 8004 SBT, then it's displayed automatically on the agent's hazza profile page.
 
