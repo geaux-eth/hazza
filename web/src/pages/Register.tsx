@@ -277,6 +277,7 @@ function CheckoutView({ name }: { name: string }) {
   const [retryCount, setRetryCount] = useState(0);
   const [refundStatus, setRefundStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [refundMsg, setRefundMsg] = useState('');
+  const [isAgent, setIsAgent] = useState(false);
 
   // Check for pending payment on mount
   useEffect(() => {
@@ -357,7 +358,7 @@ function CheckoutView({ name }: { name: string }) {
           const x402Res = await fetch(`${API_BASE}/x402/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, owner: address, years: 1, ...(hasPass ? { hasPass: true } : {}) }),
+            body: JSON.stringify({ name, owner: address, years: 1, ...(hasPass ? { hasPass: true } : {}), ...(isAgent ? { agentURI: `https://${name}.hazza.name`, agentWallet: address } : {}) }),
           });
           if (x402Res.status === 402) {
             const x402Data = await x402Res.json();
@@ -409,7 +410,7 @@ function CheckoutView({ name }: { name: string }) {
           'Content-Type': 'application/json',
           'X-PAYMENT': payment,
         },
-        body: JSON.stringify({ name, owner: address, years: 1, ...(hasPass ? { hasPass: true } : {}) }),
+        body: JSON.stringify({ name, owner: address, years: 1, ...(hasPass ? { hasPass: true } : {}), ...(isAgent ? { agentURI: `https://${name}.hazza.name`, agentWallet: address } : {}) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.detail || 'Registration failed');
@@ -502,7 +503,7 @@ function CheckoutView({ name }: { name: string }) {
         const res = await fetch(`${API_BASE}/x402/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, owner: address, years: 1, ...(hasPass ? { hasPass: true } : {}) }),
+          body: JSON.stringify({ name, owner: address, years: 1, ...(hasPass ? { hasPass: true } : {}), ...(isAgent ? { agentURI: `https://${name}.hazza.name`, agentWallet: address } : {}) }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || data.detail || 'Registration failed');
@@ -593,6 +594,21 @@ function CheckoutView({ name }: { name: string }) {
             go to dashboard &rarr;
           </Link>
         </div>
+        {isAgent && (
+          <div className="mt-4 p-3 bg-cream border-2 border-border rounded-xl text-left">
+            <p className="text-navy font-bold text-sm mb-1">agent identity setup</p>
+            <p className="text-muted text-xs mb-2">Agent text records have been set on your name. To complete ERC-8004 registration:</p>
+            <p className="text-muted text-xs">
+              Go to <Link to={`/manage?name=${name}`} className="text-red font-bold">Settings</Link> &rarr; AI Agent &rarr; Register Agent
+            </p>
+          </div>
+        )}
+        <div className="mt-4 p-3 bg-cream border-2 border-border rounded-xl text-left">
+          <p className="text-navy font-bold text-sm mb-1">message {name}</p>
+          <p className="text-muted text-xs">
+            Set your <code className="text-red">xmtp</code> text record in <Link to={`/manage?name=${name}`} className="text-red font-bold">Settings</Link> to enable DMs on your profile page.
+          </p>
+        </div>
         <div className="mt-5 pt-4 border-t border-border">
           <Link
             to="/register"
@@ -658,6 +674,20 @@ function CheckoutView({ name }: { name: string }) {
                 )}
               </span>
             </div>
+          </div>
+
+          <div className="bg-white border-2 border-border rounded-xl p-3 mb-4">
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input type="checkbox" checked={isAgent} onChange={e => setIsAgent(e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: '#CF3748' }} />
+              <span className="text-navy font-medium">Register as AI agent</span>
+              <span className="text-muted text-xs">(ERC-8004 identity)</span>
+            </label>
+            {isAgent && (
+              <p className="text-muted text-xs mt-1 ml-6">
+                Sets agent text records on your name. You can complete ERC-8004 registration in Settings after.
+              </p>
+            )}
           </div>
 
           <div className="text-center mb-6">

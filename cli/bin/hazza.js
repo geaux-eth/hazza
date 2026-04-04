@@ -33,6 +33,7 @@ program.addCommand(require('../commands/site'));
 program.addCommand(require('../commands/domain'));
 program.addCommand(require('../commands/export'));
 program.addCommand(require('../commands/contact'));
+program.addCommand(require('../commands/agent'));
 
 // hazza primary <name> — set primary name for reverse resolution
 program

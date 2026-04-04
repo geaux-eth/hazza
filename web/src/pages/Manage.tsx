@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignMessage } from 'wagmi';
+import { useAccount, usePublicClient, useWriteContract, useWaitForTransactionReceipt, useSignMessage } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { keccak256, toBytes, toHex } from 'viem';
 import { REGISTRY_ADDRESS, REGISTRY_ABI } from '../config/contracts';
@@ -47,6 +47,7 @@ export default function Manage() {
   const rawNameParam = searchParams.get('name') || '';
   const nameParam = rawNameParam.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64);
   const { address, isConnected } = useAccount();
+  const publicClient = usePublicClient();
   const navigate = useNavigate();
 
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
@@ -95,7 +96,7 @@ export default function Manage() {
   const [transferTo, setTransferTo] = useState('');
   const [transferStatus, setTransferStatus] = useState('');
 
-  const { writeContract, data: txHash, isPending: isWriting, reset: resetWrite, error: writeError } = useWriteContract();
+  const { writeContract, writeContractAsync, data: txHash, isPending: isWriting, reset: resetWrite, error: writeError } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
 
   const [pendingAction, setPendingAction] = useState<{
@@ -378,8 +379,8 @@ export default function Manage() {
     setSiteUploading(false);
   }, [nameParam, address, showMsg, writeContract]);
 
-  // Register agent
-  const handleRegisterAgent = useCallback(() => {
+  // Register agent — two-step: register on 8004 directly, then confirm via API
+  const handleRegisterAgent = useCallback(async () => {
     if (!agentUri.trim()) {
       showMsg('Enter an agent URI.', true);
       return;
@@ -388,19 +389,45 @@ export default function Manage() {
       showMsg('Invalid agent wallet address.', true);
       return;
     }
-    showMsg('Registering agent...', false);
-    setPendingAction({ type: 'registerAgent' });
-    writeContract({
-      address: REGISTRY_ADDRESS,
-      abi: REGISTRY_ABI,
-      functionName: 'registerAgent',
-      args: [
-        nameParam,
-        agentUri.trim(),
-        (agentWallet.trim() || '0x0000000000000000000000000000000000000000') as `0x${string}`,
-      ],
-    });
-  }, [nameParam, agentUri, agentWallet, writeContract, showMsg]);
+    try {
+      showMsg('Step 1/2: Registering on ERC-8004...', false);
+      const ERC8004_REGISTRY = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as `0x${string}`;
+      const txHash = await writeContractAsync({
+        address: ERC8004_REGISTRY,
+        abi: [{ name: 'register', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'agentURI', type: 'string' }], outputs: [{ type: 'uint256' }] }] as const,
+        functionName: 'register',
+        args: [agentUri.trim()],
+      });
+      showMsg('Waiting for confirmation...', false);
+      const receipt = await publicClient!.waitForTransactionReceipt({ hash: txHash });
+      // Extract agentId from Transfer event
+      let agentId: string | null = null;
+      for (const log of receipt.logs) {
+        if (log.address.toLowerCase() === ERC8004_REGISTRY.toLowerCase() && log.topics[3]) {
+          agentId = BigInt(log.topics[3]).toString();
+          break;
+        }
+      }
+      if (!agentId) {
+        showMsg('Agent registered but could not read agent ID. Check basescan.', true);
+        return;
+      }
+      showMsg(`Step 2/2: Linking Agent #${agentId} to ${nameParam}...`, false);
+      const confirmRes = await fetch(`${API_BASE}/api/agent/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nameParam, agentId, txHash, agentWallet: agentWallet.trim() || address }),
+      });
+      const confirmData = await confirmRes.json();
+      if (!confirmRes.ok) {
+        showMsg(`Agent #${agentId} registered but linking failed: ${confirmData.error}`, true);
+        return;
+      }
+      showMsg(`Agent #${agentId} registered and linked!`, false);
+    } catch (e: any) {
+      showMsg('Agent registration failed: ' + (e?.shortMessage || e?.message || 'unknown error'), true);
+    }
+  }, [nameParam, agentUri, agentWallet, address, writeContractAsync, publicClient, showMsg]);
 
   // Generate API Key (off-chain via worker)
   const { signMessageAsync } = useSignMessage();
@@ -870,21 +897,34 @@ export default function Manage() {
             {/* Agent */}
             <div className="section">
               <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>AI Agent (ERC-8004)</div>
-              <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Register a permanent agent identity</p>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
-                <label style={{ color: '#8a7d5a', fontSize: '0.8rem', minWidth: '65px' }}>URI</label>
-                <input type="text" placeholder="https://... agent metadata" value={agentUri} onChange={(e) => setAgentUri(e.target.value)} maxLength={2048}
-                  style={{ flex: 1, minWidth: '150px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                <label style={{ color: '#8a7d5a', fontSize: '0.8rem', minWidth: '65px' }}>Wallet</label>
-                <input type="text" placeholder="0x... (optional)" value={agentWallet} onChange={(e) => setAgentWallet(e.target.value)}
-                  style={{ flex: 1, minWidth: '150px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',monospace", outline: 'none' }} />
-              </div>
-              <button onClick={handleRegisterAgent} disabled={isWriting || isConfirming}
-                style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>
-                Register Agent
-              </button>
+              {profile?.texts?.['agent.8004id'] ? (
+                <>
+                  <div style={{ background: '#f0fdf4', border: '2px solid #86efac', borderRadius: '8px', padding: '0.5rem 0.75rem', marginBottom: '0.5rem' }}>
+                    <p style={{ color: '#166534', fontSize: '0.8rem', fontWeight: 700, margin: 0 }}>Agent #{profile.texts['agent.8004id']} registered</p>
+                    {profile.texts['agent.wallet'] && <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>Wallet: {profile.texts['agent.wallet']}</p>}
+                    {profile.texts['agent.status'] && <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>Status: {profile.texts['agent.status']}</p>}
+                  </div>
+                  <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Update agent metadata via text records (Settings &gt; Text Records)</p>
+                </>
+              ) : (
+                <>
+                  <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Register a permanent agent identity on Base</p>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
+                    <label style={{ color: '#8a7d5a', fontSize: '0.8rem', minWidth: '65px' }}>URI</label>
+                    <input type="text" placeholder={`https://${nameParam}.hazza.name`} value={agentUri} onChange={(e) => setAgentUri(e.target.value)} maxLength={2048}
+                      style={{ flex: 1, minWidth: '150px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                    <label style={{ color: '#8a7d5a', fontSize: '0.8rem', minWidth: '65px' }}>Wallet</label>
+                    <input type="text" placeholder="0x... (defaults to your wallet)" value={agentWallet} onChange={(e) => setAgentWallet(e.target.value)}
+                      style={{ flex: 1, minWidth: '150px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',monospace", outline: 'none' }} />
+                  </div>
+                  <button onClick={handleRegisterAgent} disabled={isWriting || isConfirming}
+                    style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>
+                    Register Agent
+                  </button>
+                </>
+              )}
             </div>
 
             {/* API Access */}

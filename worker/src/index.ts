@@ -494,7 +494,7 @@ app.get("/api/profile/:name", async (c) => {
     return c.json({ name, registered: false });
   }
 
-  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xmtp", "message.delegate", "message.mode", "site.key", "agent.uri", "net.profile", "helixa.id", "netlibrary.member", "netlibrary.pass", "com.linkedin", "xyz.farcaster"];
+  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xmtp", "message.delegate", "message.mode", "site.key", "agent.uri", "agent.8004id", "agent.wallet", "agent.endpoint", "agent.model", "agent.status", "net.profile", "helixa.id", "netlibrary.member", "netlibrary.pass", "com.linkedin", "xyz.farcaster"];
   const [textValues, chash] = await Promise.all([
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
@@ -563,6 +563,31 @@ app.get("/api/profile/:name", async (c) => {
 
   const [agentMetaResult, helixaResult, exoResult, ensResult, bankrResult] = await Promise.race([enrichmentWork, enrichmentTimeout]);
 
+  // Resolve agentId — prefer contract, fallback to text record
+  const contractAgentId = agentId ? agentId.toString() : "0";
+  const textAgentId = texts["agent.8004id"] || null;
+  const resolvedAgentId = contractAgentId !== "0" ? contractAgentId : textAgentId;
+  const resolvedAgentWallet = agentWallet && agentWallet !== "0x0000000000000000000000000000000000000000"
+    ? agentWallet : (texts["agent.wallet"] || null);
+
+  // Fetch 8004 metadata if we have an agentId (from either source)
+  let erc8004Data: any = null;
+  if (resolvedAgentId && resolvedAgentId !== "0") {
+    try {
+      const [tokenURI, agentOwner] = await Promise.all([
+        client.readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: ERC8004_ABI, functionName: "tokenURI", args: [BigInt(resolvedAgentId)] }),
+        client.readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: ERC8004_ABI, functionName: "ownerOf", args: [BigInt(resolvedAgentId)] }),
+      ]);
+      erc8004Data = {
+        agentId: resolvedAgentId,
+        tokenURI,
+        owner: agentOwner,
+        registry: ERC8004_REGISTRY_ADDRESS,
+        verified: (agentOwner as string).toLowerCase() === (nameOwner as string).toLowerCase(),
+      };
+    } catch { /* 8004 lookup failed — non-fatal */ }
+  }
+
   return c.json({
     name,
     registered: true,
@@ -571,13 +596,14 @@ app.get("/api/profile/:name", async (c) => {
     tokenId: tokenId.toString(),
     registeredAt: Number(registeredAt),
     operator,
-    agentId: agentId.toString(),
-    agentWallet,
+    agentId: resolvedAgentId || "0",
+    agentWallet: resolvedAgentWallet,
     status: "active",
     texts,
     contenthash: chash && chash !== "0x" ? (chash as string) : null,
     url: `https://${name}.hazza.name`,
     agentMeta: agentMetaResult.status === "fulfilled" ? agentMetaResult.value : null,
+    erc8004: erc8004Data,
     helixaData: helixaResult.status === "fulfilled" ? helixaResult.value : null,
     exoData: exoResult.status === "fulfilled" ? exoResult.value : null,
     bankrData: bankrResult.status === "fulfilled" ? bankrResult.value : null,
@@ -2098,6 +2124,186 @@ const USDC_TRANSFER_ABI = [
   },
 ] as const;
 
+// =========================================================================
+//              ERC-8004 AGENT REGISTRATION HELPER
+// =========================================================================
+
+// POST /api/agent/register — returns unsigned 8004 register tx + sets agent text records via relayer
+// Agent flow: call this → sign & submit the 8004 tx → text records are set automatically
+app.post("/api/agent/register", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.name || !body?.agentURI) {
+    return c.json({ error: "Missing required fields: name, agentURI. Optional: agentWallet" }, 400);
+  }
+
+  const name = String(body.name).toLowerCase();
+  const agentURI = String(body.agentURI);
+  const agentWallet = body.agentWallet ? String(body.agentWallet) : null;
+
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+
+  // Verify name exists and get owner
+  let nameOwner: string;
+  try {
+    const [ownerAddr, , , , existingAgentId] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+    });
+    nameOwner = (ownerAddr as string).toLowerCase();
+    if (!nameOwner || nameOwner === "0x0000000000000000000000000000000000000000") {
+      return c.json({ error: "Name not registered" }, 404);
+    }
+    // Check if already has an 8004 agent via text record
+    const existingId = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "text", args: [name, "agent.8004id"],
+    });
+    if (existingId) {
+      return c.json({ error: `Name already has agent identity (8004 #${existingId})` }, 409);
+    }
+  } catch (e: any) {
+    if (e?.message?.includes("already has agent")) throw e;
+    return c.json({ error: "Name not registered" }, 404);
+  }
+
+  // Build unsigned 8004 register tx
+  const registerData = encodeFunctionData({
+    abi: [{ name: "register", type: "function", stateMutability: "nonpayable", inputs: [{ name: "agentURI", type: "string" }], outputs: [{ type: "uint256" }] }],
+    functionName: "register",
+    args: [agentURI],
+  });
+
+  return c.json({
+    name,
+    nameOwner,
+    agentURI,
+    agentWallet: agentWallet || nameOwner,
+    erc8004Registry: ERC8004_REGISTRY_ADDRESS,
+    // Step 1: Agent signs and submits this tx from the name owner wallet
+    registerTx: {
+      to: ERC8004_REGISTRY_ADDRESS,
+      data: registerData,
+      description: "Register on ERC-8004 Agent Registry — mints an agent identity NFT to your wallet",
+    },
+    // Step 2: After tx confirms, call POST /api/agent/confirm to link the agentId to the hazza name
+    confirmEndpoint: `/api/agent/confirm`,
+    confirmBody: { name, agentWallet: agentWallet || nameOwner },
+    instructions: [
+      "1. Sign and submit registerTx from the name owner wallet",
+      "2. Get the agentId from the Transfer event in the tx receipt (topics[3])",
+      "3. POST /api/agent/confirm with {name, agentId, agentWallet, txHash} to link the identity",
+    ],
+  });
+});
+
+// POST /api/agent/confirm — verify 8004 registration and set agent text records
+app.post("/api/agent/confirm", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body?.name || !body?.agentId || !body?.txHash) {
+    return c.json({ error: "Missing required fields: name, agentId, txHash" }, 400);
+  }
+
+  const name = String(body.name).toLowerCase();
+  const agentId = String(body.agentId);
+  const txHash = body.txHash as `0x${string}`;
+  const agentWallet = body.agentWallet ? String(body.agentWallet) : null;
+
+  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+
+  // Verify name exists and get owner
+  let nameOwner: string;
+  try {
+    const [ownerAddr] = await client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
+    });
+    nameOwner = (ownerAddr as string).toLowerCase();
+    if (!nameOwner || nameOwner === "0x0000000000000000000000000000000000000000") {
+      return c.json({ error: "Name not registered" }, 404);
+    }
+  } catch {
+    return c.json({ error: "Name not registered" }, 404);
+  }
+
+  // Verify the 8004 token exists and is owned by the name owner
+  try {
+    const agentOwner = await client.readContract({
+      address: ERC8004_REGISTRY_ADDRESS, abi: ERC8004_ABI, functionName: "ownerOf", args: [BigInt(agentId)],
+    });
+    if ((agentOwner as string).toLowerCase() !== nameOwner) {
+      return c.json({ error: "8004 agent token not owned by the name owner" }, 403);
+    }
+  } catch {
+    return c.json({ error: "8004 agent token not found" }, 404);
+  }
+
+  // Set agent text records via relayer
+  try {
+    const chainId = Number(c.env.CHAIN_ID);
+    const chain = chainId === 8453 ? base : baseSepolia;
+    const account = privateKeyToAccount(c.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const keys = ["agent.8004id", "agent.wallet", "agent.status"];
+    const values = [agentId, agentWallet || nameOwner, "active"];
+    const txData = encodeFunctionData({
+      abi: REGISTRY_ABI, functionName: "setTextsDirect", args: [name, keys, values],
+    });
+    const rpcs = [c.env.BASE_MAINNET_RPC, c.env.PAYMASTER_BUNDLER_RPC, c.env.RPC_URL].filter(Boolean);
+    let setTxHash: `0x${string}` | undefined;
+    for (const rpc of rpcs) {
+      try {
+        const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+        setTxHash = await walletClient.sendTransaction({ to: addr, data: txData });
+        break;
+      } catch (err: any) {
+        if (rpc === rpcs[rpcs.length - 1]) throw err;
+      }
+    }
+    await client.waitForTransactionReceipt({ hash: setTxHash!, timeout: 20_000 });
+
+    return c.json({
+      name,
+      agentId,
+      agentWallet: agentWallet || nameOwner,
+      erc8004Registry: ERC8004_REGISTRY_ADDRESS,
+      textRecordsTx: setTxHash,
+      profileUrl: `https://${name}.hazza.name`,
+      verified: true,
+    });
+  } catch (e: any) {
+    console.error("Agent confirm failed:", e?.shortMessage || e?.message || e);
+    return c.json({ error: "Failed to set agent text records" }, 500);
+  }
+});
+
+// Helper: set agent text records after registration (fire-and-forget)
+async function setAgentTextRecords(env: Env, name: string, agentURI?: string, agentWallet?: string) {
+  if (!agentURI && !agentWallet) return;
+  try {
+    const chainId = Number(env.CHAIN_ID);
+    const chain = chainId === 8453 ? base : baseSepolia;
+    const account = privateKeyToAccount(env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const addr = registryAddress(env);
+    const keys: string[] = [];
+    const values: string[] = [];
+    if (agentURI) { keys.push("agent.uri"); values.push(agentURI); }
+    if (agentWallet) { keys.push("agent.wallet"); values.push(agentWallet); }
+    const txData = encodeFunctionData({
+      abi: REGISTRY_ABI, functionName: "setTextsDirect", args: [name, keys, values],
+    });
+    const rpcs = [env.BASE_MAINNET_RPC, env.PAYMASTER_BUNDLER_RPC, env.RPC_URL].filter(Boolean);
+    for (const rpc of rpcs) {
+      try {
+        const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+        await walletClient.sendTransaction({ to: addr, data: txData });
+        return;
+      } catch { if (rpc === rpcs[rpcs.length - 1]) throw new Error("All RPCs failed"); }
+    }
+  } catch (e) { console.warn("Agent text records failed (non-fatal):", e); }
+}
+
 app.post("/x402/register", async (c) => {
   const body = await c.req.json().catch(() => null);
   if (!body || !body.name || !body.owner) {
@@ -2239,11 +2445,19 @@ app.post("/x402/register", async (c) => {
         await sendNotification(c.env, `🔴 <b>hazza registrations at 95%</b>\n${newDailyCount}/${GLOBAL_DAILY_CAP} today.`);
       }
 
+      // Set agent text records if provided (fire-and-forget)
+      if (body.agentURI || body.agentWallet) {
+        setAgentTextRecords(c.env, name, body.agentURI, body.agentWallet);
+      }
+
       return c.json({
         name, owner, tokenId,
         registrationTx: regTxHash,
         profileUrl: `https://${name}.hazza.name`,
         firstRegistration: true,
+        agentNote: body.agentURI || body.agentWallet
+          ? "Agent text records set. Register on ERC-8004 directly (0x8004A169FB4a3325136EB29fA0ceB6D2e539a432) to get an agent identity, then set agent.8004id text record."
+          : undefined,
       });
     } catch (e: any) {
       console.error("Free registration failed:", e?.shortMessage || e?.message || e);
@@ -2319,12 +2533,20 @@ app.post("/x402/register", async (c) => {
       await incrementGlobalDailyCap(c.env);
       await logRegistration(c.env, { name, owner, ip: passIp, type: "pass_claim", txHash: regTxHash, timestamp: Date.now() });
 
+      // Set agent text records if provided (fire-and-forget)
+      if (body.agentURI || body.agentWallet) {
+        setAgentTextRecords(c.env, name, body.agentURI, body.agentWallet);
+      }
+
       return c.json({
         name, owner, tokenId,
         registrationTx: regTxHash,
         profileUrl: `https://${name}.hazza.name`,
         freeClaim: true,
         memberId: freeClaimMemberId,
+        agentNote: body.agentURI || body.agentWallet
+          ? "Agent text records set. Register on ERC-8004 directly (0x8004A169FB4a3325136EB29fA0ceB6D2e539a432) to get an agent identity, then set agent.8004id text record."
+          : undefined,
       });
     } catch (e: any) {
       console.error("Free claim registration failed:", e?.shortMessage || e?.message || e);
@@ -2511,12 +2733,20 @@ app.post("/x402/register", async (c) => {
     await incrementGlobalDailyCap(c.env);
     await logRegistration(c.env, { name, owner, ip: paidIp, type: "paid", txHash: regTxHash, timestamp: Date.now() });
 
+    // Set agent text records if provided (fire-and-forget)
+    if (body.agentURI || body.agentWallet) {
+      setAgentTextRecords(c.env, name, body.agentURI, body.agentWallet);
+    }
+
     return new Response(JSON.stringify({
       name,
       owner,
       tokenId,
       registrationTx: regTxHash,
       profileUrl: `https://${name}.hazza.name`,
+      agentNote: body.agentURI || body.agentWallet
+        ? "Agent text records set. Register on ERC-8004 directly (0x8004A169FB4a3325136EB29fA0ceB6D2e539a432) to get an agent identity, then set agent.8004id text record."
+        : undefined,
     }), {
       status: 200,
       headers: {
