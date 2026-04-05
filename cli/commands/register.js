@@ -6,9 +6,10 @@ const payment = require('../lib/payment');
 
 const cmd = new Command('register')
   .argument('<name>', 'Name to register')
-  .option('-y, --years <n>', 'Number of years', '1')
   .option('-w, --wallet <address>', 'Owner wallet address')
-  .description('Register a HAZZA name')
+  .option('--agent-uri <uri>', 'Register as agent with this metadata URI')
+  .option('--agent-wallet <address>', 'Agent wallet address (defaults to owner)')
+  .description('Register a hazza name')
   .action(async (name, opts) => {
     try {
       const wallet = opts.wallet || conf.get('wallet');
@@ -16,7 +17,6 @@ const cmd = new Command('register')
         out.error('No wallet configured. Run: hazza config set wallet <address>');
         process.exit(1);
       }
-      const years = parseInt(opts.years) || 1;
 
       // Check availability
       out.info(`Checking availability of "${name}"...`);
@@ -40,14 +40,19 @@ const cmd = new Command('register')
       }
 
       // Get price quote
-      const quoteData = await api.quote(name, wallet, years).catch(() => null);
+      const quoteData = await api.quote(name, wallet).catch(() => null);
       if (quoteData && !isFree) {
-        out.info(`Price: ${payment.formatUSDC(quoteData.totalCost || quoteData.price || 0)} USDC for ${years} year(s)`);
+        out.info(`Price: ${payment.formatUSDC(quoteData.totalCost || quoteData.price || 0)} USDC`);
       }
 
       // Step 1: POST to /x402/register
       out.info('Submitting registration...');
-      const regData = { name, owner: wallet, years };
+      const regData = { name, owner: wallet };
+      if (opts.agentUri) {
+        regData.agentURI = opts.agentUri;
+        regData.agentWallet = opts.agentWallet || wallet;
+        out.info(`Agent URI: ${opts.agentUri}`);
+      }
       let result = await api.registerX402(regData);
 
       // Free claim or server-side registration succeeded

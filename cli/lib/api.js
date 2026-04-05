@@ -36,10 +36,9 @@ async function post(path, data, headers = {}) {
 // API endpoints
 async function checkAvailable(name) { return get(`/api/available/${name}`); }
 async function resolve(name) { return get(`/api/resolve/${name}`); }
-async function quote(name, wallet, years) {
+async function quote(name, wallet) {
   let path = `/api/quote/${name}?`;
   if (wallet) path += `wallet=${wallet}&`;
-  if (years) path += `years=${years}&`;
   return get(path.replace(/[&?]$/, ''));
 }
 async function freeClaim(address) { return get(`/api/free-claim/${address}`); }
@@ -65,10 +64,31 @@ async function marketSales() { return get('/api/marketplace/sales'); }
 
 async function board() { return get('/api/board'); }
 
+// x402 text records
+async function setTextX402(name, data, paymentHeader) {
+  const headers = {};
+  if (paymentHeader) headers['X-PAYMENT'] = paymentHeader;
+  return post(`/x402/text/${name}`, data, headers);
+}
+async function setTextBatchX402(name, data, paymentHeader) {
+  const headers = {};
+  if (paymentHeader) headers['X-PAYMENT'] = paymentHeader;
+  return post(`/x402/text/${name}/batch`, data, headers);
+}
+
+// Agent endpoints
+async function agentRegister(data) { return post('/api/agent/register', data); }
+async function agentConfirm(data) { return post('/api/agent/confirm', data); }
+
+// Marketplace helpers
+async function marketListHelper(data) { return post('/api/marketplace/list-helper', data); }
+
 module.exports = {
   get, post, request,
   checkAvailable, resolve, quote, freeClaim,
   profile, getText, names, stats, metadata,
-  registerX402, contact, board,
-  marketListings, marketOffers, marketSales,
+  registerX402, setTextX402, setTextBatchX402,
+  agentRegister, agentConfirm,
+  contact, board,
+  marketListings, marketOffers, marketSales, marketListHelper,
 };

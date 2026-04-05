@@ -28,15 +28,15 @@ cmd
 
 cmd
   .command('set <name> <key> <value>')
-  .description('Set a text record (requires cast)')
-  .action(async (name, key, value) => {
+  .description('Set a text record (uses x402 $0.02 USDC or direct contract call)')
+  .option('--direct', 'Use direct contract call instead of x402 (requires ETH for gas)')
+  .action(async (name, key, value, opts) => {
     try {
       payment.requireCast();
       const wallet = payment.getWallet();
-      const registryAddress = conf.get('registryAddress');
-      const rpcUrl = conf.get('rpcUrl');
+      const rpcUrl = payment.getRpcUrl();
 
-      // Verify ownership before sending tx
+      // Verify ownership
       const resolved = await api.resolve(name);
       if (!resolved || !resolved.owner) {
         out.error(`Name "${name}" not found`);
@@ -47,16 +47,45 @@ cmd
         process.exit(1);
       }
 
-      out.info(`Setting ${key} = "${value}" for ${name}...`);
-      const txHash = payment.contractSend(
-        registryAddress,
-        'setText(string,string,string)',
-        [name, key, value],
-        rpcUrl,
-      );
+      if (opts.direct) {
+        // Direct contract call (costs ETH gas)
+        out.info(`Setting ${key} = "${value}" for ${name} (direct)...`);
+        const txHash = payment.contractSend(
+          conf.get('registryAddress'),
+          'setText(string,string,string)',
+          [name, key, value],
+          rpcUrl,
+        );
+        out.success(`Record set!`);
+        out.info(`Tx: ${txHash}`);
+      } else {
+        // x402 flow ($0.02 USDC, relayer executes)
+        out.info(`Setting ${key} = "${value}" for ${name} via x402...`);
 
-      out.success(`Record set!`);
-      out.info(`Tx: ${txHash}`);
+        // Step 1: Get payment requirements
+        const initial = await api.setTextX402(name, { key, value });
+        if (initial.status !== 402) {
+          // Shouldn't happen without payment, but handle it
+          out.success('Record set!');
+          return;
+        }
+
+        const payTo = initial.accepts[0].payTo;
+        const amount = initial.accepts[0].maxAmountRequired;
+        out.info(`Payment: ${payment.formatUSDC(amount)} USDC`);
+
+        // Step 2: Transfer USDC
+        const txHash = payment.transferUSDC(payTo, amount, rpcUrl);
+        out.info(`Payment tx: ${txHash}`);
+
+        // Step 3: Retry with payment proof
+        const header = payment.makePaymentHeader(txHash, wallet);
+        const result = await api.setTextX402(name, { key, value }, header);
+        if (result.error) throw new Error(result.error);
+
+        out.success(`Record set!`);
+        out.info(`Tx: ${result.tx}`);
+      }
     } catch (e) {
       out.error(e.message);
       process.exit(1);
