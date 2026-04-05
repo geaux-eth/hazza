@@ -34,3 +34,6 @@ not_found_handling = "none"
 [[kv_namespaces]]
 binding = "WATCHLIST_KV"
 id = "9f703511d8ae41aeb028b13c449bfc1e"
+
+[triggers]
+crons = ["*/15 * * * *"]

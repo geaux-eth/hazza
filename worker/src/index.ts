@@ -2279,13 +2279,13 @@ app.post("/api/agent/confirm", async (c) => {
 });
 
 // Helper: set agent text records after registration (fire-and-forget)
-// Log failed treasury forwards to KV for reconciliation
+// Log failed treasury forwards to KV for retry queue
 async function logTreasuryForwardFailure(env: Env, amount: string, name: string, source: string, error: string) {
   try {
-    const key = `treasury-fail:${Date.now()}:${name}`;
-    const entry = JSON.stringify({ amount, name, source, error, timestamp: new Date().toISOString() });
+    const key = `treasury-retry:${Date.now()}:${name}`;
+    const entry = JSON.stringify({ amount, name, source, error, attempts: 0, timestamp: new Date().toISOString() });
     await env.WATCHLIST_KV.put(key, entry, { expirationTtl: 30 * 86400 }); // 30 day TTL
-    console.error(`Treasury forward FAILED — logged to KV: ${key} (${amount} USDC for ${name} via ${source})`);
+    console.error(`Treasury forward FAILED — queued for retry: ${key} (${amount} USDC for ${name} via ${source})`);
   } catch { /* KV logging itself failed — nothing more we can do */ }
 }
 
@@ -5219,17 +5219,17 @@ app.get("/api/admin/wallet/:address", async (c) => {
   });
 });
 
-// GET /api/admin/treasury-failures — list failed treasury forwards
+// GET /api/admin/treasury-failures — list pending treasury forward retries
 app.get("/api/admin/treasury-failures", async (c) => {
   try {
-    const list = await c.env.WATCHLIST_KV.list({ prefix: "treasury-fail:" });
+    const list = await c.env.WATCHLIST_KV.list({ prefix: "treasury-retry:" });
     const failures = await Promise.all(
       list.keys.map(async (k: any) => {
         const val = await c.env.WATCHLIST_KV.get(k.name);
-        try { return JSON.parse(val || "{}"); } catch { return { raw: val, key: k.name }; }
+        try { return { key: k.name, ...JSON.parse(val || "{}") }; } catch { return { raw: val, key: k.name }; }
       })
     );
-    return c.json({ failures, count: failures.length });
+    return c.json({ pending: failures, count: failures.length });
   } catch (e: any) {
     return c.json({ error: e?.message || "Failed to list failures" }, 500);
   }
@@ -5473,4 +5473,75 @@ document.getElementById('btn').onclick = async function() {
   }
 });
 
-export default app;
+// =========================================================================
+//                    SCHEDULED: Treasury Forward Retry Queue
+// =========================================================================
+// Runs every 15 minutes via cron trigger. Reads failed treasury forwards
+// from KV, retries them, and removes successes. Gives up after 10 attempts.
+
+async function handleScheduled(env: Env) {
+  const list = await env.WATCHLIST_KV.list({ prefix: "treasury-retry:" });
+  if (list.keys.length === 0) return;
+
+  const chainId = Number(env.CHAIN_ID);
+  const chain = chainId === 8453 ? base : baseSepolia;
+  const account = privateKeyToAccount(env.RELAYER_PRIVATE_KEY as `0x${string}`);
+  const treasuryAddr = env.HAZZA_TREASURY as Address;
+  if (!treasuryAddr) return;
+
+  const rpcs = [env.BASE_MAINNET_RPC, env.PAYMASTER_BUNDLER_RPC, env.RPC_URL].filter(Boolean);
+
+  for (const k of list.keys) {
+    const raw = await env.WATCHLIST_KV.get(k.name);
+    if (!raw) continue;
+
+    let entry: any;
+    try { entry = JSON.parse(raw); } catch { continue; }
+
+    const attempts = (entry.attempts || 0) + 1;
+    if (attempts > 10) {
+      // Give up — move to dead letter
+      await env.WATCHLIST_KV.put(
+        k.name.replace("treasury-retry:", "treasury-dead:"),
+        JSON.stringify({ ...entry, attempts, gaveUpAt: new Date().toISOString() }),
+        { expirationTtl: 90 * 86400 },
+      );
+      await env.WATCHLIST_KV.delete(k.name);
+      console.error(`Treasury retry gave up after 10 attempts: ${entry.name} ${entry.amount}`);
+      continue;
+    }
+
+    try {
+      const amount = BigInt(entry.amount);
+      const transferData = encodeFunctionData({
+        abi: [{ name: "transfer", type: "function", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] }] as const,
+        functionName: "transfer",
+        args: [treasuryAddr, amount],
+      });
+
+      let txHash: string | undefined;
+      for (const rpc of rpcs) {
+        try {
+          const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
+          txHash = await walletClient.sendTransaction({ to: env.USDC_ADDRESS as Address, data: transferData });
+          break;
+        } catch { if (rpc === rpcs[rpcs.length - 1]) throw new Error("All RPCs failed"); }
+      }
+
+      // Success — remove from retry queue
+      await env.WATCHLIST_KV.delete(k.name);
+      console.log(`Treasury retry SUCCESS: ${entry.amount} USDC for ${entry.name} → ${txHash}`);
+    } catch (e: any) {
+      // Update attempt count
+      await env.WATCHLIST_KV.put(k.name, JSON.stringify({ ...entry, attempts, lastRetry: new Date().toISOString(), lastError: e?.message || String(e) }), { expirationTtl: 30 * 86400 });
+      console.warn(`Treasury retry attempt ${attempts} failed for ${entry.name}: ${e?.message}`);
+    }
+  }
+}
+
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(handleScheduled(env));
+  },
+};
