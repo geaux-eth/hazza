@@ -70,6 +70,10 @@ cmd
           return;
         }
 
+        if (!initial.accepts?.[0]?.payTo) {
+          out.error('Unexpected payment response from server');
+          process.exit(1);
+        }
         const payTo = initial.accepts[0].payTo;
         const amount = initial.accepts[0].maxAmountRequired;
         out.info(`Payment: ${payment.formatUSDC(amount)} USDC`);

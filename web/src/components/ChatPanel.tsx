@@ -603,6 +603,7 @@ export default function ChatPanel({
           addMsg(`${card.name}.hazza.name is yours! view your profile at ${card.name}.hazza.name`, 'system');
         } else {
           setCardStatus(cardId, 'error', { error: data.error || 'registration failed after payment' });
+          addMsg(`payment was sent but registration failed. go to hazza.name/register?name=${encodeURIComponent(card.name)} to retry with your payment or request a refund.`, 'system');
         }
       }
     } catch (err: any) {
@@ -613,6 +614,13 @@ export default function ChatPanel({
 
   const handleBuy = useCallback(async (card: Extract<ActionCard, { type: 'buy_card' }>, cardId: string) => {
     if (!address || !publicClient) return;
+
+    // Confirm purchase before executing
+    const priceDisplay = card.price ? `${card.price} ${card.currency || 'ETH'}` : 'the listed price';
+    if (!window.confirm(`Buy ${card.name || 'this name'} for ${priceDisplay}?`)) {
+      return;
+    }
+
     setCardStatus(cardId, 'pending');
 
     try {

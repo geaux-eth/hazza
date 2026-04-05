@@ -596,11 +596,14 @@ function CheckoutView({ name }: { name: string }) {
         </div>
         {isAgent && (
           <div className="mt-4 p-3 bg-cream border-2 border-border rounded-xl text-left">
-            <p className="text-navy font-bold text-sm mb-1">agent identity setup</p>
-            <p className="text-muted text-xs mb-2">Agent text records have been set on your name. To complete ERC-8004 registration:</p>
-            <p className="text-muted text-xs">
-              Go to <Link to={`/manage?name=${name}`} className="text-red font-bold">Settings</Link> &rarr; AI Agent &rarr; Register Agent
-            </p>
+            <p className="text-navy font-bold text-sm mb-1">step 2: complete agent identity</p>
+            <p className="text-muted text-xs mb-2">Agent text records are set. Complete ERC-8004 registration (2 wallet transactions):</p>
+            <Link
+              to={`/manage?name=${name}`}
+              className="inline-block px-4 py-2 bg-red text-white rounded-lg font-heading font-bold no-underline hover:bg-red-hover transition-colors text-xs"
+            >
+              Complete Agent Registration &rarr;
+            </Link>
           </div>
         )}
         <div className="mt-4 p-3 bg-cream border-2 border-border rounded-xl text-left">
@@ -685,7 +688,7 @@ function CheckoutView({ name }: { name: string }) {
             </label>
             {isAgent && (
               <p className="text-muted text-xs mt-1 ml-6">
-                Sets agent text records on your name. You can complete ERC-8004 registration in Settings after.
+                Step 1 of 2 — sets agent metadata on your name. After registration, go to Settings to complete ERC-8004 identity (2 transactions).
               </p>
             )}
           </div>

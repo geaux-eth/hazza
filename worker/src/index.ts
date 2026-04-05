@@ -2279,6 +2279,16 @@ app.post("/api/agent/confirm", async (c) => {
 });
 
 // Helper: set agent text records after registration (fire-and-forget)
+// Log failed treasury forwards to KV for reconciliation
+async function logTreasuryForwardFailure(env: Env, amount: string, name: string, source: string, error: string) {
+  try {
+    const key = `treasury-fail:${Date.now()}:${name}`;
+    const entry = JSON.stringify({ amount, name, source, error, timestamp: new Date().toISOString() });
+    await env.WATCHLIST_KV.put(key, entry, { expirationTtl: 30 * 86400 }); // 30 day TTL
+    console.error(`Treasury forward FAILED — logged to KV: ${key} (${amount} USDC for ${name} via ${source})`);
+  } catch { /* KV logging itself failed — nothing more we can do */ }
+}
+
 async function setAgentTextRecords(env: Env, name: string, agentURI?: string, agentWallet?: string) {
   if (!agentURI && !agentWallet) return;
   try {
@@ -2724,7 +2734,7 @@ app.post("/x402/register", async (c) => {
           const fwdTx = await fwdClient.sendTransaction({ to: c.env.USDC_ADDRESS as Address, data: transferData });
           console.log(`Treasury forward: ${totalCost.toString()} USDC (${fwdTx}) for ${name}`);
         } catch (err: any) {
-          console.error(`Treasury forward failed for ${name}:`, err?.shortMessage || err?.message);
+          await logTreasuryForwardFailure(c.env, totalCost.toString(), name, "x402-register", err?.shortMessage || err?.message);
         }
       })();
     }
@@ -2942,7 +2952,7 @@ app.post("/x402/text/:name", async (c) => {
           });
           const walletClient = createWalletClient({ account, chain, transport: http(c.env.BASE_MAINNET_RPC || c.env.RPC_URL) });
           await walletClient.sendTransaction({ to: c.env.USDC_ADDRESS as Address, data: transferData });
-        } catch (e) { console.warn("Treasury forward failed:", e); }
+        } catch (e: any) { await logTreasuryForwardFailure(c.env, TEXT_RECORD_PRICE_USDC.toString(), name, "x402-text", e?.message || String(e)); }
       })();
     }
 
@@ -3127,7 +3137,7 @@ app.post("/x402/text/:name/batch", async (c) => {
           });
           const walletClient = createWalletClient({ account, chain, transport: http(c.env.BASE_MAINNET_RPC || c.env.RPC_URL) });
           await walletClient.sendTransaction({ to: c.env.USDC_ADDRESS as Address, data: transferData });
-        } catch (e) { console.warn("Treasury forward failed:", e); }
+        } catch (e: any) { await logTreasuryForwardFailure(c.env, TEXT_RECORD_PRICE_USDC.toString(), name, "x402-text-batch", e?.message || String(e)); }
       })();
     }
 
@@ -3995,7 +4005,7 @@ app.post("/frames/register/:name/callback", async (c) => {
           const fwdTx = await fwdClient.sendTransaction({ to: c.env.USDC_ADDRESS as Address, data: transferData });
           console.log(`Treasury forward: ${totalCost.toString()} USDC (${fwdTx}) for ${name}`);
         } catch (err: any) {
-          console.error(`Treasury forward failed for ${name}:`, err?.shortMessage || err?.message);
+          await logTreasuryForwardFailure(c.env, totalCost.toString(), name, "frame-register", err?.shortMessage || err?.message);
         }
       })();
     }
@@ -5207,6 +5217,22 @@ app.get("/api/admin/wallet/:address", async (c) => {
     wallet: addr,
     totalRegistrations: totalCount ? parseInt(totalCount) : 0,
   });
+});
+
+// GET /api/admin/treasury-failures — list failed treasury forwards
+app.get("/api/admin/treasury-failures", async (c) => {
+  try {
+    const list = await c.env.WATCHLIST_KV.list({ prefix: "treasury-fail:" });
+    const failures = await Promise.all(
+      list.keys.map(async (k: any) => {
+        const val = await c.env.WATCHLIST_KV.get(k.name);
+        try { return JSON.parse(val || "{}"); } catch { return { raw: val, key: k.name }; }
+      })
+    );
+    return c.json({ failures, count: failures.length });
+  } catch (e: any) {
+    return c.json({ error: e?.message || "Failed to list failures" }, 500);
+  }
 });
 
 // POST /api/admin/reset-ip — reset free registration count for an IP (GEAUX override)
