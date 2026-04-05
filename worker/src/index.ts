@@ -2279,14 +2279,13 @@ app.post("/api/agent/confirm", async (c) => {
 });
 
 // Helper: set agent text records after registration (fire-and-forget)
-// Log failed treasury forwards to KV for retry queue + alert
+// Log failed treasury forwards to KV for retry queue 
 async function logTreasuryForwardFailure(env: Env, amount: string, name: string, source: string, error: string) {
   try {
     const key = `treasury-retry:${Date.now()}:${name}`;
     const entry = JSON.stringify({ amount, name, source, error, attempts: 0, timestamp: new Date().toISOString() });
     await env.WATCHLIST_KV.put(key, entry, { expirationTtl: 30 * 86400 }); // 30 day TTL
     console.error(`Treasury forward FAILED — queued for retry: ${key} (${amount} USDC for ${name} via ${source})`);
-    await sendNotification(env, `���️ <b>Treasury forward failed</b>\n\n${amount} USDC for ${name} (${source})\nError: ${error}\n\nQueued for automatic retry (every 15min, up to 10 attempts).`);
   } catch { /* KV logging itself failed — nothing more we can do */ }
 }
 
