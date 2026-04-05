@@ -2279,13 +2279,14 @@ app.post("/api/agent/confirm", async (c) => {
 });
 
 // Helper: set agent text records after registration (fire-and-forget)
-// Log failed treasury forwards to KV for retry queue
+// Log failed treasury forwards to KV for retry queue + alert
 async function logTreasuryForwardFailure(env: Env, amount: string, name: string, source: string, error: string) {
   try {
     const key = `treasury-retry:${Date.now()}:${name}`;
     const entry = JSON.stringify({ amount, name, source, error, attempts: 0, timestamp: new Date().toISOString() });
     await env.WATCHLIST_KV.put(key, entry, { expirationTtl: 30 * 86400 }); // 30 day TTL
     console.error(`Treasury forward FAILED — queued for retry: ${key} (${amount} USDC for ${name} via ${source})`);
+    await sendNotification(env, `���️ <b>Treasury forward failed</b>\n\n${amount} USDC for ${name} (${source})\nError: ${error}\n\nQueued for automatic retry (every 15min, up to 10 attempts).`);
   } catch { /* KV logging itself failed — nothing more we can do */ }
 }
 
@@ -5500,7 +5501,7 @@ async function handleScheduled(env: Env) {
 
     const attempts = (entry.attempts || 0) + 1;
     if (attempts > 10) {
-      // Give up — move to dead letter
+      // Give up — move to dead letter and alert
       await env.WATCHLIST_KV.put(
         k.name.replace("treasury-retry:", "treasury-dead:"),
         JSON.stringify({ ...entry, attempts, gaveUpAt: new Date().toISOString() }),
@@ -5508,6 +5509,7 @@ async function handleScheduled(env: Env) {
       );
       await env.WATCHLIST_KV.delete(k.name);
       console.error(`Treasury retry gave up after 10 attempts: ${entry.name} ${entry.amount}`);
+      await sendNotification(env, `🚨 <b>Treasury forward FAILED permanently</b>\n\n${entry.amount} USDC stuck in relayer\nName: ${entry.name}\nSource: ${entry.source}\nLast error: ${entry.lastError || entry.error}\n\n10 retry attempts exhausted. Manual intervention required.`);
       continue;
     }
 
