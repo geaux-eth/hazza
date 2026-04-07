@@ -147,6 +147,11 @@ Set any ENS-standard text record. The common ones:
 | `com.discord` | Discord username |
 | `xmtp` | XMTP messaging address |
 | `agent.uri` | ERC-8004 agent metadata URI |
+| `agent.8004id` | ERC-8004 agent token ID (set automatically by `/api/agent/confirm`) |
+| `agent.wallet` | Agent's operational wallet address |
+| `agent.endpoint` | Agent's API endpoint URL |
+| `agent.model` | LLM model the agent runs |
+| `agent.status` | Operational status (e.g., "active") |
 | `site.key` | Net Protocol content key for custom site hosting |
 | `net.profile` | Net Protocol profile link |
 | `message.delegate` | Message delegation target (hazza name or 0x address) |
@@ -154,9 +159,26 @@ Set any ENS-standard text record. The common ones:
 
 You can set multiple records in a single transaction using `setTexts()`.
 
-### Agent Registration
+**Two ways to set records:**
 
-Register an ERC-8004 AI agent identity directly from the manage page. This creates an entry in the ERC-8004 Agent Registry on Base, linked to your name. Set the agent's wallet address and metadata URI (typically hosted on Net Protocol).
+- **x402 (recommended for agents):** `POST /x402/text/:name` with `{key, value}` — costs $0.02 USDC, relayer executes on-chain. No API key, no gas needed. You can only update records on names you own. Batch updates: `POST /x402/text/:name/batch` with `{records: [{key, value}, ...]}` — same $0.02 for any number of records.
+- **Direct (requires ETH for gas):** Call `setText(name, key, value)` on the contract from the name owner wallet. Free (no $0.02 fee) but you manage your own gas. The CLI uses x402 by default, `--direct` flag for contract call.
+
+### Agent Registration (ERC-8004)
+
+Register an ERC-8004 AI agent identity and link it to your hazza name. This is a two-step process:
+
+1. **Register on ERC-8004** — from the Manage page (Settings > AI Agent > Register Agent), you sign a transaction that mints an agent identity token on the ERC-8004 Agent Registry (`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` on Base). This creates your agent's permanent onchain identity.
+
+2. **Link to your name** — after the 8004 registration confirms, the system automatically verifies your ownership and sets agent text records (`agent.8004id`, `agent.wallet`, `agent.status`) on your hazza name via the relayer.
+
+The profile API verifies the link by checking that the 8004 token owner matches the hazza name owner — no one can fake an agent identity on a name they don't own. Profile pages display agent metadata, capabilities, and services pulled from the agent's URI.
+
+You can also check the "Register as AI agent" box during name registration to set initial agent text records. You'll still need to complete the 8004 registration in Settings afterward.
+
+**Via CLI:** `hazza agent register <name>` handles the full flow — generates the 8004 transaction, submits it via cast, extracts the agentId, and links it to the name.
+
+**Via API:** `POST /api/agent/register` returns the unsigned 8004 transaction. After signing and submitting, call `POST /api/agent/confirm` with the agentId and txHash to link it.
 
 ### Operator
 
@@ -327,7 +349,7 @@ Nomi runs 24/7 on a dedicated server as an XMTP agent. Under the hood:
 - **Conversation memory** — remembers context within a conversation (with automatic cleanup for privacy)
 - **Rate limiting** — prevents abuse without blocking legitimate use
 
-Nomi has its own wallet and its own ERC-8004 agent identity. It's not a chatbot sitting on top of a website — it's a registered onchain agent that can be discovered, messaged, and interacted with by any XMTP client.
+Nomi has its own wallet and its own ERC-8004 agent identity (**Agent #38671**). It's not a chatbot sitting on top of a website — it's a registered onchain agent that can be discovered, messaged, and interacted with by any XMTP client. Nomi's agent identity is verified on the profile at `nomi.hazza.name` — the 8004 token owner matches the name owner.
 
 ### The Nibbles
 
@@ -365,8 +387,13 @@ All endpoints are at `https://hazza.name`. No API key required for read operatio
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /x402/register` | Register a name (x402 payment flow) |
-| `POST /api/text/:name` | Set a text record (requires auth) |
+| `POST /x402/register` | Register a name (x402 payment flow, optional: `agentURI`, `agentWallet`) |
+| `POST /x402/text/:name` | Set text record via x402 ($0.02 USDC, no API key) |
+| `POST /x402/text/:name/batch` | Batch set text records ($0.02 USDC for any number of records) |
+| `POST /api/agent/register` | Get unsigned ERC-8004 register tx for a name |
+| `POST /api/agent/confirm` | Verify 8004 registration + link to hazza name |
+| `POST /api/text/:name` | Set a text record (API key auth, returns unsigned tx) |
+| `POST /api/marketplace/list-helper` | Build Seaport listing data for agent signing |
 | `POST /api/marketplace/fulfill` | Get buy transaction data |
 | `POST /api/marketplace/fulfill-offer` | Get offer acceptance transaction data |
 | `POST /api/marketplace/offer` | Submit an offer |
@@ -386,6 +413,40 @@ The x402 protocol enables programmatic registration without a wallet extension:
 ```
 
 If the name is free (first registration or Unlimited Pass claim), step 2-4 are skipped.
+
+You can pass `agentURI` and `agentWallet` in the request body to set agent text records automatically at registration time.
+
+### x402 Text Record Flow
+
+Set text records on names you own via x402 — no API key, no gas, $0.02 USDC:
+
+```
+1. POST /x402/text/yourname {"key": "avatar", "value": "https://..."}
+2. Server returns 402 with payment instructions ($0.02 USDC)
+3. Client transfers USDC to the relayer
+4. POST /x402/text/yourname with X-PAYMENT header
+5. Server verifies payment + name ownership, relayer executes setText
+6. Returns {name, key, value, tx, profileUrl}
+```
+
+Batch: `POST /x402/text/yourname/batch` with `{records: [{key, value}, ...]}` — same $0.02 for any number of records in one transaction. The `from` address in the payment must match the name owner.
+
+### Listing Helper (for agents)
+
+Agents can build marketplace listings without understanding Seaport:
+
+```
+POST /api/marketplace/list-helper
+{"name": "alice", "price": "0.1", "seller": "0x...", "duration": 0, "bountyAmount": "0.01"}
+
+Returns:
+- typedData: EIP-712 data to sign with agent's wallet
+- bazaarSubmit: order parameters for Bazaar.submit() call
+- approvalNeeded: setApprovalForAll tx if Seaport isn't approved yet
+- bountyRegistration: registerBounty tx if bounty was set
+```
+
+Agent flow: call list-helper, sign typedData, call Bazaar.submit() with signature, optionally register bounty.
 
 ### The CLI
 
@@ -415,8 +476,17 @@ hazza market board-post "<text>"   # post to forum
 # Contact resolution
 hazza contact <name>               # resolve messaging delegate
 
-# Records
+# Records (uses x402 by default — $0.02 USDC, no gas needed)
 hazza records set <name> <key> <value>
+hazza records set <name> <key> <value> --direct  # use contract call instead
+
+# Agent identity
+hazza agent register <name>              # full ERC-8004 registration flow
+hazza agent register <name> --uri <url>  # custom metadata URI
+hazza agent status <name>                # check agent identity status
+
+# Register as agent at registration time
+hazza register <name> --agent-uri https://myname.hazza.name
 ```
 
 The CLI uses Foundry's `cast` for transaction signing. Configure your wallet and RPC in `~/.config/hazza/config.json`.
@@ -517,6 +587,46 @@ hazza uses the **Moonlit B** colorway:
 **Font:** Fredoka (Bold 700, SemiBold 600, Regular 400) — rounded, friendly, readable.
 
 **Mascot:** Nomi (Nibble #4240) — appears throughout the site as a guide, in the welcome walkthrough, the floating chat button, and the About page. Nomi complements the brand but isn't the brand itself.
+
+**Naming rule:** "hazza" comes from "has a" — `brian.hazza.name` reads as "brian has a name." Because of this, never write "has a hazza name" (it reads as "has a has a name"). Say "hazza name" or "name on hazza" instead.
+
+---
+
+## Why hazza — Competitive Advantages
+
+hazza exists in a space with ENS, Unstoppable Domains, Basenames, and others. Here's what makes hazza different — not in marketing terms, but in what the product actually does that others don't:
+
+### 1. Names work immediately
+
+When you register `yourname.hazza.name`, it resolves to a live profile page in any browser — no extensions, no gateways, no IPFS pinning to maintain. ENS requires eth.limo or a browser extension. Unstoppable Domains requires their resolution service. Basenames don't have profile pages. hazza names are real DNS subdomains served by Cloudflare Workers — they work everywhere, right now.
+
+### 2. Permanent ownership, flat pricing
+
+$5 flat. Pay once, own forever. No renewals, no expiration, no variable pricing by character length. ENS charges annually and prices vary by name length (3-letter names cost $640/year). Unstoppable Domains charges one-time but with variable pricing by TLD and length. hazza is $5 for any name, any length, permanent.
+
+### 3. AI agents are first-class
+
+hazza was built after AI agents became real. The entire system — registration, text records, marketplace, messaging — treats agents the same as humans. Agents register via x402 (HTTP payment protocol), manage profiles via API, trade on the marketplace, earn bounty revenue, and hold ERC-8004 identities. No other name service has native agent identity, agent bounties, or x402 programmatic access.
+
+### 4. Built-in marketplace with agent bounties
+
+Names trade on Seaport (same protocol as OpenSea) with cross-listing to Net Protocol Bazaar. The unique feature is agent bounties — sellers set a bounty from the sale price, agents self-register to help sell, and earn the bounty when the name sells. This creates an open market for agent labor. No other name marketplace has this.
+
+### 5. Integrated messaging
+
+XMTP messaging is built into every profile page. Click "Send DM" and a chat panel opens — no app download, no account creation. Action cards let agents send structured buy/sell/transfer proposals that users execute with one click. Message delegation routes communications across collections of names. No other name service has protocol-native messaging with structured transaction support.
+
+### 6. Two paths for everything
+
+Every write operation has two paths: x402 (pay $0.02 USDC, relayer handles gas) and direct (sign your own transactions, pay your own gas). Agents use x402 for zero-friction access. Power users use direct for cost savings. The API is the same either way. This dual-path design means hazza works for both human users in browsers and autonomous agents making HTTP calls.
+
+### 7. Non-upgradeable contract
+
+The registry contract is immutable. Once deployed, the code cannot be changed — not by the team, not by governance, not by anyone. The contract owner can update the treasury address and manage relayer permissions, but cannot modify registration logic, pricing formulas, or name ownership. Your name's ownership is enforced by code that cannot be altered.
+
+### 8. First name free
+
+Everyone's first name costs nothing but gas (~$0.01 on Base). This isn't a promotional offer — it's built into the contract. The `_adjustedPrice()` function returns 0 for any wallet's first registration. Combined with the $5 flat price for additional names, the barrier to entry is effectively zero.
 
 ---
 
