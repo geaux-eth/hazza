@@ -548,32 +548,9 @@ export default function Manage() {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="manage-page">
-        <p style={{ color: '#8a7d5a', textAlign: 'center', fontSize: '0.85rem' }}>loading...</p>
-      </div>
-    );
-  }
-
-  if (!profileData) {
-    return (
-      <div className="manage-page">
-        <div id="manage-body">
-          <p style={{ color: '#CF3748', textAlign: 'center' }}>
-            {nameParam}.hazza.name is not registered.{' '}
-            <Link to={`/register?name=${encodeURIComponent(nameParam)}`}>Register it</Link>
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const shortOwner = profileData.owner.slice(0, 6) + '...' + profileData.owner.slice(-4);
-  const canManage = isOwner || isOperator;
-
-  // Batch save all profile + social text records
+  // Batch save all profile + social text records (must be before early returns to maintain hook order)
   const handleSaveAll = useCallback(() => {
+    if (!profileData) return;
     const allKeys = [
       'description', 'avatar', 'url',
       'com.twitter', 'xyz.farcaster', 'com.github', 'org.telegram', 'com.discord', 'com.linkedin',
@@ -605,7 +582,31 @@ export default function Manage() {
       functionName: 'setTexts',
       args: [nameParam, keys, values],
     });
-  }, [fieldValues, helixaId, netLibraryMember, netProfileKey, nameParam, writeContract, showMsg]);
+  }, [profileData, fieldValues, helixaId, netLibraryMember, netProfileKey, nameParam, writeContract, showMsg]);
+
+  if (loading) {
+    return (
+      <div className="manage-page">
+        <p style={{ color: '#8a7d5a', textAlign: 'center', fontSize: '0.85rem' }}>loading...</p>
+      </div>
+    );
+  }
+
+  if (!profileData) {
+    return (
+      <div className="manage-page">
+        <div id="manage-body">
+          <p style={{ color: '#CF3748', textAlign: 'center' }}>
+            {nameParam}.hazza.name is not registered.{' '}
+            <Link to={`/register?name=${encodeURIComponent(nameParam)}`}>Register it</Link>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const shortOwner = profileData.owner.slice(0, 6) + '...' + profileData.owner.slice(-4);
+  const canManage = isOwner || isOperator;
 
   return (
     <div className="manage-page">
