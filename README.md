@@ -169,4 +169,6 @@ cast send 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \
 | Treasury | `0x62B7399B2ac7e938Efad06EF8746fDBA3B351900` |
 | Relayer | `0xa6eB678F607bB811a25E2071A7AAe6F53E674e7d` |
 
+**Token:** $HAZZA (`0xC5C4Fcd6147e3bDAEEB5A0898A439Aec1e1BAba3` on Base) — [bankr.bot/launches/0xC5C4Fcd6147e3bDAEEB5A0898A439Aec1e1BAba3](https://www.bankr.bot/launches/0xC5C4Fcd6147e3bDAEEB5A0898A439Aec1e1BAba3)
+
 Powered by x402, XMTP and Net Protocol. Built on Base.

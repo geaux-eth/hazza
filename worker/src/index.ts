@@ -984,6 +984,14 @@ app.get("/api/nft-image/:name", async (c) => {
 });
 
 // 1200x1200 square share image for Farcaster Mini App embed
+// Image proxy for Net Protocol stored content (correct MIME type)
+app.get("/img/hazza-token", async (c) => {
+  const res = await fetch("https://www.storedon.net/net/8453/storage/load/0x62B7399B2ac7e938Efad06EF8746fDBA3B351900/nomi-pfp");
+  if (!res.ok) return c.text("Image not found", 404);
+  const data = await res.arrayBuffer();
+  return new Response(data, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*" } });
+});
+
 app.get("/api/share", async (c) => {
   // Serve from CF edge cache if available
   const cacheKey = new Request("https://hazza.name/api/share?v=2", { method: "GET" });

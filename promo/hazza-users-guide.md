@@ -571,7 +571,22 @@ hazza supports CCIP-Read for ENS-compatible offchain resolution. This means ENS-
 | Bazaar | `0x000000058f3ade587388daf827174d0e6fc97595` | Base Mainnet |
 | USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | Base Mainnet |
 | Unlimited Pass | `0xCe559A2A6b64504bE00aa7aA85C5C31EA93a16BB` | Base Mainnet |
+| $HAZZA Token | `0xC5C4Fcd6147e3bDAEEB5A0898A439Aec1e1BAba3` | Base Mainnet |
 | Nomi (XMTP) | `0x55B251E202938E562E7384bD998215885b80162e` | XMTP Network |
+
+---
+
+## $HAZZA Token
+
+$HAZZA is the hazza token on Base, launched via Bankr.
+
+- **Contract:** `0xC5C4Fcd6147e3bDAEEB5A0898A439Aec1e1BAba3`
+- **Chain:** Base (8453)
+- **Symbol:** HAZZA
+- **Supply:** 100 billion
+- **Launched via:** [Bankr](https://www.bankr.bot/launches/0xC5C4Fcd6147e3bDAEEB5A0898A439Aec1e1BAba3)
+
+Token fees help fund Nomi's LLM inference costs — keeping the agent running 24/7 on XMTP.
 
 ---
 
