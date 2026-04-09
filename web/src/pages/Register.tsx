@@ -99,6 +99,12 @@ function SearchView() {
     try {
       const res = await fetch(`${API_BASE}/api/available/${encodeURIComponent(name)}`);
       const data = await res.json();
+      if (data.error) {
+        setSearchError(data.error);
+        setSearched(true);
+        setChecking(false);
+        return;
+      }
       if (data.available) {
         setResult({ name, available: true });
       } else {

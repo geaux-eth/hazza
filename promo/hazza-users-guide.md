@@ -39,7 +39,7 @@ The tagline is "immediately useful" and that's not marketing. Every name comes w
 Names must work as DNS labels (because they're also web addresses):
 
 - **Characters:** Lowercase letters (a-z), numbers (0-9), and hyphens (-)
-- **Length:** 1 to 64 characters
+- **Length:** 3 to 63 characters (minimum 3 enforced by contract)
 - **No leading or trailing hyphens**, no consecutive hyphens (--)
 - **No spaces, no emojis, no uppercase** in the base name
 - **ENSIP-15** unicode and emoji support is available through the text record system

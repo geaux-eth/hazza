@@ -97,7 +97,19 @@ function isAllowedUrl(url: string): boolean {
 
 /** Validate name format: lowercase alphanumeric + hyphens, max 64 chars */
 function isValidName(name: string): boolean {
-  return /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
+  if (name.length < 3) return false; // contract MIN_NAME_LENGTH = 3
+  return /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(name);
+}
+
+function nameValidationError(name: string): string {
+  if (!name) return "Name is required";
+  if (name.length < 3) return "Name must be at least 3 characters";
+  if (name.length > 63) return "Name must be 63 characters or less";
+  if (!/^[a-z0-9]/.test(name)) return "Name must start with a letter or number";
+  if (!/[a-z0-9]$/.test(name)) return "Name must end with a letter or number";
+  if (/[^a-z0-9-]/.test(name)) return "Name can only contain lowercase letters, numbers, and hyphens";
+  if (/--/.test(name)) return "Name cannot contain consecutive hyphens";
+  return "Invalid name format";
 }
 
 // =========================================================================
@@ -107,7 +119,7 @@ function isValidName(name: string): boolean {
 // Check if a name is available
 app.get("/api/available/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   const client = getClient(c.env);
   const isAvailable = await client.readContract({
     address: registryAddress(c.env),
@@ -121,7 +133,7 @@ app.get("/api/available/:name", async (c) => {
 // Resolve a name to its full record
 app.get("/api/resolve/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   const client = getClient(c.env);
   const [nameOwner, tokenId, registeredAt, operator, agentId, agentWallet] =
     await client.readContract({
@@ -151,7 +163,7 @@ app.get("/api/resolve/:name", async (c) => {
 // Get price for a name
 app.get("/api/price/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   const charCount = Number(c.req.query("charCount") || "0");
   const client = getClient(c.env);
   const basePrice = await client.readContract({
@@ -172,7 +184,7 @@ app.get("/api/price/:name", async (c) => {
 // Get full quote for a name (includes progressive pricing + discounts)
 app.get("/api/quote/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   const wallet = (c.req.query("wallet") || "0x0000000000000000000000000000000000000000") as Address;
   const charCount = Number(c.req.query("charCount") || "0");
   let ensImport = c.req.query("ensImport") === "true";
@@ -483,7 +495,7 @@ app.get("/api/reverse/:address", async (c) => {
 // Full profile: resolve + text records + status
 app.get("/api/profile/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
@@ -613,7 +625,7 @@ app.get("/api/profile/:name", async (c) => {
 // Contact resolution — resolves delegate chain (max 1 hop)
 app.get("/api/contact/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
@@ -707,7 +719,7 @@ app.get("/api/contact/:name", async (c) => {
 // Single text record
 app.get("/api/text/:name/:key", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   const key = c.req.param("key");
   const client = getClient(c.env);
   try {
@@ -726,7 +738,7 @@ app.get("/api/text/:name/:key", async (c) => {
 // OG image generator (PNG via resvg-wasm)
 app.get("/api/og/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
 
   // Escape for SVG
   const svgEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -914,7 +926,7 @@ app.get("/api/icon", async (c) => {
 // 500x500 branded square NFT image (for wallet display, like ENS)
 app.get("/api/nft-image/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   const svgEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const displayName = name.length > 12 ? name.slice(0, 10) + "..." : name;
   const fontSize = displayName.length > 8 ? 44 : displayName.length > 5 ? 56 : 68;
@@ -1146,7 +1158,7 @@ app.get("/api/metadata/:name", async (c) => {
     } catch { return c.json({ error: "Name not registered" }, 404); }
   }
 
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
 
   const [nameOwner, tokenId, registeredAt, , agentId] =
     await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] });
@@ -1767,7 +1779,7 @@ app.post("/api/domains/dns/:domain{.+}", async (c) => {
 // This route MUST come after /api/domains/dns/* to avoid route conflicts
 app.get("/api/domains/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
 
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
@@ -2148,7 +2160,7 @@ app.post("/api/agent/register", async (c) => {
   const agentURI = String(body.agentURI);
   const agentWallet = body.agentWallet ? String(body.agentWallet) : null;
 
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
 
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
@@ -2217,7 +2229,7 @@ app.post("/api/agent/confirm", async (c) => {
   const txHash = body.txHash as `0x${string}`;
   const agentWallet = body.agentWallet ? String(body.agentWallet) : null;
 
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
 
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
@@ -2331,7 +2343,7 @@ app.post("/x402/register", async (c) => {
   const name = String(body.name).toLowerCase();
   const owner = body.owner as Address;
 
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   if (!isAddress(owner)) return c.json({ error: "Invalid owner address" }, 400);
 
   // Global daily registration cap
@@ -2789,7 +2801,7 @@ const TEXT_RECORD_PRICE_USDC = 20000n; // $0.02 USDC (6 decimals)
 
 app.post("/x402/text/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
 
   const body = await c.req.json().catch(() => null);
   if (!body || !body.key || typeof body.key !== "string") {
@@ -2979,7 +2991,7 @@ app.post("/x402/text/:name", async (c) => {
 // x402 batch text records — $0.02 for up to 10 records in one tx
 app.post("/x402/text/:name/batch", async (c) => {
   const name = c.req.param("name").toLowerCase();
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
 
   const body = await c.req.json().catch(() => null);
   if (!body || !body.records || !Array.isArray(body.records) || body.records.length === 0) {
@@ -4543,7 +4555,7 @@ app.post("/api/marketplace/list-helper", async (c) => {
   const duration = body.duration ? parseInt(body.duration) : 0;
   const bountyEth = body.bountyAmount ? String(body.bountyAmount) : null;
 
-  if (!isValidName(name)) return c.json({ error: "Invalid name format" }, 400);
+  if (!isValidName(name)) return c.json({ error: nameValidationError(name) }, 400);
   if (!isAddress(seller)) return c.json({ error: "Invalid seller address" }, 400);
 
   const client = getClient(c.env);
