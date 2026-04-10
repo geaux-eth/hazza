@@ -898,12 +898,12 @@ export default function Manage() {
             {/* Agent */}
             <div className="section">
               <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>AI Agent (ERC-8004)</div>
-              {profile?.texts?.['agent.8004id'] ? (
+              {profileData?.texts?.['agent.8004id'] ? (
                 <>
                   <div style={{ background: '#f0fdf4', border: '2px solid #86efac', borderRadius: '8px', padding: '0.5rem 0.75rem', marginBottom: '0.5rem' }}>
-                    <p style={{ color: '#166534', fontSize: '0.8rem', fontWeight: 700, margin: 0 }}>Agent #{profile.texts['agent.8004id']} registered</p>
-                    {profile.texts['agent.wallet'] && <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>Wallet: {profile.texts['agent.wallet']}</p>}
-                    {profile.texts['agent.status'] && <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>Status: {profile.texts['agent.status']}</p>}
+                    <p style={{ color: '#166534', fontSize: '0.8rem', fontWeight: 700, margin: 0 }}>Agent #{profileData.texts['agent.8004id']} registered</p>
+                    {profileData.texts['agent.wallet'] && <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>Wallet: {profileData.texts['agent.wallet']}</p>}
+                    {profileData.texts['agent.status'] && <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>Status: {profileData.texts['agent.status']}</p>}
                   </div>
                   <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Update agent metadata via text records (Settings &gt; Text Records)</p>
                 </>

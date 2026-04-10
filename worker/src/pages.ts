@@ -157,7 +157,7 @@ export function spaShell(path: string, profileName?: string): string {
 <body>
   <div id="root">${ssrContent}</div>
   <script>window.onerror=function(m,s,l,c,e){if(s&&s.includes('extension'))return true;document.getElementById('root').innerHTML='<pre style="color:red;padding:2rem">'+m+'\\n'+s+':'+l+'\\n'+(e&&e.stack||'')+'</pre>';}</script>
-  <script type="module" src="${SPA_ASSET_BASE}/assets/index-DK5CS2rg.js"></script>
+  <script type="module" src="${SPA_ASSET_BASE}/assets/index-BYDfmjlb.js"></script>
 </body>
 </html>`;
 }
