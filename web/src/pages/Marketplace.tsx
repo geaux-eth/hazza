@@ -497,6 +497,8 @@ function OfferModal({ name, address, walletClient, publicClient, onClose }: {
 
 // --- Browse Tab ---
 
+type ViewSize = 'small' | 'medium' | 'large' | 'list';
+
 function BrowseTab({
   address, cart, setCart, watchlist, setWatchlist, listings, loadListings, setOfferModalName, switchTab, onContactSeller,
 }: {
@@ -518,6 +520,10 @@ function BrowseTab({
   const [buyStatus, setBuyStatus] = useState('');
   const [watchCounts, setWatchCounts] = useState<Record<string, number>>({});
   const [bountyInfo, setBountyInfo] = useState<Record<string, string>>({});
+  const [showMode, setShowMode] = useState<'listed' | 'all'>('listed');
+  const [allNames, setAllNames] = useState<{ name: string; owner: string; tokenId: number }[]>([]);
+  const [allNamesLoading, setAllNamesLoading] = useState(false);
+  const [viewSize, setViewSize] = useState<ViewSize>('small');
 
   const walletClient = useWalletClient();
   const publicClient = usePublicClient();
@@ -525,6 +531,28 @@ function BrowseTab({
   useEffect(() => {
     loadListings().finally(() => setLoading(false));
   }, [loadListings]);
+
+  // Load all registered names when "all" mode selected
+  useEffect(() => {
+    if (showMode !== 'all' || allNames.length > 0) return;
+    setAllNamesLoading(true);
+    (async () => {
+      try {
+        const entries: { name: string; owner: string; tokenId: number }[] = [];
+        let page = 1;
+        let pages = 1;
+        while (page <= pages) {
+          const res = await fetch(`${API_BASE}/api/directory?page=${page}&limit=50`);
+          const data = await res.json();
+          entries.push(...(data.entries || []));
+          pages = data.pages || 1;
+          page++;
+        }
+        setAllNames(entries);
+      } catch { /* silent */ }
+      setAllNamesLoading(false);
+    })();
+  }, [showMode, allNames.length]);
 
   // Load watch counts (batched)
   useEffect(() => {
@@ -552,6 +580,14 @@ function BrowseTab({
     setBountyInfo(bounties);
   }, [listings]);
 
+  // Listed names on Bazaar
+  const listedNames = new Set(listings.map(l => l.name.toLowerCase()));
+
+  // Unlisted = all registered names minus listed ones
+  const unlistedNames = useMemo(() => {
+    return allNames.filter(n => !listedNames.has(n.name.toLowerCase()));
+  }, [allNames, listedNames]);
+
   const filtered = useMemo(() => {
     let result = listings.filter(l => {
       if (search && !l.name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -568,6 +604,11 @@ function BrowseTab({
     });
     return result;
   }, [listings, search, sortBy, typeFilter, bountyInfo]);
+
+  const filteredUnlisted = useMemo(() => {
+    if (!search) return unlistedNames;
+    return unlistedNames.filter(n => n.name.toLowerCase().includes(search.toLowerCase()));
+  }, [unlistedNames, search]);
 
   const isWatched = (orderHash: string) => watchlist.some(w => w.orderHash === orderHash);
 
@@ -639,38 +680,52 @@ function BrowseTab({
   return (
     <div>
       {/* Filters */}
-      <div id="mp-filters" style={{ display: 'flex', gap: '0.4rem', flexWrap: 'nowrap', marginBottom: '1rem', alignItems: 'center' }}>
+      <div id="mp-filters" style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem', alignItems: 'center' }}>
         <input
           type="text" value={search} onChange={e => setSearch(e.target.value)}
-          onKeyUp={e => { if (e.key === 'Enter') { /* filtered already reactive */ } }}
           placeholder="search names..."
-          style={{ flex: '1 1 auto', minWidth: 0, padding: '0.5rem 0.75rem', border: '2px solid #E8DCAB', borderRadius: 6, background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka', sans-serif", outline: 'none' }}
+          style={{ flex: '1 1 auto', minWidth: 0, padding: '0.45rem 0.7rem', border: '2px solid #E8DCAB', borderRadius: 6, background: '#fff', color: '#131325', fontSize: '0.8rem', fontFamily: "'Fredoka', sans-serif", outline: 'none' }}
         />
-        <button
-          onClick={() => {/* search is reactive */}}
-          style={{ flexShrink: 0, height: 32, padding: '0 0.6rem', background: '#4870D4', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontFamily: "'Fredoka', sans-serif", fontWeight: 600 }}
-          aria-label="Search"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><circle cx="10" cy="10" r="7"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
-        </button>
-        <select
-          value={sortBy} onChange={e => setSortBy(e.target.value)}
-          style={{ padding: '0.4rem', border: '2px solid #E8DCAB', borderRadius: 6, background: '#fff', color: '#131325', fontSize: '0.8rem', fontFamily: "'Fredoka', sans-serif" }}
-        >
-          <option value="newest">newest</option>
-          <option value="price-low">price: low</option>
-          <option value="price-high">price: high</option>
-          <option value="name-az">A-Z</option>
-        </select>
-        <select
-          value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
-          style={{ padding: '0.4rem', border: '2px solid #E8DCAB', borderRadius: 6, background: '#fff', color: '#131325', fontSize: '0.8rem', fontFamily: "'Fredoka', sans-serif" }}
-        >
-          <option value="all">all</option>
-          <option value="namespace">namespaces</option>
-          <option value="regular">regular</option>
-          <option value="bounty">has bounty</option>
-        </select>
+        {showMode === 'listed' && (
+          <>
+            <select
+              value={sortBy} onChange={e => setSortBy(e.target.value)}
+              style={{ padding: '0.35rem', border: '2px solid #E8DCAB', borderRadius: 6, background: '#fff', color: '#131325', fontSize: '0.75rem', fontFamily: "'Fredoka', sans-serif" }}
+            >
+              <option value="newest">newest</option>
+              <option value="price-low">price: low</option>
+              <option value="price-high">price: high</option>
+              <option value="name-az">A-Z</option>
+            </select>
+            <select
+              value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
+              style={{ padding: '0.35rem', border: '2px solid #E8DCAB', borderRadius: 6, background: '#fff', color: '#131325', fontSize: '0.75rem', fontFamily: "'Fredoka', sans-serif" }}
+            >
+              <option value="all">all</option>
+              <option value="namespace">namespaces</option>
+              <option value="regular">regular</option>
+              <option value="bounty">has bounty</option>
+            </select>
+          </>
+        )}
+      </div>
+      {/* Toggle bar: listed/all + view size */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+        <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '2px solid #E8DCAB' }}>
+          <button onClick={() => setShowMode('listed')} style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif", fontWeight: 600, border: 'none', cursor: 'pointer', background: showMode === 'listed' ? '#4870D4' : '#fff', color: showMode === 'listed' ? '#fff' : '#8a7d5a' }}>listed</button>
+          <button onClick={() => setShowMode('all')} style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif", fontWeight: 600, border: 'none', borderLeft: '2px solid #E8DCAB', cursor: 'pointer', background: showMode === 'all' ? '#4870D4' : '#fff', color: showMode === 'all' ? '#fff' : '#8a7d5a' }}>all names</button>
+        </div>
+        <div style={{ display: 'flex', gap: '0.25rem' }}>
+          {(['small', 'medium', 'large', 'list'] as ViewSize[]).map(size => (
+            <button key={size} onClick={() => setViewSize(size)} title={size} style={{
+              width: 28, height: 28, border: '2px solid ' + (viewSize === size ? '#4870D4' : '#E8DCAB'), borderRadius: 4,
+              background: viewSize === size ? '#4870D4' : '#fff', color: viewSize === size ? '#fff' : '#8a7d5a',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', fontWeight: 700,
+            }}>
+              {size === 'small' ? '▦' : size === 'medium' ? '▣' : size === 'large' ? '⬛' : '☰'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Buy status */}
@@ -678,55 +733,101 @@ function BrowseTab({
         <div id="buy-status" style={{ textAlign: 'center', color: '#8a7d5a', fontSize: '0.85rem', padding: '0.5rem', marginBottom: '0.5rem' }}>{buyStatus}</div>
       )}
 
-      {/* Listings */}
+      {/* Listings / All Names */}
       <div id="listings-container">
-        {filtered.length === 0 ? (
-          <div className="empty-state">
-            <p>No names listed yet.</p>
-            <p><a href="#" onClick={e => { e.preventDefault(); switchTab('mynames'); }}>list a name</a></p>
-          </div>
+        {showMode === 'listed' ? (
+          filtered.length === 0 ? (
+            <div className="empty-state">
+              <p>No names listed yet.</p>
+              <p><a href="#" onClick={e => { e.preventDefault(); switchTab('mynames'); }}>list a name</a></p>
+            </div>
+          ) : (
+            <div className={`listing-grid view-${viewSize}`}>
+              {filtered.map(l => {
+                const badgeClass = l.currency === 'USDC' ? 'badge-usdc' : 'badge-eth';
+                const watched = isWatched(l.orderHash);
+                const isListView = viewSize === 'list';
+                return (
+                  <div className={`listing-card${isListView ? ' list-view' : ''}`} key={l.orderHash}>
+                    {l.image && !isListView && (
+                      <a href={l.profileUrl} style={{ display: 'block', marginBottom: '0.4rem' }}>
+                        <img src={l.image} alt={`${l.name}.hazza.name`} style={{ width: '100%', borderRadius: 6, aspectRatio: '1', objectFit: 'cover' }} loading="lazy" />
+                      </a>
+                    )}
+                    <div className="listing-name">
+                      <a href={l.profileUrl}>{l.name}</a>
+                      {l.isNamespace && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, background: '#CF3748', color: '#fff', fontSize: '0.55rem', fontWeight: 700, borderRadius: 3, verticalAlign: 'middle', marginLeft: '0.2rem' }} title="Namespace">N</span>
+                      )}
+                    </div>
+                    {!isListView && <div className="listing-meta">Seller: {truncAddr(l.seller)} &middot; Expires: {formatDate(l.listingExpiry)}</div>}
+                    <div className="listing-price">{l.price}<span className={`currency-badge ${badgeClass}`}>{l.currency}</span></div>
+                    {bountyInfo[l.orderHash] && !isListView && (
+                      <div style={{ fontSize: '0.7rem', color: '#4870D4', fontWeight: 600, marginBottom: '0.2rem' }}>
+                        <span style={{ display: 'inline-block', background: '#4870D4', color: '#fff', padding: '1px 5px', borderRadius: 3, fontSize: '0.6rem', marginRight: 3 }}>BOUNTY</span>
+                        {bountyInfo[l.orderHash]} ETH
+                      </div>
+                    )}
+                    <div className="listing-actions">
+                      <button className="btn-buy" onClick={() => buyListing(l)}>Buy</button>
+                      {!isListView && (
+                        <>
+                          <button className="btn-buy" style={{ background: 'transparent', border: '2px solid #E8DCAB', color: '#CF3748', flex: 0, padding: '0.5rem 0.6rem', fontSize: '0.7rem' }} onClick={() => setOfferModalName(l.name)}>Offer</button>
+                          {onContactSeller && (
+                            <button className="btn-buy" style={{ background: 'transparent', border: '2px solid #4870D4', color: '#4870D4', flex: 0, padding: '0.5rem 0.6rem', fontSize: '0.7rem' }} onClick={() => onContactSeller(l.name)}>Message</button>
+                          )}
+                          <button className="btn-buy" style={{ background: 'transparent', border: '2px solid #E8DCAB', color: '#8a7d5a', flex: 0, padding: '0.5rem 0.6rem' }} onClick={() => addToCart(l)}>+</button>
+                        </>
+                      )}
+                      <button className={`btn-watch${watched ? ' saved' : ''}`} onClick={() => toggleWatch(l)}>{watched ? '\u2605' : '\u2606'}</button>
+                    </div>
+                    {watchCounts[l.orderHash] > 0 && !isListView && (
+                      <div className="watch-count">in {watchCounts[l.orderHash]} watchlist{watchCounts[l.orderHash] > 1 ? 's' : ''}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )
         ) : (
-          <div className="listing-grid">
-            {filtered.map(l => {
-              const badgeClass = l.currency === 'USDC' ? 'badge-usdc' : 'badge-eth';
-              const watched = isWatched(l.orderHash);
-              return (
-                <div className="listing-card" key={l.orderHash}>
-                  {l.image && (
-                    <a href={l.profileUrl} style={{ display: 'block', marginBottom: '0.5rem' }}>
-                      <img src={l.image} alt={`${l.name}.hazza.name`} style={{ width: '100%', borderRadius: 8, aspectRatio: '1', objectFit: 'cover' }} loading="lazy" />
+          /* All Names mode */
+          allNamesLoading ? (
+            <p style={{ color: '#8a7d5a', textAlign: 'center', fontSize: '0.85rem' }}>Loading registry...</p>
+          ) : filteredUnlisted.length === 0 && filtered.length === 0 ? (
+            <div className="empty-state"><p>No registered names found.</p></div>
+          ) : (
+            <div className={`listing-grid view-${viewSize}`}>
+              {/* Show listed names first with "LISTED" badge */}
+              {filtered.map(l => (
+                <div className={`listing-card${viewSize === 'list' ? ' list-view' : ''}`} key={`listed-${l.orderHash}`}>
+                  {l.image && viewSize !== 'list' && (
+                    <a href={l.profileUrl} style={{ display: 'block', marginBottom: '0.4rem' }}>
+                      <img src={l.image} alt={l.name} style={{ width: '100%', borderRadius: 6, aspectRatio: '1', objectFit: 'cover' }} loading="lazy" />
                     </a>
                   )}
                   <div className="listing-name">
                     <a href={l.profileUrl}>{l.name}</a>
-                    {l.isNamespace && (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, background: '#CF3748', color: '#fff', fontSize: '0.6rem', fontWeight: 700, borderRadius: 3, verticalAlign: 'middle', marginLeft: '0.2rem' }} title="Namespace">N</span>
-                    )}
+                    <span style={{ display: 'inline-block', background: '#4870D4', color: '#fff', padding: '1px 5px', borderRadius: 3, fontSize: '0.6rem', fontWeight: 700, marginLeft: '0.3rem', verticalAlign: 'middle' }}>LISTED</span>
                   </div>
-                  <div className="listing-meta">Seller: {truncAddr(l.seller)} &middot; Expires: {formatDate(l.listingExpiry)}</div>
-                  <div className="listing-price">{l.price}<span className={`currency-badge ${badgeClass}`}>{l.currency}</span></div>
-                  {bountyInfo[l.orderHash] && (
-                    <div style={{ fontSize: '0.75rem', color: '#4870D4', fontWeight: 600, marginBottom: '0.3rem' }}>
-                      <span style={{ display: 'inline-block', background: '#4870D4', color: '#fff', padding: '1px 6px', borderRadius: 4, fontSize: '0.65rem', marginRight: 4 }}>BOUNTY</span>
-                      {bountyInfo[l.orderHash]} ETH
-                    </div>
-                  )}
-                  <div className="listing-actions">
-                    <button className="btn-buy" onClick={() => buyListing(l)}>Buy</button>
-                    <button className="btn-buy" style={{ background: 'transparent', border: '2px solid #E8DCAB', color: '#CF3748', flex: 0, padding: '0.6rem 0.75rem', fontSize: '0.75rem' }} onClick={() => setOfferModalName(l.name)}>Offer</button>
-                    {onContactSeller && (
-                      <button className="btn-buy" style={{ background: 'transparent', border: '2px solid #4870D4', color: '#4870D4', flex: 0, padding: '0.6rem 0.75rem', fontSize: '0.75rem' }} onClick={() => onContactSeller(l.name)}>Message</button>
-                    )}
-                    <button className="btn-buy" style={{ background: 'transparent', border: '2px solid #E8DCAB', color: '#8a7d5a', flex: 0, padding: '0.6rem 0.75rem' }} onClick={() => addToCart(l)}>+</button>
-                    <button className={`btn-watch${watched ? ' saved' : ''}`} onClick={() => toggleWatch(l)}>{watched ? '\u2605' : '\u2606'}</button>
-                  </div>
-                  {watchCounts[l.orderHash] > 0 && (
-                    <div className="watch-count">in {watchCounts[l.orderHash]} watchlist{watchCounts[l.orderHash] > 1 ? 's' : ''}</div>
-                  )}
+                  <div className="listing-price">{l.price}<span className={`currency-badge ${l.currency === 'USDC' ? 'badge-usdc' : 'badge-eth'}`}>{l.currency}</span></div>
                 </div>
-              );
-            })}
-          </div>
+              ))}
+              {/* Show unlisted names */}
+              {filteredUnlisted.map(n => (
+                <div className={`listing-card${viewSize === 'list' ? ' list-view' : ''}`} key={`reg-${n.tokenId}`} style={{ borderColor: '#E8DCAB' }}>
+                  <div style={{ marginBottom: '0.4rem' }}>
+                    <a href={`https://${n.name}.hazza.name`} style={{ display: 'block' }}>
+                      <img src={`https://hazza.name/api/nft-image/${n.name}`} alt={n.name} style={{ width: '100%', borderRadius: 6, aspectRatio: '1', objectFit: 'cover', opacity: 0.8 }} loading="lazy" />
+                    </a>
+                  </div>
+                  <div className="listing-name">
+                    <a href={`https://${n.name}.hazza.name`}>{n.name}</a>
+                  </div>
+                  <div className="listing-meta">Owner: {truncAddr(n.owner)}</div>
+                </div>
+              ))}
+            </div>
+          )
         )}
       </div>
     </div>
