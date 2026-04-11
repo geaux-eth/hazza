@@ -1275,8 +1275,8 @@ app.get("/api/names/:address", async (c) => {
     if (count === 0) return c.json({ wallet, names: [], total: 0 });
     const totalCount = Number(total);
 
-    // Batch nameOf calls in chunks to find which tokens exist
-    const BATCH_SIZE = 50;
+    // Batch nameOf calls in smaller chunks to avoid RPC rate limits
+    const BATCH_SIZE = 10;
     const MAX_TOKENS_TO_CHECK = 10000;
     const names: { name: string; tokenId: string; url: string; status: string; isNamespace: boolean }[] = [];
 
@@ -1341,8 +1341,8 @@ app.get("/api/names/:address", async (c) => {
       });
     }
     return c.json({ wallet, names, total: names.length });
-  } catch {
-    return c.json({ error: "Failed to fetch names" }, 500);
+  } catch (e: any) {
+    return c.json({ error: "Failed to fetch names", _err: e?.message || String(e) }, 500);
   }
 });
 
@@ -1378,7 +1378,7 @@ app.get("/api/directory", async (c) => {
       // Search by name prefix or exact wallet
       const isWalletSearch = /^0x[0-9a-f]{4,40}$/i.test(search);
       const entries: { name: string; owner: string; tokenId: number }[] = [];
-      const BATCH = 50;
+      const BATCH = 10;
 
       for (let start = 1; start <= total && entries.length < limit; start += BATCH) {
         const end = Math.min(start + BATCH - 1, total);
