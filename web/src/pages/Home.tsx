@@ -243,7 +243,7 @@ export default function Home() {
     <>
       <div className="header">
         <h1>hazza<span>.name</span></h1>
-        <p>immediately useful</p>
+        <p style={{ fontFamily: "'DM Sans', monospace", fontSize: '0.85rem', color: '#8a7d5a', letterSpacing: '0.02em' }}>npm install -g hazza-cli</p>
       </div>
 
       <div style={{ maxWidth: '480px', margin: '0 auto 1rem' }}>

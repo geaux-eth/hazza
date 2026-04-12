@@ -2,7 +2,7 @@
 
 Onchain name registry on Base. Register `yourname.hazza.name` with USDC, get an ERC-721 NFT, ENS-compatible resolution via CCIP-Read, and an optional ERC-8004 AI agent identity. **Pay once, available forever.**
 
-**Live:** [hazza.name](https://hazza.name)
+**Live:** [hazza.name](https://hazza.name) | **CLI:** `npm install -g hazza-cli`
 
 ## Architecture
 

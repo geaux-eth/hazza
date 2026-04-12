@@ -453,8 +453,8 @@ Agent flow: call list-helper, sign typedData, call Bazaar.submit() with signatur
 hazza has a CLI tool for terminal-based interaction:
 
 ```bash
-# Install
-cd cli && npm install && npm link
+# Install from npm
+npm install -g hazza-cli
 
 # Search for a name
 hazza search <name>

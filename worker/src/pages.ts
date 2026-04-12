@@ -119,7 +119,7 @@ export function spaShell(path: string, profileName?: string): string {
 
   // SSR the landing page so users see real content instantly (no "loading..." flash)
   const isLanding = path === "/";
-  const ssrContent = isLanding ? `<div class="nav-bar"><nav><a class="logo" href="/"><span class="logo-icon">h</span></a><button class="hamburger" aria-label="Menu">&#9776;</button><div class="links"><a href="/register">register</a><a href="/marketplace">marketplace</a><a href="/dashboard">dashboard</a><a href="/messages">messages</a><a href="/about">about</a><a href="/docs">docs</a><button class="nav-wallet-btn">connect</button></div></nav></div><div class="page-content"><div class="header"><h1>hazza<span>.name</span></h1><p>immediately useful</p></div><div style="max-width:480px;margin:0 auto 1rem"><div class="search-box"><input type="text" id="name-input" placeholder="find something awesome!" autocomplete="off" spellcheck="false"><button id="search-btn">Search</button></div></div><div class="result" id="result"></div><div id="landing-features" style="margin-top:1.5rem;max-width:640px;margin-left:auto;margin-right:auto;display:grid;grid-template-columns:repeat(5,1fr);gap:1rem">${[
+  const ssrContent = isLanding ? `<div class="nav-bar"><nav><a class="logo" href="/"><span class="logo-icon">h</span></a><button class="hamburger" aria-label="Menu">&#9776;</button><div class="links"><a href="/register">register</a><a href="/marketplace">marketplace</a><a href="/dashboard">dashboard</a><a href="/messages">messages</a><a href="/about">about</a><a href="/docs">docs</a><button class="nav-wallet-btn">connect</button></div></nav></div><div class="page-content"><div class="header"><h1>hazza<span>.name</span></h1><p style="font-family:'DM Sans',monospace;font-size:0.85rem;color:#8a7d5a;letter-spacing:0.02em">npm install -g hazza-cli</p></div><div style="max-width:480px;margin:0 auto 1rem"><div class="search-box"><input type="text" id="name-input" placeholder="find something awesome!" autocomplete="off" spellcheck="false"><button id="search-btn">Search</button></div></div><div class="result" id="result"></div><div id="landing-features" style="margin-top:1.5rem;max-width:640px;margin-left:auto;margin-right:auto;display:grid;grid-template-columns:repeat(5,1fr);gap:1rem">${[
     { title: 'onchain', desc: 'permanent name + website on Net Protocol' },
     { title: 'DNS + ENS', desc: 'resolves like a real domain' },
     { title: 'x402', desc: 'one-click registration, no wallet popups' },
@@ -157,7 +157,7 @@ export function spaShell(path: string, profileName?: string): string {
 <body>
   <div id="root">${ssrContent}</div>
   <script>window.onerror=function(m,s,l,c,e){if(s&&s.includes('extension'))return true;document.getElementById('root').innerHTML='<pre style="color:red;padding:2rem">'+m+'\\n'+s+':'+l+'\\n'+(e&&e.stack||'')+'</pre>';}</script>
-  <script type="module" src="${SPA_ASSET_BASE}/assets/index-C6PoJ0Z9.js"></script>
+  <script type="module" src="${SPA_ASSET_BASE}/assets/index-CeFNvEr0.js"></script>
 </body>
 </html>`;
 }
