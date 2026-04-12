@@ -1,16 +1,27 @@
 {
   "name": "hazza-cli",
   "version": "1.0.0",
-  "description": "CLI for HAZZA — onchain names on Base, powered by x402 and Net Protocol",
+  "description": "CLI for hazza — immediately useful onchain names on Base, powered by x402 and Net Protocol",
   "bin": {
     "hazza": "bin/hazza.js"
   },
-  "keywords": ["hazza", "ens", "names", "onchain", "base", "x402", "net-protocol", "cli"],
-  "author": "HAZZA",
+  "keywords": ["hazza", "ens", "names", "onchain", "base", "x402", "net-protocol", "cli", "erc-8004", "xmtp", "seaport"],
+  "author": "GEAUX <geaux-eth@users.noreply.github.com>",
   "license": "MIT",
+  "homepage": "https://hazza.name",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/geaux-eth/hazza",
+    "directory": "cli"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
+  "files": [
+    "bin/",
+    "commands/",
+    "lib/"
+  ],
   "dependencies": {
     "chalk": "^4.1.2",
     "cli-table3": "^0.6.5",

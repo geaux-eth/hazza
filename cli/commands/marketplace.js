@@ -510,4 +510,309 @@ cmd.command('bounty <name>')
     }
   });
 
+cmd.command('cancel <orderHash>')
+  .description('Cancel an active listing (requires cast)')
+  .action(async (orderHash) => {
+    try {
+      payment.requireCast();
+      const rpcUrl = payment.getRpcUrl();
+
+      out.info(`Preparing cancel for ${orderHash.slice(0, 10)}...`);
+
+      const cancelData = await api.post('/api/marketplace/cancel', { orderHash });
+      if (cancelData.error) {
+        out.error(cancelData.error);
+        process.exit(1);
+      }
+
+      out.info(`Cancelling listing for ${cancelData.listing.name || 'unknown'}...`);
+      const txResult = payment.cast(
+        ['send', cancelData.cancel.to, '--data', cancelData.cancel.data, '--rpc-url', rpcUrl, '--json']
+      );
+
+      let txHash = txResult;
+      try { txHash = JSON.parse(txResult).transactionHash || JSON.parse(txResult).hash || txResult; } catch {}
+      if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) throw new Error('Invalid tx hash: ' + txHash);
+
+      out.success('Listing cancelled!');
+      out.info(`Tx: ${txHash}`);
+    } catch (e) {
+      out.error(e.message);
+      process.exit(1);
+    }
+  });
+
+cmd.command('accept-offer <orderHash> <name>')
+  .description('Accept an offer on one of your names (requires cast)')
+  .action(async (orderHash, name) => {
+    try {
+      payment.requireCast();
+      const wallet = payment.getWallet();
+      const rpcUrl = payment.getRpcUrl();
+
+      // Resolve name to get tokenId
+      out.info(`Looking up ${name}...`);
+      const resolved = await api.get(`/api/resolve/${name}`);
+      if (!resolved.tokenId) {
+        out.error(`${name} is not registered`);
+        process.exit(1);
+      }
+
+      out.info(`Preparing offer acceptance...`);
+      const fulfillData = await api.post('/api/marketplace/fulfill-offer', {
+        orderHash,
+        tokenId: resolved.tokenId,
+        sellerAddress: wallet,
+      });
+
+      if (fulfillData.error) {
+        out.error(fulfillData.error);
+        process.exit(1);
+      }
+
+      // Handle approvals (NFT approval for Seaport)
+      if (fulfillData.approvals && fulfillData.approvals.length > 0) {
+        for (const approval of fulfillData.approvals) {
+          out.info('Approving...');
+          payment.cast(['send', approval.to, '--data', approval.data, '--rpc-url', rpcUrl, '--json']);
+        }
+      }
+
+      out.info('Accepting offer...');
+      const castArgs = ['send', fulfillData.fulfillment.to, '--data', fulfillData.fulfillment.data];
+      if (fulfillData.fulfillment.value && fulfillData.fulfillment.value !== '0') {
+        castArgs.push('--value', fulfillData.fulfillment.value);
+      }
+      castArgs.push('--rpc-url', rpcUrl, '--json');
+      const txResult = payment.cast(castArgs);
+
+      let txHash = txResult;
+      try { txHash = JSON.parse(txResult).transactionHash || JSON.parse(txResult).hash || txResult; } catch {}
+      if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) throw new Error('Invalid tx hash: ' + txHash);
+
+      out.success('Offer accepted!');
+      out.info(`Tx: ${txHash}`);
+    } catch (e) {
+      out.error(e.message);
+      process.exit(1);
+    }
+  });
+
+cmd.command('offer <name> <price>')
+  .description('Make a WETH offer on a name (requires cast)')
+  .option('--duration <seconds>', 'Offer duration in seconds (default: 7 days)', '604800')
+  .action(async (name, price, opts) => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+
+    try {
+      payment.requireCast();
+      const wallet = payment.getWallet();
+      const rpcUrl = payment.getRpcUrl();
+      const config = require('../lib/config');
+      const registryAddress = config.get('registryAddress');
+      const seaportAddress = '0x0000000000000068F116a894984e2DB1123eB395';
+      const wethAddress = '0x4200000000000000000000000000000000000006';
+      const TREASURY_ADDRESS = config.get('treasuryAddress') || '0x62B7399B2ac7e938Efad06EF8746fDBA3B351900';
+      const zeroAddr = '0x0000000000000000000000000000000000000000';
+      const zeroBytes32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+      out.info(`Making offer on ${name} for ${price} WETH...`);
+
+      // Resolve name
+      const resolved = await api.get(`/api/resolve/${name}`);
+      if (!resolved.tokenId) {
+        out.error(`${name} is not registered`);
+        process.exit(1);
+      }
+      const tokenId = BigInt(resolved.tokenId);
+      const nameOwner = resolved.owner;
+
+      // Parse price
+      const priceWei = ethToWei(price);
+      const feeBps = 0n;
+      const feeAmount = 0n;
+      const sellerAmount = priceWei;
+
+      // Check WETH balance
+      const wethBal = payment.contractCall(wethAddress, 'balanceOf(address)(uint256)', [wallet], rpcUrl);
+      if (BigInt(wethBal.trim()) < priceWei) {
+        out.error(`Insufficient WETH. Need ${price}, wrap ETH first.`);
+        process.exit(1);
+      }
+
+      // Approve WETH to Seaport
+      const allowance = payment.contractCall(wethAddress, 'allowance(address,address)(uint256)', [wallet, seaportAddress], rpcUrl);
+      if (BigInt(allowance.trim()) < priceWei) {
+        out.info('Approving WETH to Seaport...');
+        payment.contractSend(wethAddress, 'approve(address,uint256)', [seaportAddress, priceWei.toString()], rpcUrl);
+        out.success('WETH approved');
+      }
+
+      // Get counter
+      const counterHex = payment.contractCall(seaportAddress, 'getCounter(address)(uint256)', [wallet], rpcUrl);
+      const counter = BigInt(counterHex.trim());
+
+      const duration = parseInt(opts.duration);
+      const now = Math.floor(Date.now() / 1000);
+      const endTime = BigInt(now + duration);
+      const saltBytes = require('crypto').randomBytes(32);
+      const salt = BigInt('0x' + saltBytes.toString('hex'));
+
+      // Build offer (WETH)
+      const offer = [{
+        itemType: '1', token: wethAddress, identifierOrCriteria: '0',
+        startAmount: priceWei.toString(), endAmount: priceWei.toString(),
+      }];
+      const consideration = [
+        { itemType: '2', token: registryAddress, identifierOrCriteria: tokenId.toString(),
+          startAmount: '1', endAmount: '1', recipient: wallet },
+        { itemType: '1', token: wethAddress, identifierOrCriteria: '0',
+          startAmount: sellerAmount.toString(), endAmount: sellerAmount.toString(), recipient: nameOwner },
+      ];
+
+      // EIP-712 typed data
+      const typedData = {
+        types: {
+          EIP712Domain: [
+            { name: 'name', type: 'string' }, { name: 'version', type: 'string' },
+            { name: 'chainId', type: 'uint256' }, { name: 'verifyingContract', type: 'address' },
+          ],
+          OrderComponents: [
+            { name: 'offerer', type: 'address' }, { name: 'zone', type: 'address' },
+            { name: 'offer', type: 'OfferItem[]' }, { name: 'consideration', type: 'ConsiderationItem[]' },
+            { name: 'orderType', type: 'uint8' }, { name: 'startTime', type: 'uint256' },
+            { name: 'endTime', type: 'uint256' }, { name: 'zoneHash', type: 'bytes32' },
+            { name: 'salt', type: 'uint256' }, { name: 'conduitKey', type: 'bytes32' },
+            { name: 'counter', type: 'uint256' },
+          ],
+          OfferItem: [
+            { name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' },
+            { name: 'identifierOrCriteria', type: 'uint256' },
+            { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' },
+          ],
+          ConsiderationItem: [
+            { name: 'itemType', type: 'uint8' }, { name: 'token', type: 'address' },
+            { name: 'identifierOrCriteria', type: 'uint256' },
+            { name: 'startAmount', type: 'uint256' }, { name: 'endAmount', type: 'uint256' },
+            { name: 'recipient', type: 'address' },
+          ],
+        },
+        primaryType: 'OrderComponents',
+        domain: {
+          name: 'Seaport', version: '1.6',
+          chainId: config.get('chainId') || '8453',
+          verifyingContract: seaportAddress,
+        },
+        message: {
+          offerer: wallet, zone: zeroAddr, offer, consideration,
+          orderType: '0', startTime: now.toString(), endTime: endTime.toString(),
+          zoneHash: zeroBytes32, salt: salt.toString(), conduitKey: zeroBytes32,
+          counter: counter.toString(),
+        },
+      };
+
+      const tmpFile = path.join(os.tmpdir(), `hazza-offer-${Date.now()}.json`);
+      fs.writeFileSync(tmpFile, JSON.stringify(typedData, null, 2), { mode: 0o600 });
+
+      try {
+        out.info('Sign the offer in your wallet...');
+        const signature = payment.cast(['wallet', 'sign', '--data', '--from-file', tmpFile]);
+        const sig = signature.trim();
+
+        // Submit to API
+        out.info('Submitting offer...');
+        const orderComponents = {
+          offerer: wallet, zone: zeroAddr,
+          offer: offer.map(o => ({ ...o })),
+          consideration: consideration.map(c => ({ ...c })),
+          orderType: 0, startTime: now.toString(), endTime: endTime.toString(),
+          zoneHash: zeroBytes32, salt: salt.toString(), conduitKey: zeroBytes32,
+          counter: counter.toString(),
+          totalOriginalConsiderationItems: consideration.length.toString(),
+        };
+
+        const result = await api.post('/api/marketplace/offer', {
+          name, offerer: wallet, price, currency: 'WETH', signature: sig,
+          orderComponents, expiresAt: now + duration,
+          sellerAmount: sellerAmount.toString(), feeAmount: '0',
+          tokenId: resolved.tokenId,
+        });
+
+        if (result.error) throw new Error(result.error);
+
+        out.success(`Offer submitted! ${price} WETH for ${name}`);
+        out.info(`Duration: ${duration === 604800 ? '7 days' : duration + 's'}`);
+        out.info(`View at: hazza.name/marketplace?tab=offers`);
+      } finally {
+        try { fs.unlinkSync(tmpFile); } catch {}
+      }
+    } catch (e) {
+      out.error(e.message);
+      process.exit(1);
+    }
+  });
+
+cmd.command('refund <txHash>')
+  .description('Request a refund for a failed registration payment')
+  .action(async (txHash) => {
+    try {
+      const wallet = payment.getWallet();
+
+      out.info('Submitting refund request...');
+      const result = await api.post('/api/refund', { txHash, wallet });
+
+      if (result.error) {
+        out.error(result.error);
+        process.exit(1);
+      }
+
+      if (out.isJsonMode()) return out.json(result);
+      out.success(result.message || 'Refund request submitted');
+      if (result.amount) out.info(`Amount: $${result.amount} USDC`);
+    } catch (e) {
+      out.error(e.message);
+      process.exit(1);
+    }
+  });
+
+cmd.command('directory')
+  .alias('dir')
+  .description('Browse all registered names')
+  .option('--page <n>', 'Page number', '1')
+  .option('--limit <n>', 'Names per page', '20')
+  .option('-q, --query <text>', 'Search by name or wallet')
+  .action(async (opts) => {
+    try {
+      let path = `/api/directory?page=${opts.page}&limit=${opts.limit}`;
+      if (opts.query) path += `&q=${encodeURIComponent(opts.query)}`;
+      const result = await api.get(path);
+
+      if (out.isJsonMode()) return out.json(result);
+
+      const entries = result.entries || [];
+      if (entries.length === 0) {
+        out.warn(opts.query ? `No names matching "${opts.query}"` : 'No registered names');
+        return;
+      }
+
+      out.heading(`Registry — ${result.total} name${result.total === 1 ? '' : 's'}${opts.query ? ` matching "${opts.query}"` : ''} (page ${result.page}/${result.pages})`);
+      out.table(
+        ['Name', 'Owner', 'Token ID'],
+        entries.map(e => [
+          e.name,
+          e.owner ? e.owner.slice(0, 6) + '...' + e.owner.slice(-4) : '—',
+          String(e.tokenId),
+        ]),
+      );
+      if (result.pages > 1) {
+        out.info(`Page ${result.page} of ${result.pages}. Use --page <n> to navigate.`);
+      }
+    } catch (e) {
+      out.error(e.message);
+      process.exit(1);
+    }
+  });
+
 module.exports = cmd;
