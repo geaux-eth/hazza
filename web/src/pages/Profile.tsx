@@ -202,7 +202,7 @@ function AgentSection({ agentId, agentWallet, agentMeta, texts }: { agentId: str
 
       {agentMeta?.metadata?.pfp && (
         <div style={{ textAlign: 'center', marginBottom: '0.75rem' }}>
-          <img src={agentMeta.metadata.pfp} alt={agentMeta.name || 'Agent'} style={{ width: 64, height: 64, borderRadius: '50%', border: '2px solid #CF3748', objectFit: 'cover' }} />
+          <img src={agentMeta.metadata.pfp} alt={agentMeta.name || 'Agent'} style={{ width: 64, height: 64, borderRadius: '50%', border: '2px solid #CF3748', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         </div>
       )}
 
@@ -258,7 +258,7 @@ function HelixaSection({ data }: { data: any }) {
   return (
     <div style={{ marginBottom: '1rem' }}>
       <div style={{ color: '#8a7d5a', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        Helixa AgentDNA <img src={auraUrl} alt="Aura" style={{ width: 18, height: 18, borderRadius: '50%' }} />
+        Helixa AgentDNA <img src={auraUrl} alt="Aura" style={{ width: 18, height: 18, borderRadius: '50%' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
       </div>
       {data.name && <InfoRow label="Name" value={data.name} />}
       <InfoRow label="Token ID" value={`#${data.tokenId}`} link={`https://helixa.xyz/agent/${data.tokenId}`} />
@@ -287,7 +287,7 @@ function ExoskeletonSection({ data }: { data: any }) {
       <div style={{ color: '#8a7d5a', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>Exoskeleton</div>
       {data.image && typeof data.image === 'string' && data.image.startsWith('data:image/') && (
         <div style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
-          <img src={data.image} alt={data.name || 'Exoskeleton'} style={{ width: 100, height: 100, borderRadius: 8, border: '2px solid #E8DCAB' }} />
+          <img src={data.image} alt={data.name || 'Exoskeleton'} style={{ width: 100, height: 100, borderRadius: 8, border: '2px solid #E8DCAB' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         </div>
       )}
       {data.name && <InfoRow label="Name" value={data.name} />}
