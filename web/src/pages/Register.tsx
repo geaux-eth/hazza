@@ -71,15 +71,25 @@ function SearchView() {
   const [searched, setSearched] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [walletPricing, setWalletPricing] = useState<WalletPricing | null>(null);
+  const [ensSuggestions, setEnsSuggestions] = useState<EnsSuggestion[]>([]);
 
   useEffect(() => {
-    if (!isConnected || !address) { setWalletPricing(null); return; }
+    if (!isConnected || !address) { setWalletPricing(null); setEnsSuggestions([]); return; }
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(`${API_BASE}/api/wallet-pricing/${address}`);
         const data = await res.json();
         if (!cancelled) setWalletPricing(data);
+      } catch { /* non-fatal */ }
+    })();
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/ens-names/${address}`);
+        const data = await res.json();
+        if (!cancelled && data.suggestions?.length > 0) {
+          setEnsSuggestions(data.suggestions.filter((s: EnsSuggestion) => s.available));
+        }
       } catch { /* non-fatal */ }
     })();
     return () => { cancelled = true; };
@@ -127,6 +137,28 @@ function SearchView() {
 
   return (
     <div>
+      {ensSuggestions.length > 0 && (
+        <div className="max-w-md mx-auto mb-4 p-3 bg-white border-2 border-blue rounded-xl">
+          <p className="text-muted text-xs mb-2" style={{ fontFamily: "'Fredoka', sans-serif" }}>
+            you own {ensSuggestions.length === 1 ? 'an ENS name' : 'ENS names'} &mdash; claim {ensSuggestions.length === 1 ? 'it' : 'them'} on hazza:
+          </p>
+          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+            {ensSuggestions.map(s => (
+              <Link
+                key={s.name}
+                to={`/register?name=${encodeURIComponent(s.name)}`}
+                style={{ display: 'inline-block', padding: '0.3rem 0.7rem', background: '#4870D4', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 700, fontFamily: "'Fredoka', sans-serif", textDecoration: 'none' }}
+              >
+                {s.name}<span style={{ opacity: 0.7 }}>.hazza.name</span>
+              </Link>
+            ))}
+          </div>
+          <p className="text-muted" style={{ fontSize: '0.65rem', marginTop: '0.3rem' }}>
+            from {ensSuggestions.map(s => s.ensSource).join(', ')}
+          </p>
+        </div>
+      )}
+
       <div className="search-box flex gap-2 max-w-md mx-auto mb-6">
         <input
           type="text"
