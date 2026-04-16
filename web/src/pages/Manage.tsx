@@ -74,6 +74,7 @@ export default function Manage() {
 
   // Custom domain field
   const [domainValue, setDomainValue] = useState('');
+  const [existingDomains, setExistingDomains] = useState<string[]>([]);
 
   // Website / site key field
   const [siteKeyValue, setSiteKeyValue] = useState('');
@@ -142,6 +143,11 @@ export default function Manage() {
           if (t['netlibrary.member']) setNetLibraryMember(t['netlibrary.member']);
           if (t['net.profile']) setNetProfileKey(t['net.profile']);
           if (t['site.key']) setSiteKeyValue(t['site.key']);
+          // Fetch custom domains
+          fetch(`${API_BASE}/api/domains/${encodeURIComponent(nameParam)}`)
+            .then(r => r.json())
+            .then(dd => { if (Array.isArray(dd.domains)) setExistingDomains(dd.domains); })
+            .catch(() => {});
         }
       })
       .catch(() => {
@@ -222,6 +228,12 @@ export default function Manage() {
       showMsg('Operator set!', false);
     } else if (pendingAction.type === 'setCustomDomain') {
       showMsg('Custom domain set!', false);
+      setDomainValue('');
+      // Refetch domains
+      fetch(`${API_BASE}/api/domains/${encodeURIComponent(nameParam)}`)
+        .then(r => r.json())
+        .then(dd => { if (Array.isArray(dd.domains)) setExistingDomains(dd.domains); })
+        .catch(() => {});
     } else if (pendingAction.type === 'registerAgent') {
       showMsg('Agent registered!', false);
     } else if (pendingAction.type === 'transfer') {
@@ -827,11 +839,20 @@ export default function Manage() {
             <div className="section">
               <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>Custom Domain</div>
               <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Link a domain to resolve to this name (max 10)</p>
+              {existingDomains.length > 0 && (
+                <div style={{ marginBottom: '0.5rem', display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                  {existingDomains.map(d => (
+                    <span key={d} style={{ display: 'inline-block', padding: '0.2rem 0.5rem', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '4px', fontSize: '0.75rem', color: '#166534', fontFamily: "'Fredoka',sans-serif" }}>
+                      {d}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <input type="text" placeholder="example.com" value={domainValue} onChange={(e) => setDomainValue(e.target.value)}
                   style={{ flex: 1, padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
                 <button onClick={handleSaveDomain} disabled={isWriting || isConfirming}
-                  style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>Set</button>
+                  style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>Add</button>
               </div>
             </div>
 
@@ -897,19 +918,19 @@ export default function Manage() {
 
             {/* Agent */}
             <div className="section">
-              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>AI Agent (ERC-8004)</div>
+              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>Agent Identity</div>
               {profileData?.texts?.['agent.8004id'] ? (
                 <>
                   <div style={{ background: '#f0fdf4', border: '2px solid #86efac', borderRadius: '8px', padding: '0.5rem 0.75rem', marginBottom: '0.5rem' }}>
-                    <p style={{ color: '#166534', fontSize: '0.8rem', fontWeight: 700, margin: 0 }}>Agent #{profileData.texts['agent.8004id']} registered</p>
+                    <p style={{ color: '#166534', fontSize: '0.8rem', fontWeight: 700, margin: 0 }}>Agent #{profileData.texts['agent.8004id']}</p>
                     {profileData.texts['agent.wallet'] && <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>Wallet: {profileData.texts['agent.wallet']}</p>}
                     {profileData.texts['agent.status'] && <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.2rem 0 0' }}>Status: {profileData.texts['agent.status']}</p>}
                   </div>
-                  <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Update agent metadata via text records (Settings &gt; Text Records)</p>
+                  <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Manage agent metadata in Text Records above.</p>
                 </>
               ) : (
                 <>
-                  <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Register a permanent agent identity on Base</p>
+                  <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem' }}>Give this name a discoverable onchain agent identity.</p>
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
                     <label style={{ color: '#8a7d5a', fontSize: '0.8rem', minWidth: '65px' }}>URI</label>
                     <input type="text" placeholder={`https://${nameParam}.hazza.name`} value={agentUri} onChange={(e) => setAgentUri(e.target.value)} maxLength={2048}
@@ -922,7 +943,7 @@ export default function Manage() {
                   </div>
                   <button onClick={handleRegisterAgent} disabled={isWriting || isConfirming}
                     style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>
-                    Register Agent
+                    Register an Agent
                   </button>
                 </>
               )}

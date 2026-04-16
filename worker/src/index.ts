@@ -1066,13 +1066,14 @@ app.get("/api/nfts/:address", async (c) => {
 
   // Try Alchemy NFT API (works on mainnet where BASE_MAINNET_RPC is an Alchemy URL)
   const rpcUrl = c.env.BASE_MAINNET_RPC || "";
-  const alchemyMatch = rpcUrl.match(/g\.alchemy\.com\/v2\/(.+)$/);
+  // Handle both v2 and newer Alchemy URL formats
+  const alchemyMatch = rpcUrl.match(/g\.alchemy\.com\/v2\/(.+)$/) || rpcUrl.match(/\.alchemy\.com\/.*?\/([a-zA-Z0-9_-]+)$/);
   if (alchemyMatch) {
     const apiKey = alchemyMatch[1];
     const alchemyBase = `https://base-mainnet.g.alchemy.com/nft/v3/${apiKey}`;
     try {
       const res = await fetchWithTimeout(
-        `${alchemyBase}/getNFTsForOwner?owner=${address}&withMetadata=true&pageSize=50&excludeFilters[]=SPAM`,
+        `${alchemyBase}/getNFTsForOwner?owner=${address}&withMetadata=true&pageSize=50`,
       );
       if (res.ok) {
         const data = await res.json() as {
@@ -1792,27 +1793,61 @@ app.get("/api/domains/:name", async (c) => {
     return c.json({ error: "Name not registered" }, 404);
   }
 
-  // Get custom domains from event logs
+  // Get custom domains from event logs — try Alchemy-specific getLogs endpoint first
   // CustomDomainSet(string name, string domain)
   // CustomDomainRemoved(string name, string domain)
   try {
-    const setLogs = await client.getContractEvents({
-      address: addr,
-      abi: [
-        { type: "event", name: "CustomDomainSet", inputs: [{ name: "name", type: "string", indexed: false }, { name: "domain", type: "string", indexed: false }] },
-      ] as const,
-      eventName: "CustomDomainSet",
-      fromBlock: 25000000n,
-    });
+    // Contract deployed at block 25000000 on Base. Try querying last 2M blocks (~45 days).
+    // If our paid RPC allows larger ranges, this works. Otherwise falls back to 10k chunk queries.
+    const latestBlock = await client.getBlockNumber();
+    const fromBlock = latestBlock - 2000000n > 25000000n ? latestBlock - 2000000n : 25000000n;
 
-    const removedLogs = await client.getContractEvents({
-      address: addr,
-      abi: [
-        { type: "event", name: "CustomDomainRemoved", inputs: [{ name: "name", type: "string", indexed: false }, { name: "domain", type: "string", indexed: false }] },
-      ] as const,
-      eventName: "CustomDomainRemoved",
-      fromBlock: 25000000n,
-    });
+    let setLogs: any[] = [];
+    let removedLogs: any[] = [];
+
+    try {
+      // Attempt single large query first (works on paid RPCs)
+      const [sets, rems] = await Promise.all([
+        client.getContractEvents({
+          address: addr,
+          abi: [{ type: "event", name: "CustomDomainSet", inputs: [{ name: "name", type: "string", indexed: false }, { name: "domain", type: "string", indexed: false }] }] as const,
+          eventName: "CustomDomainSet",
+          fromBlock, toBlock: latestBlock,
+        }),
+        client.getContractEvents({
+          address: addr,
+          abi: [{ type: "event", name: "CustomDomainRemoved", inputs: [{ name: "name", type: "string", indexed: false }, { name: "domain", type: "string", indexed: false }] }] as const,
+          eventName: "CustomDomainRemoved",
+          fromBlock, toBlock: latestBlock,
+        }),
+      ]);
+      setLogs = sets as any[];
+      removedLogs = rems as any[];
+    } catch {
+      // Fallback: chunk query in 10k blocks (recent 500k blocks = ~12 days)
+      const fallbackFrom = latestBlock - 500000n > 25000000n ? latestBlock - 500000n : 25000000n;
+      for (let from = fallbackFrom; from <= latestBlock; from += 10000n) {
+        const to = from + 9999n > latestBlock ? latestBlock : from + 9999n;
+        try {
+          const [sets, rems] = await Promise.all([
+            client.getContractEvents({
+              address: addr,
+              abi: [{ type: "event", name: "CustomDomainSet", inputs: [{ name: "name", type: "string", indexed: false }, { name: "domain", type: "string", indexed: false }] }] as const,
+              eventName: "CustomDomainSet",
+              fromBlock: from, toBlock: to,
+            }),
+            client.getContractEvents({
+              address: addr,
+              abi: [{ type: "event", name: "CustomDomainRemoved", inputs: [{ name: "name", type: "string", indexed: false }, { name: "domain", type: "string", indexed: false }] }] as const,
+              eventName: "CustomDomainRemoved",
+              fromBlock: from, toBlock: to,
+            }),
+          ]);
+          setLogs.push(...(sets as any[]));
+          removedLogs.push(...(rems as any[]));
+        } catch { /* skip failed chunk */ }
+      }
+    }
 
     // Merge and sort chronologically to handle set→remove→re-set correctly
     const allEvents = [
