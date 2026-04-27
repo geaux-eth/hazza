@@ -151,13 +151,13 @@ export function spaShell(path: string, profileName?: string): string {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="${SPA_ASSET_BASE}/assets/index-DBWtwYvJ.css">
+  <link rel="stylesheet" href="${SPA_ASSET_BASE}/assets/index-C-jVqBHP.css">
   <link rel="modulepreload" href="${SPA_ASSET_BASE}/assets/xmtp-DkAv7Dqc.js">${profileScript}
 </head>
 <body>
   <div id="root">${ssrContent}</div>
   <script>window.onerror=function(m,s,l,c,e){if(s&&s.includes('extension'))return true;document.getElementById('root').innerHTML='<pre style="color:red;padding:2rem">'+m+'\\n'+s+':'+l+'\\n'+(e&&e.stack||'')+'</pre>';}</script>
-  <script type="module" src="${SPA_ASSET_BASE}/assets/index-D7wZTxte.js"></script>
+  <script type="module" src="${SPA_ASSET_BASE}/assets/index-CCmHCcTC.js"></script>
 </body>
 </html>`;
 }

@@ -9,6 +9,7 @@ interface ProfileData {
   registered: boolean;
   owner?: string;
   ownerEns?: string | null;
+  ownerPrimaryName?: string | null;
   tokenId?: string;
   registeredAt?: number;
   operator?: string;
@@ -416,7 +417,10 @@ export default function Profile() {
   }
 
   const texts = data.texts || {};
-  const ownerDisplay = data.ownerEns || truncAddr(data.owner || '');
+  const ownerDisplay = data.ownerPrimaryName || data.ownerEns || truncAddr(data.owner || '');
+  const ownerLink = data.ownerPrimaryName
+    ? `https://${data.ownerPrimaryName}.hazza.name`
+    : `https://${EXPLORER_HOST}/address/${data.owner}`;
   const regDate = data.registeredAt ? new Date(data.registeredAt * 1000).toLocaleDateString() : '';
   const zeroAddr = '0x0000000000000000000000000000000000000000';
   const hasOperator = data.operator && data.operator !== zeroAddr && data.operator?.toLowerCase() !== data.owner?.toLowerCase();
@@ -498,7 +502,7 @@ export default function Profile() {
 
       {/* Name Info */}
       <Section title="Name Info" defaultOpen>
-        <InfoRow label="Owner" value={ownerDisplay} link={`https://${EXPLORER_HOST}/address/${data.owner}`} />
+        <InfoRow label="Owner" value={ownerDisplay} link={ownerLink} />
         <InfoRow label="Token ID" value={`#${data.tokenId}`} />
         <InfoRow label="Registered" value={regDate} />
         {hasOperator && <InfoRow label="Operator" value={truncAddr(data.operator!)} link={`https://${EXPLORER_HOST}/address/${data.operator}`} />}

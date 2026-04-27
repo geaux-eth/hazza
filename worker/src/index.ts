@@ -492,6 +492,61 @@ app.get("/api/reverse/:address", async (c) => {
   return c.json({ wallet, name, url: `https://${name}.hazza.name` });
 });
 
+// Identity — resolves an address to its best display name + master profile info
+// Returns: primary hazza name, ENS, recommended display, and (if primary set) avatar/xmtp/description
+app.get("/api/identity/:address", async (c) => {
+  const wallet = c.req.param("address") as Address;
+  if (!isAddress(wallet)) return c.json({ error: "Invalid address format" }, 400);
+  if (wallet === "0x0000000000000000000000000000000000000000") {
+    return c.json({ wallet, primaryName: null, ens: null, display: "0x0000...0000", names: [], xmtp: null, avatar: null, description: null });
+  }
+
+  const client = getClient(c.env);
+  const ethClient = getEthMainnetClient(c.env);
+  const addr = registryAddress(c.env);
+
+  // Run reverse lookups in parallel
+  const [primaryName, ensName] = await Promise.all([
+    client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "reverseResolve", args: [wallet] }).catch(() => "") as Promise<string>,
+    ethClient.getEnsName({ address: wallet }).catch(() => null),
+  ]);
+
+  const truncated = wallet.slice(0, 6) + "..." + wallet.slice(-4);
+  let display = truncated;
+  if (primaryName) display = primaryName;
+  else if (ensName) display = ensName;
+
+  // If primary name is set, fetch its text records for the contact card preview
+  let xmtp: string | null = null;
+  let avatar: string | null = null;
+  let description: string | null = null;
+  if (primaryName) {
+    try {
+      const textKeys = ["xmtp", "avatar", "description"];
+      const values = await client.readContract({
+        address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [primaryName, textKeys],
+      }) as readonly string[];
+      xmtp = values[0] || null;
+      avatar = values[1] || null;
+      description = values[2] || null;
+    } catch { /* non-fatal */ }
+  }
+
+  return c.json({
+    wallet,
+    primaryName: primaryName || null,
+    ens: ensName,
+    display,
+    truncated,
+    xmtp,
+    avatar,
+    description,
+    profileUrl: primaryName ? `https://${primaryName}.hazza.name` : null,
+  }, 200, {
+    "Cache-Control": "public, max-age=300, s-maxage=300",
+  });
+});
+
 // Full profile: resolve + text records + status
 app.get("/api/profile/:name", async (c) => {
   const name = c.req.param("name").toLowerCase();
@@ -527,8 +582,9 @@ app.get("/api/profile/:name", async (c) => {
     : null;
 
   // Wrap all enrichment fetches in a 6s global timeout so the endpoint always responds
-  const enrichmentTimeout = new Promise<[PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>]>((resolve) =>
+  const enrichmentTimeout = new Promise<[PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>, PromiseSettledResult<any>]>((resolve) =>
     setTimeout(() => resolve([
+      { status: "rejected", reason: "timeout" } as PromiseRejectedResult,
       { status: "rejected", reason: "timeout" } as PromiseRejectedResult,
       { status: "rejected", reason: "timeout" } as PromiseRejectedResult,
       { status: "rejected", reason: "timeout" } as PromiseRejectedResult,
@@ -571,9 +627,13 @@ app.get("/api/profile/:name", async (c) => {
     fetchWithTimeout(`https://api.bankr.bot/agent-profiles/${(nameOwner as string).toLowerCase()}`, {
       headers: { Accept: "application/json" },
     }, 4000).then(r => r.ok ? r.json() : null).catch(() => null),
+    // Owner's primary hazza name (master profile)
+    client.readContract({
+      address: addr, abi: REGISTRY_ABI, functionName: "reverseResolve", args: [nameOwner],
+    }).then(r => (r as string) || null).catch(() => null),
   ]);
 
-  const [agentMetaResult, helixaResult, exoResult, ensResult, bankrResult] = await Promise.race([enrichmentWork, enrichmentTimeout]);
+  const [agentMetaResult, helixaResult, exoResult, ensResult, bankrResult, ownerPrimaryResult] = await Promise.race([enrichmentWork, enrichmentTimeout]);
 
   // Resolve agentId — prefer contract, fallback to text record
   const contractAgentId = agentId ? agentId.toString() : "0";
@@ -605,6 +665,7 @@ app.get("/api/profile/:name", async (c) => {
     registered: true,
     owner: nameOwner,
     ownerEns: ensResult.status === "fulfilled" ? ensResult.value : null,
+    ownerPrimaryName: ownerPrimaryResult.status === "fulfilled" ? ownerPrimaryResult.value : null,
     tokenId: tokenId.toString(),
     registeredAt: Number(registeredAt),
     operator,
@@ -1434,7 +1495,9 @@ app.get("/api/directory", async (c) => {
       }
     });
 
-    return c.json({ entries, total, page, pages });
+    return c.json({ entries, total, page, pages }, 200, {
+      "Cache-Control": "public, max-age=300, s-maxage=300",
+    });
   } catch (e: any) {
     console.error("Directory error:", e?.message || e);
     return c.json({ error: "Directory lookup failed" }, 500);

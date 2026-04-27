@@ -695,10 +695,11 @@
   }
   .badge-eth { background: #4870D4; color: #fff; }
   .badge-usdc { background: #CF3748; color: #fff; }
-  .listing-actions { display: flex; gap: 0.35rem; margin-top: 0.5rem; }
+  .listing-actions { display: flex; gap: 0.3rem; margin-top: 0.5rem; flex-wrap: wrap; }
   .btn-buy {
-    flex: 1;
-    padding: 0.4rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.35rem 0.5rem;
     background: #CF3748; color: #fff;
     border: none;
     border-radius: 5px;
@@ -706,19 +707,21 @@
     font-size: 0.75rem;
     font-family: 'Fredoka', sans-serif;
     cursor: pointer;
-    font-size: 0.85rem;
   }
   .btn-buy:hover { background: #b5303f; }
   .btn-watch {
-    padding: 0.6rem 0.75rem;
+    flex: 0 0 auto;
+    padding: 0.35rem 0.5rem;
     background: transparent;
     border: 2px solid #E8DCAB;
-    border-radius: 6px;
+    border-radius: 5px;
     color: #8a7d5a;
     cursor: pointer;
-    font-size: 1rem;
+    font-size: 0.85rem;
     line-height: 1;
   }
+  /* Small view: hide secondary buttons, only Buy + Watch */
+  .listing-grid.view-small .btn-secondary { display: none; }
   .btn-watch:hover { border-color: #CF3748; color: #CF3748; }
   .btn-watch.saved { color: #CF3748; border-color: #CF3748; }
   .watch-count { font-size: 0.7rem; color: #8a7d5a; margin-top: 0.35rem; text-align: right; }

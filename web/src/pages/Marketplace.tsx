@@ -8,6 +8,7 @@ import {
 } from '../config/contracts';
 import { API_BASE } from '../constants';
 import ChatPanel from '../components/ChatPanel';
+import UserContact from '../components/UserContact';
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006' as const;
 const ZERO_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
 const ZONE_PUBLIC = '0x000000007F8c58fbf215bF91Bda7421A806cf3ae' as const;
@@ -532,25 +533,32 @@ function BrowseTab({
     loadListings().finally(() => setLoading(false));
   }, [loadListings]);
 
-  // Load all registered names when "all" mode selected
+  // Load all registered names when "all" mode selected — progressive: render each page as it arrives
   useEffect(() => {
     if (showMode !== 'all' || allNames.length > 0) return;
     setAllNamesLoading(true);
     (async () => {
       try {
-        const entries: { name: string; owner: string; tokenId: number }[] = [];
-        let page = 1;
-        let pages = 1;
-        while (page <= pages) {
-          const res = await fetch(`${API_BASE}/api/directory?page=${page}&limit=50`);
-          const data = await res.json();
-          entries.push(...(data.entries || []));
-          pages = data.pages || 1;
-          page++;
+        // First page loads immediately to show something
+        const res1 = await fetch(`${API_BASE}/api/directory?page=1&limit=50`);
+        const data1 = await res1.json();
+        const accumulated: { name: string; owner: string; tokenId: number }[] = [...(data1.entries || [])];
+        setAllNames([...accumulated]);
+        setAllNamesLoading(false);
+        const pages = data1.pages || 1;
+        // Load remaining pages in parallel and append as they arrive
+        if (pages > 1) {
+          const remaining = await Promise.all(
+            Array.from({ length: pages - 1 }, (_, i) =>
+              fetch(`${API_BASE}/api/directory?page=${i + 2}&limit=50`).then(r => r.json()).catch(() => ({ entries: [] }))
+            )
+          );
+          remaining.forEach(r => accumulated.push(...(r.entries || [])));
+          setAllNames([...accumulated]);
         }
-        setAllNames(entries);
-      } catch { /* silent */ }
-      setAllNamesLoading(false);
+      } catch {
+        setAllNamesLoading(false);
+      }
     })();
   }, [showMode, allNames.length]);
 
@@ -760,7 +768,7 @@ function BrowseTab({
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, background: '#CF3748', color: '#fff', fontSize: '0.55rem', fontWeight: 700, borderRadius: 3, verticalAlign: 'middle', marginLeft: '0.2rem' }} title="Namespace">N</span>
                       )}
                     </div>
-                    {!isListView && <div className="listing-meta">Seller: {truncAddr(l.seller)} &middot; Expires: {formatDate(l.listingExpiry)}</div>}
+                    {!isListView && <div className="listing-meta">Seller: <UserContact address={l.seller} onMessage={onContactSeller ? () => onContactSeller(l.name) : undefined} /> &middot; Expires: {formatDate(l.listingExpiry)}</div>}
                     <div className="listing-price">{l.price}<span className={`currency-badge ${badgeClass}`}>{l.currency}</span></div>
                     {bountyInfo[l.orderHash] && !isListView && (
                       <div style={{ fontSize: '0.7rem', color: '#4870D4', fontWeight: 600, marginBottom: '0.2rem' }}>
@@ -772,11 +780,11 @@ function BrowseTab({
                       <button className="btn-buy" onClick={() => buyListing(l)}>Buy</button>
                       {!isListView && (
                         <>
-                          <button className="btn-buy" style={{ background: 'transparent', border: '2px solid #E8DCAB', color: '#CF3748', flex: 0, padding: '0.5rem 0.6rem', fontSize: '0.7rem' }} onClick={() => setOfferModalName(l.name)}>Offer</button>
+                          <button className="btn-buy btn-secondary" style={{ background: 'transparent', border: '2px solid #E8DCAB', color: '#CF3748' }} onClick={() => setOfferModalName(l.name)}>Offer</button>
                           {onContactSeller && (
-                            <button className="btn-buy" style={{ background: 'transparent', border: '2px solid #4870D4', color: '#4870D4', flex: 0, padding: '0.5rem 0.6rem', fontSize: '0.7rem' }} onClick={() => onContactSeller(l.name)}>Message</button>
+                            <button className="btn-buy btn-secondary" style={{ background: 'transparent', border: '2px solid #4870D4', color: '#4870D4' }} onClick={() => onContactSeller(l.name)}>DM</button>
                           )}
-                          <button className="btn-buy" style={{ background: 'transparent', border: '2px solid #E8DCAB', color: '#8a7d5a', flex: 0, padding: '0.5rem 0.6rem' }} onClick={() => addToCart(l)}>+</button>
+                          <button className="btn-buy btn-secondary" style={{ background: 'transparent', border: '2px solid #E8DCAB', color: '#8a7d5a', flex: '0 0 auto', padding: '0.35rem 0.5rem' }} onClick={() => addToCart(l)}>+</button>
                         </>
                       )}
                       <button className={`btn-watch${watched ? ' saved' : ''}`} onClick={() => toggleWatch(l)}>{watched ? '\u2605' : '\u2606'}</button>
@@ -823,7 +831,7 @@ function BrowseTab({
                   <div className="listing-name">
                     <a href={`https://${n.name}.hazza.name`}>{n.name}</a>
                   </div>
-                  <div className="listing-meta">Owner: {truncAddr(n.owner)}</div>
+                  <div className="listing-meta">Owner: <UserContact address={n.owner} /></div>
                 </div>
               ))}
             </div>
@@ -1347,7 +1355,7 @@ function OffersTab({ address, setOfferModalName }: { address?: Address; setOffer
                       {o.broker && <span style={{ fontSize: '0.65rem', background: '#E8DCAB', color: '#CF3748', padding: '0.1rem 0.3rem', borderRadius: 4, verticalAlign: 'middle', marginLeft: 4 }}>brokered</span>}
                     </div>
                     <div style={{ fontSize: '0.95rem', color: '#CF3748', fontWeight: 700, marginTop: '0.2rem' }}>{o.price} {o.currency || 'ETH'}</div>
-                    <div style={{ fontSize: '0.8rem', color: '#8a7d5a' }}>From: {truncAddr(o.offerer)} &middot; Expires: {formatDate(o.expiresAt)}</div>
+                    <div style={{ fontSize: '0.8rem', color: '#8a7d5a' }}>From: <UserContact address={o.offerer} /> &middot; Expires: {formatDate(o.expiresAt)}</div>
                   </div>
                   {isOwner && (
                     <button className="btn-buy" style={{ flex: 0, whiteSpace: 'nowrap', padding: '0.5rem 1rem', fontSize: '0.8rem' }} onClick={() => acceptNameOffer(o.name, o.offerer)}>Accept</button>
@@ -1382,7 +1390,7 @@ function OffersTab({ address, setOfferModalName }: { address?: Address; setOffer
                     {o.price} {o.currency || 'ETH'}
                     {' '}<span style={{ fontSize: '0.65rem', background: '#E8DCAB', color: '#8a7d5a', padding: '0.1rem 0.3rem', borderRadius: 4, verticalAlign: 'middle' }}>collection</span>
                   </div>
-                  <div style={{ fontSize: '0.8rem', color: '#8a7d5a' }}>From: {truncAddr(o.offerer)} &middot; Expires: {formatDate(o.expirationDate)}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#8a7d5a' }}>From: <UserContact address={o.offerer} /> &middot; Expires: {formatDate(o.expirationDate)}</div>
                 </div>
                 {address && (
                   <button className="btn-buy" style={{ flex: 0, whiteSpace: 'nowrap', padding: '0.5rem 1rem', fontSize: '0.8rem' }} onClick={() => showAcceptOffer(o.orderHash)}>Accept</button>
@@ -1499,8 +1507,8 @@ function SalesTab() {
             <tr key={i}>
               <td><a href={`https://${encodeURIComponent(s.name)}.hazza.name`}>{s.name}</a></td>
               <td style={{ fontWeight: 700 }}>{s.price} {s.currency}</td>
-              <td>{truncAddr(s.buyer)}</td>
-              <td>{truncAddr(s.seller)}</td>
+              <td><UserContact address={s.buyer} /></td>
+              <td><UserContact address={s.seller} /></td>
               <td>{formatDate(s.timestamp)}</td>
             </tr>
           ))}
@@ -1663,7 +1671,7 @@ function ForumTab({ address, onContactAuthor }: { address?: Address; onContactAu
                           </>
                         );
                       }
-                      return <span style={{ color: '#8a7d5a', fontSize: '0.8rem', fontFamily: 'monospace' }} title={m.author}>{truncAddr(m.author)}</span>;
+                      return <span style={{ fontSize: '0.8rem' }}><UserContact address={m.author} /></span>;
                     })()}
                   </span>
                   <span style={{ color: '#8a7d5a', fontSize: '0.7rem' }}>{date}</span>
