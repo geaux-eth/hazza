@@ -79,6 +79,10 @@ export default function Manage() {
   // Website / site key field
   const [siteKeyValue, setSiteKeyValue] = useState('');
 
+  // Master profile inheritance
+  const [masterValue, setMasterValue] = useState('');
+  const [ownerPrimaryName, setOwnerPrimaryName] = useState<string | null>(null);
+
   // Agent fields
   const [agentUri, setAgentUri] = useState('');
   const [agentWallet, setAgentWallet] = useState('');
@@ -143,6 +147,10 @@ export default function Manage() {
           if (t['netlibrary.member']) setNetLibraryMember(t['netlibrary.member']);
           if (t['net.profile']) setNetProfileKey(t['net.profile']);
           if (t['site.key']) setSiteKeyValue(t['site.key']);
+          // Master profile — read from ownTexts (not merged) so we edit only this name's record
+          const ownT = data.ownTexts || t;
+          if (ownT['master']) setMasterValue(ownT['master']);
+          setOwnerPrimaryName(data.ownerPrimaryName || null);
           // Fetch custom domains
           fetch(`${API_BASE}/api/domains/${encodeURIComponent(nameParam)}`)
             .then(r => r.json())
@@ -355,6 +363,22 @@ export default function Manage() {
       args: [nameParam, 'site.key', siteKeyValue.trim()],
     });
   }, [nameParam, siteKeyValue, writeContract, showMsg]);
+
+  const handleSaveMaster = useCallback(() => {
+    const cleaned = masterValue.trim().toLowerCase().replace(/\.hazza\.name$/, '');
+    if (cleaned === nameParam) {
+      showMsg("A name can't inherit from itself.", true);
+      return;
+    }
+    showMsg(cleaned ? `Linking to ${cleaned}...` : 'Removing master link...', false);
+    setPendingAction({ type: 'setText', key: 'master' });
+    writeContract({
+      address: REGISTRY_ADDRESS,
+      abi: REGISTRY_ABI,
+      functionName: 'setText',
+      args: [nameParam, 'master', cleaned],
+    });
+  }, [nameParam, masterValue, writeContract, showMsg]);
 
   // Upload HTML file directly to Net Protocol Storage contract (user pays gas)
   const handleSiteUpload = useCallback(async (file: File) => {
@@ -821,6 +845,38 @@ export default function Manage() {
                   Set Primary
                 </button>
               </div>
+            </div>
+
+            {/* Master Profile */}
+            <div className="section">
+              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#131325', fontFamily: "'Fredoka',sans-serif", marginBottom: '0.25rem' }}>Master Profile</div>
+              <p style={{ color: '#8a7d5a', fontSize: '0.75rem', margin: '0 0 0.5rem', lineHeight: 1.4 }}>
+                Inherit profile fields (avatar, bio, socials, xmtp, etc.) from another hazza name. This name's own records always win &mdash; master fills in the gaps.
+              </p>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  type="text"
+                  placeholder={ownerPrimaryName || 'yourname'}
+                  value={masterValue}
+                  onChange={(e) => setMasterValue(e.target.value)}
+                  style={{ flex: 1, minWidth: '120px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }}
+                />
+                <button onClick={handleSaveMaster} disabled={isWriting || isConfirming}
+                  style={{ padding: '0.35rem 0.75rem', background: '#CF3748', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem', fontFamily: "'Fredoka',sans-serif" }}>
+                  {masterValue.trim() ? 'Link' : 'Remove'}
+                </button>
+                {ownerPrimaryName && masterValue.trim().replace(/\.hazza\.name$/, '') !== ownerPrimaryName && (
+                  <button onClick={() => setMasterValue(ownerPrimaryName)}
+                    style={{ padding: '0.3rem 0.6rem', background: 'transparent', border: '2px solid #4870D4', color: '#4870D4', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', fontSize: '0.7rem', fontFamily: "'Fredoka',sans-serif" }}>
+                    Use {ownerPrimaryName}
+                  </button>
+                )}
+              </div>
+              {masterValue && (
+                <p style={{ color: '#4870D4', fontSize: '0.7rem', margin: '0.4rem 0 0' }}>
+                  Inheriting from <strong>{masterValue.replace(/\.hazza\.name$/, '')}.hazza.name</strong>
+                </p>
+              )}
             </div>
 
             {/* Operator */}

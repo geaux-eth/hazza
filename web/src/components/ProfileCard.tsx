@@ -194,28 +194,33 @@ export default function ProfileCard({
       {/* Self-only actions */}
       {isSelf && (
         <>
-          {(identity.primaryName || identity.profileUrl) && (
+          {identity.primaryName && identity.profileUrl && (
             <a
-              href={identity.profileUrl || '/dashboard'}
+              href={identity.profileUrl}
               style={{
                 display: 'block', textAlign: 'center', marginTop: '0.6rem', padding: '0.4rem',
                 background: '#4870D4', color: '#fff', borderRadius: 6,
                 fontWeight: 700, fontSize: '0.75rem', textDecoration: 'none',
               }}
             >
-              View profile
+              View main page
             </a>
           )}
           <a
-            href="/dashboard"
+            href={identity.primaryName ? `/manage?name=${encodeURIComponent(identity.primaryName)}` : '/dashboard'}
             style={{
               display: 'block', textAlign: 'center', marginTop: '0.4rem', padding: '0.4rem',
               background: 'transparent', border: '2px solid #E8DCAB', color: '#131325', borderRadius: 6,
               fontWeight: 700, fontSize: '0.75rem', textDecoration: 'none',
             }}
           >
-            Dashboard
+            {identity.primaryName ? 'Manage profile' : 'Dashboard'}
           </a>
+          {!identity.primaryName && (
+            <p style={{ fontSize: '0.65rem', color: '#8a7d5a', textAlign: 'center', margin: '0.4rem 0 0' }}>
+              Set a primary name in your dashboard to enable your master profile.
+            </p>
+          )}
           {wrongNetwork && onSwitchNetwork && (
             <button onClick={onSwitchNetwork}
               style={{

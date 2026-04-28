@@ -561,16 +561,35 @@ app.get("/api/profile/:name", async (c) => {
     return c.json({ name, registered: false });
   }
 
-  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xmtp", "message.delegate", "message.mode", "site.key", "agent.uri", "agent.8004id", "agent.wallet", "agent.endpoint", "agent.model", "agent.status", "net.profile", "helixa.id", "netlibrary.member", "netlibrary.pass", "com.linkedin", "xyz.farcaster"];
+  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xmtp", "message.delegate", "message.mode", "site.key", "agent.uri", "agent.8004id", "agent.wallet", "agent.endpoint", "agent.model", "agent.status", "net.profile", "helixa.id", "netlibrary.member", "netlibrary.pass", "com.linkedin", "xyz.farcaster", "master"];
   const [textValues, chash] = await Promise.all([
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
   ]);
 
-  const texts: Record<string, string> = {};
+  const ownTexts: Record<string, string> = {};
   textKeys.forEach((key, i) => {
-    if (textValues[i]) texts[key] = textValues[i];
+    if (textValues[i]) ownTexts[key] = textValues[i];
   });
+
+  // Master profile inheritance: if `master` text record is set to another hazza name,
+  // merge that name's text records as fallbacks (own records always win).
+  let inheritedFrom: string | null = null;
+  let texts: Record<string, string> = ownTexts;
+  const masterName = ownTexts["master"]?.toLowerCase().replace(/\.hazza\.name$/, "").trim();
+  if (masterName && masterName !== name && isValidName(masterName)) {
+    try {
+      const masterValues = await client.readContract({
+        address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [masterName, textKeys],
+      }) as readonly string[];
+      const masterTexts: Record<string, string> = {};
+      textKeys.forEach((key, i) => {
+        if (masterValues[i] && key !== "master" && key !== "site.key") masterTexts[key] = masterValues[i];
+      });
+      texts = { ...masterTexts, ...ownTexts }; // own wins
+      inheritedFrom = masterName;
+    } catch { /* master lookup failed — fall back to own only */ }
+  }
 
   // Fetch enriched data in parallel (all optional, failures silenced)
   const agentUri = texts["agent.uri"];
@@ -666,6 +685,8 @@ app.get("/api/profile/:name", async (c) => {
     owner: nameOwner,
     ownerEns: ensResult.status === "fulfilled" ? ensResult.value : null,
     ownerPrimaryName: ownerPrimaryResult.status === "fulfilled" ? ownerPrimaryResult.value : null,
+    inheritedFrom,
+    ownTexts,
     tokenId: tokenId.toString(),
     registeredAt: Number(registeredAt),
     operator,

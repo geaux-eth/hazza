@@ -156,6 +156,15 @@ Set any ENS-standard text record. The common ones:
 | `net.profile` | Net Protocol profile link |
 | `message.delegate` | Message delegation target (hazza name or 0x address) |
 | `message.mode` | Delegation mode: `all`, `delegate-all`, or `delegate-agents` |
+| `master` | Inherit profile fields from another hazza name |
+
+### Master Profile
+
+Own multiple names but want them to share your identity? Set the `master` text record on any name to point at your main name (e.g., `geaux`). Profile fields not explicitly set on that name automatically inherit from the master — avatar, bio, socials, xmtp, agent fields, everything.
+
+The name's own records always take priority — master only fills gaps. So `mybiz.hazza.name` can have its own description but inherit your avatar and socials from `geaux.hazza.name`. Set `master` empty to remove the link.
+
+`site.key` is never inherited — each name controls its own custom site override independently.
 
 You can set multiple records in a single transaction using `setTexts()`.
 

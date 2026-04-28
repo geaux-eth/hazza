@@ -94,7 +94,18 @@ hazza get <name> <key>
 hazza set <name> <key> <value>
 ```
 
-Common keys: `avatar`, `description`, `url`, `com.twitter`, `com.github`, `xyz.farcaster`, `org.telegram`
+Common keys: `avatar`, `description`, `url`, `com.twitter`, `com.github`, `xyz.farcaster`, `org.telegram`, `xmtp`, `master`, `site.key`
+
+### Master Profile (inheritance)
+
+The `master` text record points to another hazza name to inherit from. Profile fields not set on this name fall back to the master's records. Own records always win — master only fills gaps. Useful when a user owns multiple names but wants one canonical profile.
+
+```bash
+# Inherit avatar/bio/socials from your main profile
+hazza set mybiz master geaux
+```
+
+The master link is per-name and opt-in. The master's `site.key` is **not** inherited — each name controls its own custom site override.
 
 #### Registry stats
 
