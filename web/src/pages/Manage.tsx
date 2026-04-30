@@ -5,6 +5,7 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { keccak256, toBytes, toHex } from 'viem';
 import { REGISTRY_ADDRESS, REGISTRY_ABI } from '../config/contracts';
 import { API_BASE, EXPLORER_HOST } from '../constants';
+import CredBadge, { credTier } from '../components/CredBadge';
 
 const NET_STORAGE_ADDRESS = '0x00000000db40fcb9f4466330982372e27fd7bbf5' as const;
 const NET_STORAGE_ABI = [{
@@ -797,10 +798,22 @@ export default function Manage() {
             {/* Badges & Identity */}
             <div className="section">
               <div className="section-title">Badges</div>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Helixa ID</label>
-                <input type="text" placeholder="e.g. 57" value={helixaId} onChange={(e) => setHelixaId(e.target.value)}
-                  style={{ flex: 1, minWidth: '80px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+                {profileData?.helixaData?.credScore !== undefined && (
+                  <CredBadge score={profileData.helixaData.credScore} tokenId={profileData.helixaData.tokenId} size={56} />
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Helixa Cred</label>
+                    <input type="text" placeholder="agent token ID (override)" value={helixaId} onChange={(e) => setHelixaId(e.target.value)}
+                      style={{ flex: 1, minWidth: '80px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+                  </div>
+                  <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.25rem 0 0' }}>
+                    {profileData?.helixaData?.credScore !== undefined
+                      ? <>Score {profileData.helixaData.credScore} · {credTier(profileData.helixaData.credScore)}{profileData.helixaData.autoDetected ? ' (auto-detected from owner address — set an ID above to pin a specific agent)' : ''}</>
+                      : 'Auto-detected from owner address. Set a token ID to pin a specific Helixa agent to this name.'}
+                  </p>
+                </div>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                 <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Net Library</label>

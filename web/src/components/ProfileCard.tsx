@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE } from '../constants';
+import CredBadge from './CredBadge';
 
 export interface Identity {
   wallet: string;
@@ -12,6 +13,7 @@ export interface Identity {
   avatar: string | null;
   description: string | null;
   profileUrl: string | null;
+  helixaCred: { tokenId: number; credScore: number } | null;
 }
 
 export interface NameEntry {
@@ -163,6 +165,9 @@ export default function ProfileCard({
           )}
           <div style={{ fontSize: '0.65rem', color: '#8a7d5a', fontFamily: 'monospace' }}>{truncated}</div>
         </div>
+        {identity.helixaCred && (
+          <CredBadge score={identity.helixaCred.credScore} tokenId={identity.helixaCred.tokenId} size={44} />
+        )}
       </div>
 
       {identity.description && (

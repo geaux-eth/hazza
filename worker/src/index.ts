@@ -505,10 +505,11 @@ app.get("/api/identity/:address", async (c) => {
   const ethClient = getEthMainnetClient(c.env);
   const addr = registryAddress(c.env);
 
-  // Run reverse lookups in parallel
-  const [primaryName, ensName] = await Promise.all([
+  // Run reverse lookups + helixa lookup in parallel
+  const [primaryName, ensName, helixaCred] = await Promise.all([
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "reverseResolve", args: [wallet] }).catch(() => "") as Promise<string>,
     ethClient.getEnsName({ address: wallet }).catch(() => null),
+    fetchHelixaCredByAddress(wallet),
   ]);
 
   const truncated = wallet.slice(0, 6) + "..." + wallet.slice(-4);
@@ -542,10 +543,31 @@ app.get("/api/identity/:address", async (c) => {
     avatar,
     description,
     profileUrl: primaryName ? `https://${primaryName}.hazza.name` : null,
+    helixaCred,
   }, 200, {
     "Cache-Control": "public, max-age=300, s-maxage=300",
   });
 });
+
+// Helixa cred score fetch by wallet address (search-by-address endpoint).
+// Returns null on any failure (timeout, no agent, malformed response).
+async function fetchHelixaCredByAddress(address: string): Promise<{ tokenId: number; credScore: number } | null> {
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.helixa.xyz/api/v2/agents?search=${address}&limit=1`,
+      { headers: { Accept: "application/json" } },
+      3000,
+    );
+    if (!res.ok) return null;
+    const data = await res.json() as { agents?: Array<{ tokenId?: number; credScore?: number; agentAddress?: string }> };
+    const agent = data?.agents?.[0];
+    if (!agent || typeof agent.tokenId !== "number" || typeof agent.credScore !== "number") return null;
+    return { tokenId: agent.tokenId, credScore: agent.credScore };
+  } catch {
+    return null;
+  }
+}
+
 
 // Full profile: resolve + text records + status
 app.get("/api/profile/:name", async (c) => {
@@ -618,7 +640,15 @@ app.get("/api/profile/:name", async (c) => {
       : Promise.resolve(null),
     safeHelixaId
       ? fetchWithTimeout(`https://api.helixa.xyz/api/v2/agent/${safeHelixaId}`, {}, 4000).then(r => r.ok ? r.json() : null)
-      : Promise.resolve(null),
+      // No explicit helixa.id — auto-detect by owner address (returns first agent if any)
+      : fetchWithTimeout(
+          `https://api.helixa.xyz/api/v2/agents?search=${nameOwner}&limit=1`,
+          { headers: { Accept: "application/json" } },
+          4000,
+        ).then(r => r.ok ? r.json() : null).then((d: any) => {
+          const ag = d?.agents?.[0];
+          return ag ? { tokenId: ag.tokenId, name: ag.name, credScore: ag.credScore, autoDetected: true } : null;
+        }).catch(() => null),
     (async () => {
       const mainnet = getMainnetClient(c.env);
       const bal = await mainnet.readContract({

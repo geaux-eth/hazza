@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { API_BASE, EXPLORER_HOST } from '../constants';
 import ChatPanel from '../components/ChatPanel';
 import { useProfileContext } from '../components/ProfileLayout';
+import CredBadge, { credTier } from '../components/CredBadge';
 
 interface ProfileData {
   name: string;
@@ -255,16 +256,26 @@ function AgentSection({ agentId, agentWallet, agentMeta, texts }: { agentId: str
 
 function HelixaSection({ data }: { data: any }) {
   if (!data?.tokenId) return null;
-  const auraUrl = `https://api.helixa.xyz/api/v2/aura/${data.tokenId}.png`;
+  const score = typeof data.credScore === 'number' ? data.credScore : null;
   return (
     <div style={{ marginBottom: '1rem' }}>
-      <div style={{ color: '#8a7d5a', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        Helixa AgentDNA <img src={auraUrl} alt="Aura" style={{ width: 18, height: 18, borderRadius: '50%' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+      <div style={{ color: '#8a7d5a', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
+        Helixa Cred
       </div>
-      {data.name && <InfoRow label="Name" value={data.name} />}
-      <InfoRow label="Token ID" value={`#${data.tokenId}`} link={`https://helixa.xyz/agent/${data.tokenId}`} />
-      {data.credScore !== undefined && <InfoRow label="Cred Score" value={String(data.credScore)} />}
-      {data.ethosScore && <InfoRow label="Ethos" value={String(data.ethosScore)} />}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+        {score !== null && <CredBadge score={score} tokenId={data.tokenId} size={64} />}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {data.name && <div style={{ fontWeight: 700, color: '#131325' }}>{data.name}</div>}
+          {score !== null && (
+            <div style={{ fontSize: '0.75rem', color: '#8a7d5a' }}>
+              {credTier(score)} tier · <a href={`https://helixa.xyz/agent/${data.tokenId}`} target="_blank" rel="noreferrer" style={{ color: '#4870D4' }}>agent #{data.tokenId}</a>
+            </div>
+          )}
+          {data.autoDetected && (
+            <div style={{ fontSize: '0.65rem', color: '#8a7d5a', marginTop: '0.15rem' }}>Auto-detected from owner address</div>
+          )}
+        </div>
+      </div>
       {data.framework && <InfoRow label="Framework" value={data.framework} />}
       {data.verified && <InfoRow label="Verified" value="Yes" />}
       {data.soulbound && <InfoRow label="Soulbound" value="Yes" />}
