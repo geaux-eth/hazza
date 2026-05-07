@@ -321,11 +321,13 @@ Base URL: `https://hazza.name`
 | `/api/available/:name` | GET | Check name availability |
 | `/api/quote/:name?wallet=ADDR` | GET | Get exact price for this wallet |
 | `/api/free-claim/:address` | GET | Free claim eligibility |
-| `/api/profile/:name` | GET | Full profile with text records |
+| `/api/profile/:name` | GET | Full profile with text records, master inheritance, Helixa Cred |
+| `/api/identity/:address` | GET | Resolve address to display name + master profile + Helixa Cred |
 | `/api/names/:address` | GET | All names owned by a wallet |
 | `/api/resolve/:name` | GET | Resolve name to owner |
 | `/api/reverse/:address` | GET | Reverse resolve address to name |
 | `/api/stats` | GET | Registry stats (total names) |
+| `/api/directory` | GET | Paginated list of all names |
 | `/x402/register` | POST | Register a name (x402 flow) |
 | `/api/text/:name` | POST | Set a text record |
 | `/api/marketplace/listings` | GET | Browse active listings |
@@ -342,6 +344,57 @@ Base URL: `https://hazza.name`
 | `/api/bounty/cancel` | POST | Cancel bounty (seller only) |
 | `/api/bounty/withdraw-bounty` | POST | Withdraw bounty ETH (seller) |
 | `/api/bounty/withdraw` | POST | Withdraw pending payouts |
+
+## Resolving an Address to a Person
+
+When you have a wallet address and want to know who owns it, use `/api/identity/:address` — it returns the best display name and master profile in one call:
+
+```bash
+curl -s https://hazza.name/api/identity/0xaf5e770478e45650e36805d1ccaab240309f4a20
+```
+
+```json
+{
+  "wallet": "0xaf5e...",
+  "primaryName": "cheryl",
+  "ens": "cheryl.netlibrary.eth",
+  "display": "cheryl",
+  "truncated": "0xaf5e...4a20",
+  "xmtp": "0x0816...0408",
+  "avatar": "https://...",
+  "description": "...",
+  "profileUrl": "https://cheryl.hazza.name",
+  "helixaCred": { "tokenId": 57, "credScore": 63 }
+}
+```
+
+Use `display` as the user-facing name (primary hazza name > ENS > truncated address). Use `xmtp` to DM them. Use `helixaCred.credScore` to surface their reputation. Use `profileUrl` to link to their main page.
+
+## Profile Response Shape
+
+`GET /api/profile/:name` returns a rich object that already accounts for master inheritance and Helixa Cred:
+
+```json
+{
+  "name": "mybiz",
+  "registered": true,
+  "owner": "0x...",
+  "ownerEns": "alice.eth",
+  "ownerPrimaryName": "alice",
+  "tokenId": "42",
+  "texts": { "avatar": "...", "description": "...", "...": "..." },
+  "ownTexts": { "site.key": "..." },
+  "inheritedFrom": "alice",
+  "helixaData": { "tokenId": 1128, "credScore": 63, "autoDetected": true, "...": "..." },
+  "url": "https://mybiz.hazza.name"
+}
+```
+
+- `texts` is the merged view (master records + own records, own wins) — display this on profile pages.
+- `ownTexts` is the raw on-chain records for THIS name only — use this when editing so you don't accidentally save inherited values.
+- `inheritedFrom` is the master name if any, else `null`.
+- `ownerPrimaryName` lets you link the owner display to their primary name's profile.
+- `helixaData.autoDetected: true` means the cred score came from an address-search fallback rather than an explicit `helixa.id` text record.
 
 ## Key Addresses (Base Mainnet)
 
@@ -376,9 +429,36 @@ After registration, users can set these text records on their name:
 | `url` | Website | `https://alice.dev` |
 | `com.twitter` | Twitter/X handle | `alice` |
 | `com.github` | GitHub username | `alice` |
+| `xyz.farcaster` | Farcaster handle | `alice` |
 | `org.telegram` | Telegram handle | `alice` |
 | `com.discord` | Discord username | `alice#1234` |
-| `xmtp` | XMTP address | `0x...` |
+| `com.linkedin` | LinkedIn username | `alice` |
+| `xmtp` | XMTP messaging address | `0x...` |
+| `message.delegate` | Forward inbound messages to this address | `0x...` |
+| `message.mode` | Routing mode: `all`, `delegate-all`, `delegate-agents` | `delegate-agents` |
+| `master` | Inherit profile from another hazza name | `geaux` |
+| `helixa.id` | Pin a specific Helixa agent token ID | `57` |
+| `net.profile` | Net Protocol storage key for custom profile | `my-profile-v1` |
+| `netlibrary.member` | Net Library member number | `21` |
+| `site.key` | Net Protocol storage key for custom HTML site | `my-site-v1` |
+| `agent.uri` | URI to agent metadata JSON | `https://...` |
+
+## Master Profile (Inheritance)
+
+Set `master` on a name to a different hazza name to inherit that name's profile records. This lets one identity feed many names — for example, every name a user owns can inherit avatar/bio/socials/xmtp from their primary name without re-typing them.
+
+**Behavior:**
+- The name's own records always win over the master's records
+- `master` and `site.key` are NOT inherited — each name controls its own custom site override
+- Set to empty string to remove the link
+
+**Example:** `mybiz` sets `master` to `geaux`. `https://mybiz.hazza.name` now displays geaux's avatar, bio, twitter, etc., but can still override any of those by setting its own records. `mybiz` can also have its own `site.key` to look like a fully custom website while keeping the inherited identity on the back end.
+
+## Helixa Cred (Reputation Score)
+
+hazza profile pages auto-detect the owner's [Helixa](https://helixa.xyz) agent (if any) and display a Cred Score badge. No setup is required — it works for any wallet that owns a Helixa agent. Score is 0–100, color-coded by tier (junk/marginal/qualified/prime/preferred).
+
+**Optional override:** if a name represents a project distinct from the owner's personal Helixa identity, set `helixa.id` to that agent's token ID to pin a specific agent.
 
 ## Post-Registration
 
