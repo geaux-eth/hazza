@@ -1475,6 +1475,9 @@ app.get("/api/directory", async (c) => {
   const page = Math.max(1, parseInt(c.req.query("page") || "1"));
   const limit = Math.min(50, Math.max(1, parseInt(c.req.query("limit") || "20")));
   const search = (c.req.query("q") || "").toLowerCase().trim();
+  // profilesOnly: filter to only names that are the primary name of their owner
+  // (i.e., reverseResolve(owner) === name) — yields a master-profile directory
+  const profilesOnly = c.req.query("profilesOnly") === "true";
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
@@ -1517,7 +1520,16 @@ app.get("/api/directory", async (c) => {
         });
       }
 
-      return c.json({ entries: entries.slice(0, limit), total: entries.length, page: 1, pages: 1, search });
+      let filtered = entries;
+      if (profilesOnly && entries.length > 0) {
+        const reverseLookups = await Promise.all(
+          entries.map(e => client.readContract({
+            address: addr, abi: REGISTRY_ABI, functionName: "reverseResolve", args: [e.owner as `0x${string}`],
+          }).catch(() => "") as Promise<string>)
+        );
+        filtered = entries.filter((e, i) => reverseLookups[i] && reverseLookups[i].toLowerCase() === e.name.toLowerCase());
+      }
+      return c.json({ entries: filtered.slice(0, limit), total: filtered.length, page: 1, pages: 1, search, profilesOnly });
     }
 
     // Paginated (no search)
@@ -1537,7 +1549,7 @@ app.get("/api/directory", async (c) => {
       validIds.map(({ name }) => client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name] }).catch(() => null))
     );
 
-    const entries: { name: string; owner: string; tokenId: number }[] = [];
+    let entries: { name: string; owner: string; tokenId: number }[] = [];
     resolveResults.forEach((result, i) => {
       if (!result) return;
       const [owner] = result as [string, ...unknown[]];
@@ -1546,7 +1558,17 @@ app.get("/api/directory", async (c) => {
       }
     });
 
-    return c.json({ entries, total, page, pages }, 200, {
+    // profilesOnly filter — keep only names where reverseResolve(owner) === name
+    if (profilesOnly && entries.length > 0) {
+      const reverseLookups = await Promise.all(
+        entries.map(e => client.readContract({
+          address: addr, abi: REGISTRY_ABI, functionName: "reverseResolve", args: [e.owner as `0x${string}`],
+        }).catch(() => "") as Promise<string>)
+      );
+      entries = entries.filter((e, i) => reverseLookups[i] && reverseLookups[i].toLowerCase() === e.name.toLowerCase());
+    }
+
+    return c.json({ entries, total, page, pages, profilesOnly }, 200, {
       "Cache-Control": "public, max-age=300, s-maxage=300",
     });
   } catch (e: any) {

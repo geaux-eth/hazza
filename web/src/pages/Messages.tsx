@@ -37,6 +37,7 @@ function extractText(content: unknown): string {
 interface ConvoEntry {
   peerAddress: string;
   peerName?: string;
+  peerAvatar?: string;
   lastMessage?: string;
   lastTime?: Date;
 }
@@ -177,12 +178,15 @@ export default function Messages() {
         }
       }
 
+      // Resolve peer addresses via /api/identity — picks master profile name >
+      // primary hazza name > ENS > truncated, and gives us an avatar URL.
       await Promise.all(entries.map(async (entry) => {
         if (!entry.peerAddress) return;
         try {
-          const res = await fetch(`${API_BASE}/api/reverse/${entry.peerAddress}`);
+          const res = await fetch(`${API_BASE}/api/identity/${entry.peerAddress}`);
           const data = await res.json();
-          if (data.name) entry.peerName = data.name;
+          if (data.display && data.display !== data.truncated) entry.peerName = data.display;
+          if (data.avatar) entry.peerAvatar = data.avatar;
         } catch { /* ignore */ }
       }));
 
@@ -234,12 +238,14 @@ export default function Messages() {
 
   // ── Directory ──
 
-  const loadDirectory = useCallback(async (pg: number, q: string, perPage?: number) => {
+  const loadDirectory = useCallback(async (pg: number, q: string, perPage?: number, profilesOnly?: boolean) => {
     setDirLoading(true);
     const lim = perPage ?? dirPerPage;
+    const profilesMode = profilesOnly ?? !dirShowNames;
     try {
       const params = new URLSearchParams({ page: String(pg), limit: String(lim) });
       if (q) params.set('q', q);
+      if (profilesMode) params.set('profilesOnly', 'true');
       const res = await fetch(`${API_BASE}/api/directory?${params}`);
       const data = await res.json();
       setDirEntries(data.entries || []);
@@ -270,10 +276,10 @@ export default function Messages() {
     setDirLoading(false);
   }, [dirPerPage]);
 
-  // Load directory when view switches to it
+  // Load directory when view switches to it OR toggle flips
   useEffect(() => {
-    if (activeView === 'directory') loadDirectory(1, '');
-  }, [activeView, loadDirectory]);
+    if (activeView === 'directory') loadDirectory(1, dirSearch);
+  }, [activeView, dirShowNames, loadDirectory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced search
   const handleDirSearchChange = useCallback((val: string) => {
@@ -564,10 +570,10 @@ export default function Messages() {
                 }}
               />
 
-              {/* Toggle switch: wallets ↔ names */}
+              {/* Toggle switch: profiles ↔ all names */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem', margin: '0.75rem 0' }}>
                 <span style={{ fontSize: '0.75rem', fontFamily: ff, fontWeight: !dirShowNames ? 700 : 400, color: !dirShowNames ? '#4870D4' : '#8a7d5a' }}>
-                  wallets
+                  profiles
                 </span>
                 <div
                   onClick={() => setDirShowNames(!dirShowNames)}
@@ -586,7 +592,7 @@ export default function Messages() {
                   }} />
                 </div>
                 <span style={{ fontSize: '0.75rem', fontFamily: ff, fontWeight: dirShowNames ? 700 : 400, color: dirShowNames ? '#CF3748' : '#8a7d5a' }}>
-                  names
+                  all names
                 </span>
               </div>
 
@@ -847,7 +853,7 @@ export default function Messages() {
                   {convos.map((c, i) => (
                     <div
                       key={i}
-                      onClick={() => setChatTarget({ address: c.peerAddress, name: c.peerName || truncAddr(c.peerAddress) })}
+                      onClick={() => setChatTarget({ address: c.peerAddress, name: c.peerName || truncAddr(c.peerAddress), avatar: c.peerAvatar })}
                       style={{
                         display: 'flex', alignItems: 'center', gap: '0.75rem',
                         padding: '0.75rem 1rem', background: '#fff',
@@ -857,15 +863,24 @@ export default function Messages() {
                       onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#4870D4')}
                       onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E8DCAB')}
                     >
-                      <div style={{
-                        width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-                        background: '#4870D4', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        color: '#fff', fontWeight: 700, fontSize: '0.85rem', fontFamily: ff,
-                      }}>
-                        {(c.peerName || c.peerAddress.slice(2, 4)).charAt(0).toUpperCase()}
-                      </div>
+                      {c.peerAvatar ? (
+                        <img
+                          src={c.peerAvatar}
+                          alt={c.peerName || truncAddr(c.peerAddress)}
+                          style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '2px solid #E8DCAB' }}
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div style={{
+                          width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                          background: '#4870D4', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: '#fff', fontWeight: 700, fontSize: '0.85rem', fontFamily: ff,
+                        }}>
+                          {(c.peerName || c.peerAddress.slice(2, 4)).charAt(0).toUpperCase()}
+                        </div>
+                      )}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: ff, fontWeight: 600, color: '#131325', fontSize: '0.9rem' }}>
+                        <div style={{ fontFamily: ff, fontWeight: 600, color: '#131325', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {c.peerName || truncAddr(c.peerAddress)}
                         </div>
                         {c.lastMessage && (
