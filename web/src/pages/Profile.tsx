@@ -254,27 +254,48 @@ function AgentSection({ agentId, agentWallet, agentMeta, texts }: { agentId: str
 
 // --- Helixa Section ---
 
+/**
+ * Compact Helixa Cred banner — sits prominently under the profile description,
+ * replacing the old "active" status pill. Shows the cred circle, score+tier,
+ * and links to the Helixa agent page. Auto-hides if no cred data.
+ */
+function CredBanner({ data }: { data: any }) {
+  if (!data?.tokenId || typeof data.credScore !== 'number') return null;
+  return (
+    <a
+      href={`https://helixa.xyz/agent/${data.tokenId}`}
+      target="_blank"
+      rel="noreferrer"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+        padding: '0.4rem 0.9rem 0.4rem 0.4rem',
+        background: '#fff', border: '2px solid #E8DCAB', borderRadius: 999,
+        margin: '0.25rem auto 0.25rem', textDecoration: 'none',
+        boxShadow: '0 2px 6px rgba(19,19,37,0.06)',
+      }}
+      title={`Helixa Cred ${data.credScore} · ${credTier(data.credScore)}`}
+    >
+      <CredBadge score={data.credScore} size={36} />
+      <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.15 }}>
+        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#131325', fontFamily: "'Fredoka', sans-serif" }}>
+          {credTier(data.credScore)} · {data.credScore}
+        </span>
+        <span style={{ fontSize: '0.65rem', color: '#8a7d5a' }}>
+          Helixa cred · agent #{data.tokenId}
+        </span>
+      </span>
+    </a>
+  );
+}
+
 function HelixaSection({ data }: { data: any }) {
   if (!data?.tokenId) return null;
-  const score = typeof data.credScore === 'number' ? data.credScore : null;
+  const hasExtra = data.framework || data.verified || data.soulbound || data.personality?.communicationStyle || data.narrative?.mission;
+  if (!hasExtra) return null;
   return (
     <div style={{ marginBottom: '1rem' }}>
       <div style={{ color: '#8a7d5a', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
-        Helixa Cred
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-        {score !== null && <CredBadge score={score} tokenId={data.tokenId} size={64} />}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {data.name && <div style={{ fontWeight: 700, color: '#131325' }}>{data.name}</div>}
-          {score !== null && (
-            <div style={{ fontSize: '0.75rem', color: '#8a7d5a' }}>
-              {credTier(score)} tier · <a href={`https://helixa.xyz/agent/${data.tokenId}`} target="_blank" rel="noreferrer" style={{ color: '#4870D4' }}>agent #{data.tokenId}</a>
-            </div>
-          )}
-          {data.autoDetected && (
-            <div style={{ fontSize: '0.65rem', color: '#8a7d5a', marginTop: '0.15rem' }}>Auto-detected from owner address</div>
-          )}
-        </div>
+        Helixa AgentDNA
       </div>
       {data.framework && <InfoRow label="Framework" value={data.framework} />}
       {data.verified && <InfoRow label="Verified" value="Yes" />}
@@ -284,7 +305,7 @@ function HelixaSection({ data }: { data: any }) {
         <div style={{ padding: '0.35rem 0', fontSize: '0.85rem', color: '#131325', lineHeight: 1.5 }}>{data.narrative.mission}</div>
       )}
       <div style={{ textAlign: 'right', marginTop: '0.35rem', fontSize: '0.65rem' }}>
-        <a href="https://helixa.xyz" style={{ color: '#8a7d5a' }}>helixa.xyz</a>
+        <a href={`https://helixa.xyz/agent/${data.tokenId}`} style={{ color: '#8a7d5a' }}>helixa.xyz/agent/{data.tokenId}</a>
       </div>
     </div>
   );
@@ -469,13 +490,9 @@ export default function Profile() {
 
         {hasBio && <p style={{ color: '#8a7d5a', fontSize: '0.9rem', lineHeight: 1.5, margin: '0.5rem 0' }}>{texts['description']}</p>}
 
-        <span style={{
-          display: 'inline-block', padding: '0.15rem 0.5rem',
-          background: '#fff', border: '2px solid #4870D4', borderRadius: 12,
-          fontSize: '0.7rem', fontWeight: 700, color: '#4870D4',
-        }}>
-          {data.status}
-        </span>
+        {data.helixaData?.credScore !== undefined && (
+          <CredBanner data={data.helixaData} />
+        )}
 
         <Badges texts={texts} />
         <SocialLinks texts={texts} />
