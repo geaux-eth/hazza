@@ -92,6 +92,7 @@ export default function Manage() {
   const [helixaId, setHelixaId] = useState('');
   const [netLibraryMember, setNetLibraryMember] = useState('');
   const [netProfileKey, setNetProfileKey] = useState('');
+  const [shareImage, setShareImage] = useState('');
 
   // API key
   const [apiKeyValue, setApiKeyValue] = useState('');
@@ -148,6 +149,7 @@ export default function Manage() {
           if (t['netlibrary.member']) setNetLibraryMember(t['netlibrary.member']);
           if (t['net.profile']) setNetProfileKey(t['net.profile']);
           if (t['site.key']) setSiteKeyValue(t['site.key']);
+          if (t['share.image']) setShareImage(t['share.image']);
           // Master profile — read from ownTexts (not merged) so we edit only this name's record
           const ownT = data.ownTexts || t;
           if (ownT['master']) setMasterValue(ownT['master']);
@@ -606,6 +608,7 @@ export default function Manage() {
     if (helixaId.trim()) { keys.push('helixa.id'); values.push(helixaId.trim()); }
     if (netLibraryMember.trim()) { keys.push('netlibrary.member'); values.push(netLibraryMember.trim()); }
     if (netProfileKey.trim()) { keys.push('net.profile'); values.push(netProfileKey.trim()); }
+    if (shareImage.trim()) { keys.push('share.image'); values.push(shareImage.trim()); }
 
     if (keys.length === 0) {
       showMsg('No fields to save.', true);
@@ -619,7 +622,7 @@ export default function Manage() {
       functionName: 'setTexts',
       args: [nameParam, keys, values],
     });
-  }, [profileData, fieldValues, helixaId, netLibraryMember, netProfileKey, nameParam, writeContract, showMsg]);
+  }, [profileData, fieldValues, helixaId, netLibraryMember, netProfileKey, shareImage, nameParam, writeContract, showMsg]);
 
   if (loading) {
     return (
@@ -827,6 +830,34 @@ export default function Manage() {
               </div>
               <p style={{ color: '#8a7d5a', fontSize: '0.7rem', marginTop: '0.25rem' }}>
                 Exoskeleton and Unlimited Pass badges are auto-detected from your wallet.
+              </p>
+            </div>
+
+            {/* Share Preview */}
+            <div className="section">
+              <div className="section-title">Share Preview</div>
+              <p style={{ color: '#8a7d5a', fontSize: '0.78rem', margin: '0 0 0.5rem' }}>
+                The image people see when they share <strong>{nameParam}.hazza.name</strong>. Leave blank to use the auto-generated branded card with your avatar + bio + Helixa cred.
+              </p>
+              <div style={{
+                width: '100%', aspectRatio: '1200 / 630',
+                borderRadius: 8, border: '2px solid #E8DCAB', overflow: 'hidden',
+                background: '#F7EBBD', marginBottom: '0.5rem',
+              }}>
+                <img
+                  src={shareImage.trim() ? shareImage.trim() : `${API_BASE}/api/og/${encodeURIComponent(nameParam)}?bust=${Date.now()}`}
+                  alt="share preview"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ color: '#8a7d5a', fontSize: '0.85rem', minWidth: '80px' }}>Custom URL</label>
+                <input type="text" placeholder="https://... (PNG/JPG, 1200x630)" value={shareImage} onChange={(e) => setShareImage(e.target.value)}
+                  style={{ flex: 1, minWidth: '80px', padding: '0.4rem 0.6rem', border: '2px solid #E8DCAB', borderRadius: '6px', background: '#fff', color: '#131325', fontSize: '0.85rem', fontFamily: "'Fredoka',sans-serif", outline: 'none' }} />
+              </div>
+              <p style={{ color: '#8a7d5a', fontSize: '0.7rem', margin: '0.4rem 0 0' }}>
+                Saves to the <code style={{ background: '#f5f0e0', padding: '0 0.2rem', borderRadius: 3 }}>share.image</code> text record. Recommended size: 1200×630px.
               </p>
             </div>
 

@@ -583,7 +583,7 @@ app.get("/api/profile/:name", async (c) => {
     return c.json({ name, registered: false });
   }
 
-  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xmtp", "message.delegate", "message.mode", "site.key", "agent.uri", "agent.8004id", "agent.wallet", "agent.endpoint", "agent.model", "agent.status", "net.profile", "helixa.id", "netlibrary.member", "netlibrary.pass", "com.linkedin", "xyz.farcaster", "master"];
+  const textKeys = ["avatar", "description", "url", "com.twitter", "com.github", "org.telegram", "com.discord", "xmtp", "message.delegate", "message.mode", "site.key", "agent.uri", "agent.8004id", "agent.wallet", "agent.endpoint", "agent.model", "agent.status", "net.profile", "helixa.id", "netlibrary.member", "netlibrary.pass", "com.linkedin", "xyz.farcaster", "master", "share.image"];
   const [textValues, chash] = await Promise.all([
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys] }),
     client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "contenthash", args: [name] }),
@@ -905,60 +905,163 @@ app.get("/api/og/:name", async (c) => {
     }
   }
 
-  // Per-name OG image
+  // Per-name OG image — looks like the ProfileCard popup
   const client = getClient(c.env);
   const addr = registryAddress(c.env);
 
-  let subtitle = "available";
-  let statusColor = "#4870D4";
-  let ownerText = "";
+  let registered = false;
+  let nameOwner = "0x0000000000000000000000000000000000000000";
+  let avatarUrl = "";
+  let description = "";
+  let shareImageOverride = "";
+  let credScore: number | null = null;
+  let credTokenId: number | null = null;
+  let masterDisplay = "";
 
   try {
-    const [nameOwner, , , , , ,] = await client.readContract({
+    const [owner] = await client.readContract({
       address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [name],
     });
-    if (nameOwner !== "0x0000000000000000000000000000000000000000") {
-      subtitle = "registered";
-      ownerText = nameOwner as string;
+    if (owner !== "0x0000000000000000000000000000000000000000") {
+      registered = true;
+      nameOwner = owner as string;
+      // Pull texts that affect the OG rendering, including share.image override and master
+      const textKeys = ["avatar", "description", "share.image", "master"];
+      const values = await client.readContract({
+        address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, textKeys],
+      }) as readonly string[];
+      const ownTexts: Record<string, string> = {};
+      textKeys.forEach((k, i) => { if (values[i]) ownTexts[k] = values[i]; });
+      avatarUrl = ownTexts["avatar"] || "";
+      description = ownTexts["description"] || "";
+      shareImageOverride = ownTexts["share.image"] || "";
+
+      // Master inheritance — if no own avatar/description, fall back to master
+      const masterName = ownTexts["master"]?.toLowerCase().replace(/\.hazza\.name$/, "").trim();
+      if (masterName && masterName !== name && isValidName(masterName) && (!avatarUrl || !description)) {
+        try {
+          const mv = await client.readContract({
+            address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [masterName, ["avatar", "description"]],
+          }) as readonly string[];
+          if (!avatarUrl && mv[0]) avatarUrl = mv[0];
+          if (!description && mv[1]) description = mv[1];
+          masterDisplay = masterName;
+        } catch { /* ignore */ }
+      }
+
+      // Helixa cred — auto-detect by owner address
       try {
-        const ensName = await getEthMainnetClient(c.env).getEnsName({ address: nameOwner as `0x${string}` });
-        if (ensName) ownerText = ensName;
-      } catch { /* ENS lookup optional */ }
+        const r = await fetchWithTimeout(
+          `https://api.helixa.xyz/api/v2/agents?search=${nameOwner}&limit=1`,
+          { headers: { Accept: "application/json" } }, 3000,
+        );
+        if (r.ok) {
+          const d = await r.json() as { agents?: Array<{ tokenId?: number; credScore?: number }> };
+          const ag = d?.agents?.[0];
+          if (ag && typeof ag.credScore === "number" && typeof ag.tokenId === "number") {
+            credScore = ag.credScore;
+            credTokenId = ag.tokenId;
+          }
+        }
+      } catch { /* non-fatal */ }
     }
   } catch { /* name not registered or invalid */ }
 
-  const displayName = name.length > 16 ? name.slice(0, 14) + "..." : name;
+  // share.image override — return that URL directly (302 redirect)
+  if (shareImageOverride) {
+    try {
+      const url = new URL(shareImageOverride);
+      if (url.protocol === "https:" || url.protocol === "http:") {
+        return Response.redirect(shareImageOverride, 302);
+      }
+    } catch { /* fall through to default render */ }
+  }
+
+  const displayName = name.length > 14 ? name.slice(0, 12) + "..." : name;
   const nameFontSize = displayName.length > 10 ? 56 : displayName.length > 6 ? 72 : 88;
-  const ownerFontSize = ownerText.length > 30 ? 13 : 16;
+
+  // Description wrap (rough): cap ~120 chars, two lines
+  const descTrimmed = description.length > 120 ? description.slice(0, 117) + "..." : description;
+  const descLines: string[] = [];
+  if (descTrimmed) {
+    const words = descTrimmed.split(" ");
+    let cur = "";
+    for (const w of words) {
+      if ((cur + " " + w).trim().length > 50 && cur) { descLines.push(cur); cur = w; }
+      else cur = (cur + " " + w).trim();
+    }
+    if (cur) descLines.push(cur);
+  }
+  const descLine1 = descLines[0] || "";
+  const descLine2 = descLines[1] || "";
+
+  // Cred badge color by score
+  const credColor = credScore == null ? "#8a7d5a"
+    : credScore >= 80 ? "#4ade80"
+    : credScore >= 60 ? "#fbbf24"
+    : credScore >= 40 ? "#fb923c"
+    : "#ef4444";
+
+  // resvg-wasm can't reliably fetch external URLs — inline avatar as data: URI
+  let avatarHref = NOMI_AVATAR_URI;
+  if (avatarUrl && avatarUrl.startsWith("data:")) {
+    avatarHref = avatarUrl;
+  } else if (avatarUrl) {
+    try {
+      const r = await fetchWithTimeout(avatarUrl, {}, 4000);
+      if (r.ok) {
+        const ct = r.headers.get("content-type") || "image/png";
+        const buf = new Uint8Array(await r.arrayBuffer());
+        // base64-encode (chunked to avoid stack issues on large images)
+        let bin = "";
+        for (let i = 0; i < buf.length; i += 8192) bin += String.fromCharCode(...buf.subarray(i, i + 8192));
+        avatarHref = `data:${ct};base64,${btoa(bin)}`;
+      }
+    } catch { /* fall back to Nomi */ }
+  }
+  const avatarCx = 230;
+  const avatarCy = 315;
+  const avatarR = 150;
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <clipPath id="avatarClip"><circle cx="${avatarCx}" cy="${avatarCy}" r="${avatarR}"/></clipPath>
+  </defs>
   <rect width="1200" height="630" fill="#F7EBBD"/>
   <rect x="0" y="0" width="1200" height="8" fill="#4870D4"/>
   <rect x="0" y="622" width="1200" height="8" fill="#CF3748"/>
 
-  <!-- Nomi avatar -->
-  <image x="40" y="160" width="300" height="300" href="${NOMI_AVATAR_URI}"/>
+  <!-- Brand top-right -->
+  <rect x="60" y="44" width="40" height="40" rx="8" fill="#CF3748"/>
+  <text x="80" y="68" font-family="Fredoka, sans-serif" font-size="22" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
+  <text x="113" y="74" font-family="Fredoka, sans-serif" font-size="22" font-weight="700" fill="#131325">hazza<tspan fill="#4870D4">.name</tspan></text>
 
-  <!-- Logo -->
-  <rect x="60" y="50" width="48" height="48" rx="10" fill="#CF3748"/>
-  <text x="84" y="74" font-family="Fredoka, sans-serif" font-size="26" fill="#ffffff" font-weight="700" text-anchor="middle" dominant-baseline="central">h</text>
-
-  <!-- Brand -->
-  <text x="1140" y="84" font-family="Fredoka, sans-serif" font-size="22" font-weight="700" text-anchor="end" fill="#131325">hazza<tspan fill="#4870D4">.name</tspan></text>
+  <!-- Avatar (clipped to circle) with red ring -->
+  <circle cx="${avatarCx}" cy="${avatarCy}" r="${avatarR + 6}" fill="#CF3748"/>
+  <image x="${avatarCx - avatarR}" y="${avatarCy - avatarR}" width="${avatarR * 2}" height="${avatarR * 2}" href="${svgEsc(avatarHref)}" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatarClip)"/>
 
   <!-- Name -->
-  <text x="720" y="260" font-family="Fredoka, sans-serif" font-size="${nameFontSize}" fill="#131325" font-weight="700" text-anchor="middle">${svgEsc(displayName)}<tspan fill="#4870D4" font-size="${Math.round(nameFontSize * 0.6)}">.hazza.name</tspan></text>
+  <text x="430" y="265" font-family="Fredoka, sans-serif" font-size="${nameFontSize}" fill="#131325" font-weight="700">${svgEsc(displayName)}<tspan fill="#4870D4" font-size="${Math.round(nameFontSize * 0.55)}">.hazza.name</tspan></text>
 
-  <!-- Status pill -->
-  <rect x="${720 - (subtitle.length * 7 + 24)}" y="290" width="${subtitle.length * 14 + 48}" height="36" rx="18" fill="${statusColor}" opacity="0.12"/>
-  <text x="720" y="314" font-family="Fredoka, sans-serif" font-size="16" fill="${statusColor}" text-anchor="middle" font-weight="600" letter-spacing="3">${subtitle.toUpperCase()}</text>
+  <!-- Description -->
+  ${descLine1 ? `<text x="430" y="335" font-family="Fredoka, sans-serif" font-size="26" fill="#8a7d5a" font-weight="500">${svgEsc(descLine1)}</text>` : ""}
+  ${descLine2 ? `<text x="430" y="370" font-family="Fredoka, sans-serif" font-size="26" fill="#8a7d5a" font-weight="500">${svgEsc(descLine2)}</text>` : ""}
 
-  <!-- Owner -->
-  ${ownerText ? `<text x="720" y="380" font-family="Fredoka, sans-serif" font-size="${ownerFontSize}" fill="#8a7d5a" text-anchor="middle" font-weight="600">${svgEsc(ownerText)}</text>` : ""}
+  <!-- Master inheritance hint -->
+  ${masterDisplay ? `<text x="430" y="405" font-family="Fredoka, sans-serif" font-size="16" fill="#4870D4" font-weight="600">profile inherits from ${svgEsc(masterDisplay)}.hazza.name</text>` : ""}
+
+  <!-- Helixa Cred badge top-right -->
+  ${credScore != null ? `
+  <circle cx="1080" cy="120" r="65" fill="${credColor}"/>
+  <circle cx="1080" cy="120" r="68" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.6"/>
+  <text x="1080" y="103" font-family="Fredoka, sans-serif" font-size="38" fill="#ffffff" font-weight="800" text-anchor="middle">${credScore}</text>
+  <text x="1080" y="138" font-family="Fredoka, sans-serif" font-size="16" fill="#ffffff" font-weight="700" text-anchor="middle" letter-spacing="0.5">CRED</text>
+  <text x="1080" y="160" font-family="Fredoka, sans-serif" font-size="14" fill="#ffffff" font-weight="700" text-anchor="middle">helixa</text>
+  ` : ""}
 
   <!-- Footer -->
-  <text x="720" y="540" font-family="Fredoka, sans-serif" font-size="24" fill="#131325" font-weight="700" text-anchor="middle">immediately useful names</text>
-  <text x="720" y="580" font-family="Fredoka, sans-serif" font-size="16" fill="#4870D4" text-anchor="middle" font-weight="600">built on Base · powered by x402, XMTP and Net Protocol</text>
+  <text x="600" y="555" font-family="Fredoka, sans-serif" font-size="26" fill="#131325" font-weight="700" text-anchor="middle">${registered ? "immediately useful onchain identity" : "available — register at hazza.name"}</text>
+  <text x="600" y="590" font-family="Fredoka, sans-serif" font-size="18" fill="#4870D4" text-anchor="middle" font-weight="600">built on Base · powered by x402, XMTP and Net Protocol</text>
 </svg>`;
 
   // Try PNG conversion via resvg, fall back to SVG

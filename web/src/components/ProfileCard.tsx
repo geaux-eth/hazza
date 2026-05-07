@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE } from '../constants';
 import CredBadge from './CredBadge';
+import ShareModal from './ShareModal';
 
 export interface Identity {
   wallet: string;
@@ -121,6 +122,8 @@ export default function ProfileCard({
     };
   }, [onClose, triggerRef]);
 
+  const [shareOpen, setShareOpen] = useState(false);
+
   if (!pos) return null;
 
   const truncated = identity.truncated || (identity.wallet.slice(0, 6) + '...' + identity.wallet.slice(-4));
@@ -211,6 +214,21 @@ export default function ProfileCard({
               View main page
             </a>
           )}
+          {identity.primaryName && (
+            <button
+              onClick={() => setShareOpen(true)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem',
+                width: '100%', marginTop: '0.4rem', padding: '0.4rem',
+                background: 'transparent', border: '2px solid #4870D4', color: '#4870D4', borderRadius: 6,
+                fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer',
+                fontFamily: "'Fredoka', sans-serif",
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              Share profile
+            </button>
+          )}
           <a
             href={identity.primaryName ? `/manage?name=${encodeURIComponent(identity.primaryName)}` : '/dashboard'}
             style={{
@@ -269,8 +287,34 @@ export default function ProfileCard({
           Message {identity.primaryName}
         </button>
       )}
+      {!isSelf && identity.primaryName && (
+        <button
+          onClick={() => setShareOpen(true)}
+          style={{
+            width: '100%', marginTop: '0.4rem', padding: '0.4rem',
+            background: 'transparent', border: '2px solid #4870D4', color: '#4870D4', borderRadius: 6,
+            fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer',
+            fontFamily: "'Fredoka', sans-serif",
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem',
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          Share profile
+        </button>
+      )}
     </div>
   );
 
-  return createPortal(card, document.body);
+  return (
+    <>
+      {createPortal(card, document.body)}
+      {shareOpen && identity.primaryName && (
+        <ShareModal
+          name={identity.primaryName}
+          displayName={identity.primaryName}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
+    </>
+  );
 }
