@@ -40,7 +40,7 @@ export default function Nav() {
           &#9776;
         </button>
         <div className={`links${menuOpen ? ' open' : ''}`} id="nav-links">
-          <Link to="/register" onClick={closeMenu}>register</Link>
+          <Link to="/register" onClick={closeMenu}>discover</Link>
           <Link to="/marketplace" onClick={closeMenu}>marketplace</Link>
           <Link to="/dashboard" onClick={closeMenu}>dashboard</Link>
           <Link to="/messages" onClick={closeMenu}>messages</Link>

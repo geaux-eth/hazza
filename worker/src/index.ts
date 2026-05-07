@@ -1574,6 +1574,66 @@ app.get("/api/stats", async (c) => {
 });
 
 // Directory — paginated list of all registered names with owners
+// Discover — names that have set a custom site.key. Returns up to `limit` results.
+// Scans all registered tokens and reads `site.key` for each. Cached 5 min at the edge.
+app.get("/api/discover", async (c) => {
+  const limit = Math.min(50, Math.max(1, parseInt(c.req.query("limit") || "30")));
+  const client = getClient(c.env);
+  const addr = registryAddress(c.env);
+
+  try {
+    const total = Number(await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "totalRegistered" }));
+    if (total === 0) return c.json({ entries: [], total: 0 });
+
+    const ids = Array.from({ length: total }, (_, i) => i + 1);
+    const BATCH = 12;
+    const entries: { name: string; owner: string; tokenId: number; avatar?: string; description?: string }[] = [];
+
+    for (let s = 0; s < ids.length && entries.length < limit; s += BATCH) {
+      const slice = ids.slice(s, s + BATCH);
+      const names = await Promise.all(
+        slice.map(id => client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "nameOf", args: [BigInt(id)] }).catch(() => "") as Promise<string>)
+      );
+      const valid = names.map((n, i) => ({ id: slice[i], name: n })).filter(e => !!e.name);
+      if (!valid.length) continue;
+
+      // Read site.key + avatar + description in one batched call per name
+      const keys = ["site.key", "avatar", "description"];
+      const textReads = await Promise.all(
+        valid.map(({ name }) => client.readContract({
+          address: addr, abi: REGISTRY_ABI, functionName: "textMany", args: [name, keys],
+        }).catch(() => null) as Promise<readonly string[] | null>)
+      );
+
+      for (let i = 0; i < valid.length; i++) {
+        const t = textReads[i];
+        if (!t || !t[0]) continue; // no site.key → skip
+
+        const ownerResult = await client.readContract({ address: addr, abi: REGISTRY_ABI, functionName: "resolve", args: [valid[i].name] }).catch(() => null);
+        if (!ownerResult) continue;
+        const [owner] = ownerResult as [string, ...unknown[]];
+        if (owner === "0x0000000000000000000000000000000000000000") continue;
+
+        entries.push({
+          name: valid[i].name,
+          owner: owner as string,
+          tokenId: valid[i].id,
+          avatar: t[1] || undefined,
+          description: t[2] || undefined,
+        });
+        if (entries.length >= limit) break;
+      }
+    }
+
+    return c.json({ entries, total: entries.length }, 200, {
+      "Cache-Control": "public, max-age=300, s-maxage=300",
+    });
+  } catch (e: any) {
+    console.error("Discover error:", e?.message || e);
+    return c.json({ error: "Discover lookup failed" }, 500);
+  }
+});
+
 app.get("/api/directory", async (c) => {
   const page = Math.max(1, parseInt(c.req.query("page") || "1"));
   const limit = Math.min(50, Math.max(1, parseInt(c.req.query("limit") || "20")));

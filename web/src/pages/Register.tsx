@@ -776,6 +776,114 @@ function CheckoutView({ name }: { name: string }) {
   );
 }
 
+interface DiscoverEntry {
+  name: string;
+  owner: string;
+  tokenId: number;
+  avatar?: string;
+  description?: string;
+}
+
+function DiscoverGrid() {
+  const [entries, setEntries] = useState<DiscoverEntry[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/discover?limit=30`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setEntries(d.entries || []); })
+      .catch(() => { if (!cancelled) setEntries([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (entries === null) {
+    return (
+      <p style={{ textAlign: 'center', color: '#8a7d5a', fontSize: '0.85rem', margin: '1.5rem 0' }}>
+        loading custom sites...
+      </p>
+    );
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div style={{
+        textAlign: 'center', padding: '1.5rem 1rem', background: '#fff',
+        border: '2px solid #E8DCAB', borderRadius: 10, marginTop: '1rem',
+      }}>
+        <p style={{ color: '#131325', fontSize: '0.9rem', fontWeight: 600, margin: '0 0 0.4rem' }}>
+          no custom sites yet
+        </p>
+        <p style={{ color: '#8a7d5a', fontSize: '0.78rem', margin: 0 }}>
+          your name's profile page can be a fully custom website. set a <code style={{ background: '#f5f0e0', padding: '0 0.2rem', borderRadius: 3 }}>site.key</code> text record on your name (storage key on Net Protocol or full URL) to get featured here.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+      gap: '1rem', marginTop: '1rem',
+    }}>
+      {entries.map(e => (
+        <a
+          key={e.tokenId}
+          href={`https://${e.name}.hazza.name`}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: 'flex', flexDirection: 'column',
+            background: '#fff', border: '2px solid #E8DCAB', borderRadius: 12,
+            overflow: 'hidden', textDecoration: 'none', color: '#131325',
+            transition: 'border-color 0.15s, transform 0.15s',
+          }}
+          onMouseEnter={(ev) => { ev.currentTarget.style.borderColor = '#4870D4'; ev.currentTarget.style.transform = 'translateY(-2px)'; }}
+          onMouseLeave={(ev) => { ev.currentTarget.style.borderColor = '#E8DCAB'; ev.currentTarget.style.transform = 'translateY(0)'; }}
+        >
+          {/* Site preview iframe — sandboxed, scaled */}
+          <div style={{ position: 'relative', width: '100%', aspectRatio: '16/10', background: '#F7EBBD', overflow: 'hidden' }}>
+            <iframe
+              src={`https://${e.name}.hazza.name`}
+              title={`${e.name}.hazza.name preview`}
+              loading="lazy"
+              sandbox="allow-scripts allow-same-origin"
+              style={{
+                position: 'absolute', top: 0, left: 0,
+                width: '200%', height: '200%',
+                border: 'none', pointerEvents: 'none',
+                transform: 'scale(0.5)', transformOrigin: 'top left',
+              }}
+            />
+            {/* Click-shield overlay so the iframe doesn't intercept clicks */}
+            <div style={{ position: 'absolute', inset: 0, background: 'transparent' }} />
+          </div>
+          {/* Caption */}
+          <div style={{ padding: '0.65rem 0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {e.avatar ? (
+              <img
+                src={e.avatar}
+                alt=""
+                style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', border: '1.5px solid #E8DCAB', flexShrink: 0 }}
+                onError={(ev) => { (ev.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            ) : null}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#4870D4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {e.name}<span style={{ color: '#8a7d5a', fontWeight: 500 }}>.hazza.name</span>
+              </div>
+              {e.description && (
+                <div style={{ color: '#8a7d5a', fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {e.description}
+                </div>
+              )}
+            </div>
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 export default function Register() {
   const [searchParams] = useSearchParams();
   const rawName = searchParams.get('name') || '';
@@ -784,10 +892,25 @@ export default function Register() {
   return (
     <div>
       <div className="header" style={{ background: '#4870D4', padding: '1rem 1rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
-        <h1 style={{ color: '#fff' }}>register</h1>
+        <h1 style={{ color: '#fff' }}>discover</h1>
+        <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.85rem', margin: '0.25rem 0 0' }}>
+          register an immediately useful name and explore custom sites built on hazza.
+        </p>
       </div>
 
       {nameParam ? <CheckoutView name={nameParam} /> : <SearchView />}
+
+      {!nameParam && (
+        <div style={{ marginTop: '2rem' }}>
+          <h2 style={{ fontSize: '1rem', fontWeight: 700, color: '#131325', margin: '0 0 0.25rem', fontFamily: "'Fredoka', sans-serif" }}>
+            custom sites
+          </h2>
+          <p style={{ color: '#8a7d5a', fontSize: '0.8rem', margin: '0 0 0.5rem' }}>
+            names with their own onchain-hosted website. click any card to visit.
+          </p>
+          <DiscoverGrid />
+        </div>
+      )}
     </div>
   );
 }
